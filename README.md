@@ -14,5 +14,7 @@ We tested our code in Python 3.8 and the following packages:
 - seaborn 0.11.2
 - tqdm 4.62.3
 - torchio 0.18.62
+- numpy 1.21.3
+- h5py 3.5.0
 
 In the demo `./notebook/[B] Skullstripping.ipynb`, we also use theano 1.0.5 for skullstrip
