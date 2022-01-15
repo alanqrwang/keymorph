@@ -6,6 +6,8 @@ Registration is a fundamental task in medical imaging, and recent machine learni
 We tested our code in Python 3.8 and the following packages:
 - pytorch 1.10
 - torchvision 1.11
+- jupyterlab 3.2.1
+- ipywidgets 7.6.5
 - simpleitk 2.1.1
 - scikit-image 0.18.3
 - scikit-learn 1.0.1
