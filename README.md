@@ -42,7 +42,7 @@ grid = F.affine_grid(inv_matrix,
                      align_corners=False)
 
 # Align
-x_aligned = F.grid_sample(x,
+x_aligned = F.grid_sample(x_moving,
                           grid=grid,
                           mode='bilinear',
                           padding_mode='border',
