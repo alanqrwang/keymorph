@@ -81,12 +81,20 @@ Examples of how to run the evaluation script:
 
 `python eval.py 1 2` register T1 to PD images
 
-.
+... and so on
 
-.
+### Automatic Deliniation/Segmentation of the Brain
+For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 
 
-.
+### Contact
+Feel free to open an issue in github for any problems or questions.
 
+### References
+Evan, M. Yu, et al. "KeypointMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection." (2021).
+
+Kleesiek and Urban et al, Deep MRI brain extraction: A 3D convolutional neural network for skull stripping, NeuroImage (2016).
+
+Billot, Benjamin, et al. "A learning strategy for contrast-agnostic MRI segmentation." MIDL (2020).
 
 
 
