@@ -75,7 +75,9 @@ Once trained, this script goes through the data folder and randomly pick two ima
 
 Examples of how to run the evaluation script:
 `python eval.py 0 0` register T1 to T1 images
+
 `python eval.py 1 0` register T1 to T2 images
+
 `python eval.py 1 2` register T1 to PD images
 .
 .
