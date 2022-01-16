@@ -50,3 +50,17 @@ x_aligned = F.grid_sample(x_moving,
 
 ```
 ## Step-by-Step Guide
+
+### Dataset 
+[A] Scripts in `./notebooks/[A] Download Data` will download the IXI data and perform some basic preprocessing
+
+[B] Once the data is downloaded `./notebooks/[B] Brain extraction` can be used to extract remove non-brain tissue. We used [Deep_MRI_brain_extraction](https://github.com/GUR9000/Deep_MRI_brain_extraction/). As explained in the notebook, you **should** have a separate environment with the packages listed within the notebook because it an older model and uses Theano. You can use other brain extraction algorithm to replace this step. 
+
+[C] Once the brain has been extracted, we recommend centering the brain using `./notebooks/[C] Centering`. During training, we randomly introduce affine augmentation to the dataset. This ensure that the brain stays within the volume given the affine augmentation we introduce. It also helps during the pretraining step of our algorithm.
+
+### Pretraining KeypointMorph
+
+This step greatly helps with the convergence of our model. 
+
+
+
