@@ -60,7 +60,27 @@ x_aligned = F.grid_sample(x_moving,
 
 ### Pretraining KeypointMorph
 
-This step greatly helps with the convergence of our model. 
+This step greatly helps with the convergence of our model. As explained in section 3.3, we picked 1 subject and random points within the brain of that subject. We then introduce affine transformation to the subject brain and same transformation to the keypoints. In other words, this is a self-supervised task in where the network learns to predict the keypoints on a brain under random affine transformation. We found that initializing our model with these weights helps with the training. To pretrain run:
+
+`python pretraining.py`
+
+### Training KeypointMorph
+We use the weights from the pretraining step to initialized our model. The pretraining weights we used in `./data/weights/pretrained_model.pth.tar`.
+To train KeypointMorph run. To train run:
+
+`python train.py`
+
+### Evaluating KeypointMorph
+Once trained, this script goes through the data folder and randomly pick two images as moving and fixed pairs. It then introduces random affine transformation to the moving image and register the image to the fixed image. It outputs a dictionary containing the moving, fixed and aligned image. 
+
+`python eval.py 0 0` register T1 to T1 images
+`python eval.py 1 0` register T1 to T2 images
+`python eval.py 1 2` register T1 to PD images
+`.`
+`.`
+`.`
+
+
 
 
 
