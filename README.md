@@ -21,31 +21,32 @@ We tested our code in Python 3.8 and the following packages:
 ## TLDR
 Keypoint registration using close-form solution (equation 2) in the paper can be done as follows:
 
-        from functions import registration_tools as rt
+```python
+from functions import registration_tools as rt
 
-        # Predict keypoints
-        # model ouputs coordinate for each keypoint 
-        # this is a tensor [n_batch, 3, n_keypoints] values ranging -1 to 1 (pytorch grid convention)
-        
-        moving_kp = model(x_moving)
-        target_kp = model(x_target)
+# Predict keypoints
+# model ouputs coordinate for each keypoint 
+# this is a tensor [n_batch, 3, n_keypoints] values ranging -1 to 1 (pytorch grid convention)
 
-        # Close form
-        affine_matrix = rt.close_form_affine(moving_kp, target_kp)
-        inv_matrix = torch.zeros(x_moving.size(0),4,4)
-        inv_matrix[:,:3,:4] = affine_matrix
-        inv_matrix[:,3,3] = 1
-        inv_matrix = torch.inverse(inv_matrix)[:,:3,:]
-        grid = F.affine_grid(inv_matrix,
-                             x.size(),
-                             align_corners=False)
-        
-        # Align
-        x_aligned = F.grid_sample(x,
-                                  grid=grid,
-                                  mode='bilinear',
-                                  padding_mode='border',
-                                  align_corners=False)
+moving_kp = model(x_moving)
+target_kp = model(x_target)
 
+# Close form
+affine_matrix = rt.close_form_affine(moving_kp, target_kp)
+inv_matrix = torch.zeros(x_moving.size(0),4,4)
+inv_matrix[:,:3,:4] = affine_matrix
+inv_matrix[:,3,3] = 1
+inv_matrix = torch.inverse(inv_matrix)[:,:3,:]
+grid = F.affine_grid(inv_matrix,
+                     x.size(),
+                     align_corners=False)
 
+# Align
+x_aligned = F.grid_sample(x,
+                          grid=grid,
+                          mode='bilinear',
+                          padding_mode='border',
+                          align_corners=False)
+
+```
 ## Step-by-Step Guide
