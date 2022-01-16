@@ -74,6 +74,7 @@ To train run: `python train.py`
 Once trained, this script goes through the data folder and randomly pick two images as moving and fixed pairs. It then introduces random affine transformation to the moving image and register the image to the fixed image. It outputs a dictionary containing the moving, fixed and aligned image. We provided the trained version of our model in  `./data/weights/trained_model.pth.tar`.
 
 Examples of how to run the evaluation script:
+
 `python eval.py 0 0` register T1 to T1 images
 
 `python eval.py 1 0` register T1 to T2 images
