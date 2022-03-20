@@ -6,7 +6,7 @@ Implementation of KeyMorph, an unsupervised end-to-end learning-based image regi
 We tested our algorithm with ***Python 3.8*** and ***PyTorch 1.10*** and ***Torchvision 0.11.1***. Install the packages with `pip3 install -r requirement.txt`
 
 ## Decrompressing Trained Weights
-The self supervised pretraining and trained model weights are found in the `./data/` folder. Combined the files and decompressed them using:
+The self supervised pretraining and trained model weights are found in the `./data/` folder. Combine and decompress the files and decompress using:
 
 `cat ./data/weights* | tar xzpvf -`
 
@@ -48,7 +48,7 @@ x_aligned = F.grid_sample(x_moving,
 
 [B] Once the data is downloaded `./notebooks/[B] Brain extraction` can be used to extract remove non-brain tissue. 
 
-[C] Once the brain has been extracted, we recommend centering the brain using `./notebooks/[C] Centering`. During training, we randomly introduce affine augmentation to the dataset. This ensure that the brain stays within the volume given the affine augmentation we introduce. It also helps during the pretraining step of our algorithm.
+[C] Once the brain has been extracted, we center the brain using `./notebooks/[C] Centering`. During training, we randomly introduce affine augmentation to the dataset. This ensure that the brain stays within the volume given the affine augmentation we introduce. It also helps during the pretraining step of our algorithm.
 
 ### Pretraining KeyMorph
 
