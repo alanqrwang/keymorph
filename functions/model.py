@@ -2,14 +2,18 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+
+from skimage import morphology
 from .registration_tools import center_of_mass
 
 
 
 """KeyMorph Model"""
+
+
 class KeyMorph(nn.Module):
     """
-    Create dataloader
+    Neural network for KeyMorph
     
     Arguments
     ---------
@@ -101,7 +105,21 @@ class cm_block(nn.Module):
 """Brain Extractor Model"""
 
 
-class Simple_Unet(nn.Module):
+class Simple_Unet(nn.Module):   
+    """
+    Neural network for Brain Extractor
+    
+    Arguments
+    ---------
+    input_ch   : input channel to the network
+    out_ch     : output dimension of the network
+    use_in     : use instance norm
+    enc_nf     : list of int for the encoder filter size
+    dec_nf     : list of int for the decoder filter size
+    Return
+    ------
+        model : torch model 
+    """
     def __init__(self, input_ch, out_ch, use_in, enc_nf, dec_nf):
         super(Simple_Unet, self).__init__()
 
@@ -171,10 +189,24 @@ class simple_block(nn.Module):
 
 
 """Helper function for brain extractor"""
-from skimage import morphology
 
 
 def clean_mask(mask, threshold=0.2):
+    """
+    Remove small predicted segmentation. It finds the largest connected component.
+    If there are other region/islands that is less than threshold percentage in size, 
+    remove those region. 
+    
+    Arguments
+    ---------
+    mask         : numpy 3D binary mask for use for brain extraction
+    threshold    : remove if not size(obj)/size(largest_component) > threshold
+    
+    Return
+    ------
+        new_mask : cleaned up mask with smaller regions removed
+    """
+
     connected = morphology.label(mask)
     islands = np.unique(connected)[1:]
 
