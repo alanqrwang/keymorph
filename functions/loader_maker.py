@@ -43,6 +43,8 @@ def create(directory,
     paths = []
     subjects = []
     for d in np.sort(os.listdir(directory+'{}/'.format(modality))):
+        if 'ipynb' in d:
+            continue
         paths += [directory+'{}/'.format(modality)+d]
         subjects += [d]
 
@@ -81,4 +83,51 @@ def create(directory,
                                          shuffle= shuffle, 
                                          drop_last= drop_last, 
                                          num_workers=num_workers)     
+    return dataset, loader
+
+def create_simple(directory,
+                  transform,
+                  modality):
+    """
+    Create dataloader
+    
+    Arguments
+    ---------
+    directory  : directory where MRI modilities and skull-stripping mask are located
+    transform  : TorchIO transformation
+    modality   : string T1, T2 or PD
+
+    Return
+    ------
+        dataset : tio.SubjectsDataset
+        loader  : torch.utils.data.DataLoader
+    """
+    
+    modality = modality.upper()
+    
+    """Get PATHS"""
+    paths = []
+    subjects = []
+    for d in np.sort(os.listdir(directory+'{}/'.format(modality))):
+        if 'ipynb' in d:
+            continue
+        paths += [directory+'{}/'.format(modality)+d]
+        subjects += [d]
+
+    indices = np.arange(len(paths))
+    
+    """Making loader"""    
+    loaded_subjects = []
+    for i in range(len(paths)):
+        _ls = tio.Subject(mri= tio.ScalarImage(paths[i]), 
+                          name= subjects[i])
+        loaded_subjects.append(_ls)
+
+    dataset = tio.SubjectsDataset(loaded_subjects,
+                                  transform=transform)
+    
+    loader = torch.utils.data.DataLoader(dataset,
+                                         batch_size= 1,
+                                         shuffle= False, 
+                                         drop_last= False)     
     return dataset, loader

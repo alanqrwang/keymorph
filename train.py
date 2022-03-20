@@ -59,11 +59,9 @@ def train_parser():
                         default=1,
                         help="Constant to control how slow to increase augmentation")
 
-    parser.add_argument("--pretrain_model",
-                        type=str,
-                        dest="pretrain_model",
-                        default="./data/weights/pretrained_model.pth.tar",
-                        help="Pretrain model")
+    parser.add_argument("--scratch",
+                        action='store_true',
+                        help='Train the model from scratch')
     
     parser.add_argument("--save_dir",
                         type=str,
@@ -284,13 +282,14 @@ if __name__ == "__main__":
                           seed=args.seed)
 
     """Model"""    
-    u1 = m.KPmorph(1, args.out_dim, args.norm_type) 
+    u1 = m.KeyMorph(1, args.out_dim, args.norm_type) 
     u1 = torch.nn.DataParallel(u1)
     u1.cuda()
     
-    summary = torch.load(args.pretrain_model)['u1']
-    u1.load_state_dict(summary)    
-    del summary
+    if not args.scratch:
+        summary = torch.load('./weights/pretrained_model.pth.tar')['u1']
+        u1.load_state_dict(summary)    
+        del summary
     
     params = list(u1.parameters())
     optimizer = torch.optim.Adam(params,

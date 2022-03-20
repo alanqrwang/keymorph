@@ -279,7 +279,7 @@ if __name__ == "__main__":
     tc = tc.repeat(args.batch_size,1,1)
 
     """Model"""
-    u1 = m.KPmorph(1, args.out_dim, args.norm_type)
+    u1 = m.KeyMorph(1, args.out_dim, args.norm_type)
     u1 = torch.nn.DataParallel(u1)
     u1.cuda()
 

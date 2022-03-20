@@ -1,7 +1,11 @@
+import torch
+import numpy as np
 import torch.nn as nn
+import torch.nn.functional as F
 from .registration_tools import center_of_mass
 
-class KPmorph(nn.Module):
+"""KeyMorph Model"""
+class KeyMorph(nn.Module):
     """
     Create dataloader
     
@@ -16,7 +20,7 @@ class KPmorph(nn.Module):
     """
     
     def __init__(self, input_ch, out_dim, norm_type):
-        super(KPmorph, self).__init__()
+        super(KeyMorph, self).__init__()
         self.out_dim = out_dim
 
         self.block1 = cm_block(input_ch, 32, 1, norm_type, False)
@@ -90,3 +94,99 @@ class cm_block(nn.Module):
         if self.down_sample:
             out = self.down(out)
         return out
+
+"""Brain Extractor Model"""
+class Simple_Unet(nn.Module):
+    def __init__(self, input_ch, out_ch, use_in, enc_nf, dec_nf):
+        super(Simple_Unet, self).__init__()
+
+        self.down = torch.nn.MaxPool3d(2,2)
+
+        self.block0 = simple_block(input_ch , enc_nf[0], use_in)
+        self.block1 = simple_block(enc_nf[0], enc_nf[1], use_in)
+        self.block2 = simple_block(enc_nf[1], enc_nf[2], use_in)
+        self.block3 = simple_block(enc_nf[2], enc_nf[3], use_in)
+
+        self.block4 = simple_block(enc_nf[3], dec_nf[0], use_in)
+
+        self.block5 = simple_block(dec_nf[0]*2, dec_nf[1], use_in)
+        self.block6 = simple_block(dec_nf[1]*2, dec_nf[2], use_in)
+        self.block7 = simple_block(dec_nf[2]*2, dec_nf[3], use_in)
+        self.block8 = simple_block(dec_nf[3]*2, out_ch,    use_in)
+
+        self.conv = nn.Conv3d(out_ch, out_ch, kernel_size=3, padding=1)
+
+    def forward(self, x_in):
+
+        #Model
+        x0 = self.block0(x_in)
+        x1 = self.block1(self.down(x0))
+        x2 = self.block2(self.down(x1))
+        x3 = self.block3(self.down(x2))
+
+        x = self.block4(self.down(x3))
+        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners = False)
+
+        x = torch.cat([x, x3], 1)
+        x = self.block5(x)
+        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners = False)
+
+        x = torch.cat([x, x2], 1)
+        x = self.block6(x)
+        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners = False)
+
+        x = torch.cat([x, x1], 1)
+        x = self.block7(x)
+        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners = False)
+
+        x = torch.cat([x, x0], 1)
+        x = self.block8(x)
+
+        out = self.conv(x)
+
+        return out
+
+class simple_block(nn.Module):
+    def __init__(self, in_channels, out_channels, use_in):
+        super(simple_block, self).__init__()
+
+        self.use_in= use_in
+
+        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.InstanceNorm3d(out_channels)
+
+        self.activation = nn.ReLU(out_channels)
+
+    def forward(self, x):
+        out = self.conv1(x)
+        if self.use_in:
+            out = self.bn1(out)
+        out = self.activation(out)
+        return out
+    
+"""Helper function for brain extractor"""
+from skimage import morphology
+
+def clean_mask(mask, threshold=0.2):
+    connected = morphology.label(mask)
+    islands = np.unique(connected)[1:]
+
+    islands_size = {}
+    max_size = []
+    for i in islands:
+        size = (connected == i).sum()
+        islands_size[i] = size
+        max_size += [size]
+
+    max_size = np.max(max_size)
+
+    _island_size = islands_size.copy()
+    for key in _island_size:
+        if not islands_size[key]/max_size>threshold:
+            islands_size.pop(key, None)
+
+    new_mask = np.zeros_like(mask).astype('uint8')
+    for key in islands_size:
+        new_mask += (connected==key).astype('uint8')
+        
+    return new_mask

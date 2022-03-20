@@ -35,7 +35,7 @@ def eval_parser():
      
     parser.add_argument("--trained_model", 
                         type=str,
-                        default="./data/weights/trained_model.pth.tar",
+                        default="./weights/trained_model.pth.tar",
                         help="trained_model")
         
     parser.add_argument("--save_dir",
@@ -201,7 +201,7 @@ if __name__ == "__main__":
                                                 seed=23)
     """Model"""
     # Load model + weights
-    u1 = m.KPmorph(1, args.out_dim, args.norm_type) 
+    u1 = m.KeyMorph(1, args.out_dim, args.norm_type) 
     u1 = torch.nn.DataParallel(u1)
     u1.cuda()
     u1.load_state_dict(summary['u1'])    

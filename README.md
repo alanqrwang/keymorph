@@ -18,6 +18,11 @@ We tested our code in Python 3.8 and the following packages:
 - h5py 3.5.0
 - antspyx 0.3.1
 
+## Decrompressing Trained Weights
+The self supervised pretraining and trained model weights are found in the `./data/` folder. Combined the files and decompressed them using:
+
+`cat ./data/weights* | tar xzpvf -`
+
 ## TLDR
 Keypoint registration using close-form solution (equation 2) in the paper can be done as follows:
 
