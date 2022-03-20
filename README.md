@@ -6,7 +6,7 @@ Implementation of KeyMorph, an unsupervised end-to-end learning-based image regi
 We tested our algorithm with ***Python 3.8*** and ***PyTorch 1.10*** and ***Torchvision 0.11.1***. Install the packages with `pip3 install -r requirement.txt`
 
 ## Decrompressing Trained Weights
-The self supervised pretraining and trained model weights are found in the `./data/` folder. Combine and decompress the files and decompress using:
+The self-supervised pretraining, brain extractor and trained model weights are found in the `./data/` folder. Combine and decompress the files using:
 
 `cat ./data/weights* | tar xzpvf -`
 
