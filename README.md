@@ -1,11 +1,11 @@
 # KeyMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection
 
-Implementation of KeyMorph, an unsupervised end-to-end learning-based image registration framework that relies on automatically detecting corresponding keypoints. Our core insight is straightforward: matching keypoints between images can be used to obtain the optimal transformation via a differentiable closed-form expression. We use this observation to drive the unsupervised learning of anatomically-consistent keypoints from images. This not only leads to substantially more robust registration but also yields better interpretability, since the keypoints reveal which parts of the image are driving the final alignment. Moreover, KeyMorph can be designed to be equivariant under image translations and/or symmetric with respect to the input image ordering. We demonstrate the proposed framework in solving 3D affine registration of multi-modal brain MRI scans. Remarkably, we show that this strategy leads to consistent keypoints, even across modalities.
+Implementation of KeyMorph, an end-to-end learning-based image registration framework that relies on automatically detecting corresponding keypoints. Our core insight is straightforward: matching keypoints between images can be used to obtain the optimal transformation via a differentiable closed-form expression. We use this observation to drive the learning of anatomically-consistent keypoints from images. This not only leads to substantially more robust registration but also yields better interpretability, since the keypoints reveal which parts of the image are driving the final alignment. Moreover, KeyMorph can be designed to be equivariant under image translations and/or symmetric with respect to the input image ordering. We demonstrate the proposed framework in solving 3D affine registration of multi-modal brain MRI scans. 
 
 ## Requirements
 We tested our algorithm with ***Python 3.8*** and ***PyTorch 1.10*** and ***Torchvision 0.11.1***. Install the packages with `pip3 install -r requirement.txt`
 
-## Decrompressing Trained Weights
+## Decompressing Trained Weights
 The self-supervised pretraining, brain extractor and trained model weights are found in the `./data/` folder. Combine and decompress the files using:
 
 `cat ./data/weights* | tar xzpvf -`
@@ -52,15 +52,38 @@ x_aligned = F.grid_sample(x_moving,
 
 ### Pretraining KeyMorph
 
-This step greatly helps with the convergence of our model. As explained in section 3.3, we picked 1 subject and random points within the brain of that subject. We then introduce affine transformation to the subject brain and same transformation to the keypoints. In other words, this is a self-supervised task in where the network learns to predict the keypoints on a brain under random affine transformation. We found that initializing our model with these weights helps with the training.
+This step greatly helps with the convergence of our model. We pick 1 subject and random points within the brain of that subject. We then introduce affine transformation to the subject brain and same transformation to the keypoints. In other words, this is a self-supervised task in where the network learns to predict the keypoints on a brain under random affine transformation. We found that initializing our model with these weights helps with the training.
 
  To pretrain run:`python pretraining.py`
 
 ### Training KeyMorph
 We use the weights from the pretraining step to initialized our model. The pretraining weights we used in `./data/weights/pretrained_model.pth.tar`.
-To train KeyMorph run. 
 
-To train run: `python train.py`
+**Affine**
+
+To train unsupervised KeyMorph, use mse as the loss function:
+
+`python train.py --kp_align_method affine --num_keypoints 128 --loss_fn mse`
+
+For unsupervised KeyMorph, optionally add the --kpconsistency flag to optimize keypoint consistency across modalities for same subject:
+
+`python train.py --kp_align_method affine --num_keypoints 128 --loss_fn mse --kpconsistency`
+
+To train supervised KeyMorph with affine transformation and 128 keypoints, use dice as the loss function:
+
+`python train.py --kp_align_method affine --num_keypoints 128 --loss_fn dice --mix_modalities`
+
+Note that `--mix_modalities` allows fixed and moving images to be of different modalities during training. This should not be set for unsupervised training, which uses MSE loss function.
+
+**Nonlinear thin-plate-spline (TPS)**
+
+To train TPS variant of KeyMorph which allows for nonlinear registrations, specify `tps` as the keypoint alignment method and specify the tps lambda value: 
+
+`python train.py --kp_align_method tps --tps_lmbda 0.1 --num_keypoints 128 --loss_fn dice`
+
+The code also supports sampling of tps lambda with respect to some distribution (`uniform`, `lognormal`, `loguniform`). For example, to sample from the `loguniform` distribution during training:
+
+`python train.py --kp_align_method tps --tps_lmbda loguniform --num_keypoints 128 --loss_fn dice`
 
 ### Evaluating KeyMorph
 Once trained, this script goes through the data folder and randomly pick two images as moving and fixed pairs. It then introduces random affine transformation to the moving image and register the image to the fixed image. It outputs a dictionary containing the moving, fixed and aligned image. We provided the trained version of our model in  `./data/weights/trained_model.pth.tar`.
@@ -75,14 +98,16 @@ Examples of how to run the evaluation script:
 
 ... and so on
 
-### Automatic Deliniation/Segmentation of the Brain
+### Automatic Delineation/Segmentation of the Brain
 For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 
 
 ## Contact
 Feel free to open an issue in github for any problems or questions.
 
 ## References
-Evan, M. Yu, et al. "KeyMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection." (2021).
+Evan M. Yu, et al. "KeyMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection." (2021).
+
+Alan Q. Wang, et al. "A Robust and Interpretable Deep Learning Framework for Multi-modal Registration via Keypoints." (2023).
 
 Kleesiek and Urban et al. "Deep MRI brain extraction: A 3D convolutional neural network for skull stripping." NeuroImage (2016).
 
