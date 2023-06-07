@@ -1,10 +1,9 @@
 import os
 import torch
-import sklearn
 import numpy as np
 import torchio as tio
 import torch.nn.functional as F
-from torchio.transforms import Lambda, Compose, RandomBiasField, RandomNoise
+from torchio.transforms import Lambda, RandomBiasField, RandomNoise
 from torch.utils.data import DataLoader
 
 def create(directory,

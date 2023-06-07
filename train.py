@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import random
 from tqdm import tqdm
 from argparse import ArgumentParser
-from scipy.stats import loguniform
 from pathlib import Path
 
 from functions.loader_maker import get_loaders, get_loader_same_sub
@@ -18,17 +17,86 @@ from functions.cm_plotter import show_warped, show_warped_vol
 def parse_args():
     parser = ArgumentParser()
 
+    # I/O
     parser.add_argument("--gpus",
                         type=str,
                         default="0",
                         help="Which GPUs to use? Index from 0")
 
+    parser.add_argument("--save_dir",
+                        type=str,
+                        dest="save_dir",
+                        default="./training_output/",
+                        help="Path to the folder where outputs are saved")
+
+    parser.add_argument("--data_dir",
+                        type=str,
+                        dest="data_dir",
+                        default="./data/centered_IXI/",
+                        help="Path to the training data")
+
+    parser.add_argument('--load_path', type=str, default=None,
+              help='Load checkpoint at .h5 path')
+
+    parser.add_argument("--save_preds",
+                        action='store_true',
+                        help='Perform evaluation')
+
+    parser.add_argument("--visualize",
+                        action='store_true',
+                        help='Visualize images and points')
+
+
+    parser.add_argument('--log_interval', 
+                        type=int,
+                        default=25, 
+                        help='Frequency of logs')
+
+    # KeyMorph
     parser.add_argument("--num_keypoints",
                         type=int,
                         dest="num_keypoints",
                         default=64,
                         help="Number of keypoints")
 
+    parser.add_argument('--kp_extractor', 
+                        type=str,
+                        default='conv_com', 
+                        choices=['conv_fc', 'conv_com'], 
+                        help='Keypoint extractor module to use')
+
+    parser.add_argument('--kp_align_method', 
+                        type=str,
+                        default='affine', 
+                        choices=['affine', 'tps'], 
+                        help='Keypoint alignment module to use')
+
+    parser.add_argument('--tps_lmbda', 
+                        type=float,
+                        default=None, 
+                        help='TPS lambda value')
+
+    parser.add_argument("--kpconsistency",
+                        action='store_true',
+                        help='Minimize keypoint consistency loss')
+
+    # Data
+    parser.add_argument("--downsample",
+                        type=int,
+                        dest="downsample",
+                        default=2,
+                        help="How much to downsample using average pool")
+
+    parser.add_argument('--modalities', 
+                        type=str,
+                        nargs='+', 
+                        default=('T1', 'T2', 'PD'))
+
+    parser.add_argument("--mix_modalities",
+                        action='store_true',
+                        help='Whether or not to mix modalities amongst image pairs')
+
+    # ML
     parser.add_argument("--batch_size",
                         type=int,
                         dest="batch_size",
@@ -47,23 +115,13 @@ def parse_args():
                         default=3e-6,
                         help="Learning rate")
 
-    parser.add_argument("--seed",
-                        type=int,
-                        dest="seed",
-                        default=23,
-                        help="Random seed use to sort the training data")
-
-    parser.add_argument("--save_dir",
+    parser.add_argument('--transform', 
                         type=str,
-                        dest="save_dir",
-                        default="./training_output/",
-                        help="Path to the folder where outputs are saved")
+                        default='none')
 
-    parser.add_argument("--data_dir",
-                        type=str,
-                        dest="data_dir",
-                        default="./data/centered_IXI/",
-                        help="Path to the training data")
+    parser.add_argument('--loss_fn', 
+                        type=str, 
+                        default='mse')
 
     parser.add_argument("--epochs",
                         type=int,
@@ -71,45 +129,10 @@ def parse_args():
                         default=2000,
                         help="Training Epochs")
 
-    parser.add_argument("--downsample",
+    parser.add_argument('--steps_per_epoch', 
                         type=int,
-                        dest="downsample",
-                        default=2,
-                        help="How much to downsample using average pool")
-
-    parser.add_argument('--modalities', 
-                        type=str,
-                        nargs='+', 
-                        default=('T1', 'T2', 'PD'))
-
-    parser.add_argument("--mix_modalities",
-                        action='store_true',
-                        help='Whether or not to mix modalities amongst image pairs')
-
-    parser.add_argument('--transform', type=str,
-              default='none')
-
-    parser.add_argument('--loss_fn', type=str, default='mse')
-
-    parser.add_argument('--kp_align_method', type=str,
-              default='affine', choices=['affine', 'tps'], help='Keypoint alignment module to use')
-
-    parser.add_argument('--arch', type=str,
-              default='conv_com', choices=['conv_fc', 'conv_com'], help='Keypoint extractor module to use')
-
-    parser.add_argument('--dim', 
-                        type=int,
-                        default=3)
-
-    parser.add_argument('--tps_lmbda', type=float,
-              default=None, help='TPS lambda value')
-
-
-    parser.add_argument('--steps_per_epoch', type=int,
-              default=32, help='Number of gradient steps per epoch')
-
-    parser.add_argument('--log_interval', type=int,
-              default=25, help='Frequency of logs')
+                        default=32, 
+                        help='Number of gradient steps per epoch')
 
     parser.add_argument("--eval",
                         action='store_true',
@@ -119,42 +142,21 @@ def parse_args():
                         action='store_true',
                         help='Self-supervised pretraining')
 
-    parser.add_argument('--load_path', type=str, default=None,
-              help='Load checkpoint at .h5 path')
+    # Miscellaneous
+    parser.add_argument("--seed",
+                        type=int,
+                        dest="seed",
+                        default=23,
+                        help="Random seed use to sort the training data")
 
-    parser.add_argument("--save_preds",
-                        action='store_true',
-                        help='Perform evaluation')
 
-    parser.add_argument("--visualize",
-                        action='store_true',
-                        help='Visualize images and points')
+    parser.add_argument('--dim', 
+                        type=int,
+                        default=3)
 
-    parser.add_argument("--kpconsistency",
-                        action='store_true',
-                        help='Minimize keypoint consistency loss')
 
     args = parser.parse_args()
     return args
-
-def _get_lmbda(num_samples, is_train=True):
-    if not is_train and args.tps_lmbda in ['uniform', 'lognormal', 'loguniform']:
-      choices = [0, 0.01, 0.1, 1.0, 10]
-      lmbda = torch.tensor(np.random.choice(choices, size=num_samples)).to(args.device)
-
-    if args.tps_lmbda is None:
-      assert args.kp_align_method != 'tps', 'Need to implement this'
-      lmbda = None
-    elif args.tps_lmbda == 'uniform':
-      lmbda = torch.rand(num_samples).to(args.device) * 10
-    elif args.tps_lmbda == 'lognormal':
-      lmbda = torch.tensor(np.random.lognormal(size=num_samples)).to(args.device)
-    elif args.tps_lmbda == 'loguniform':
-      a, b = 1e-6, 10
-      lmbda = torch.tensor(loguniform.rvs(a, b, size=num_samples)).to(args.device)
-    else:
-      lmbda = torch.tensor(args.tps_lmbda).repeat(num_samples).to(args.device)
-    return lmbda
 
 def step(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner, args, aug_params=None, is_train=True):
     '''Forward pass for one mini-batch step. 
@@ -191,20 +193,20 @@ def step(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner, args, aug_p
           points_m = points_m[:, key_batch_idx]
         
         # Align via keypoints
-        lmbda = _get_lmbda(len(points_m), is_train=is_train)
+        lmbda = utils.get_lmbda(len(points_m), args, is_train=is_train)
         grid = kp_aligner.grid_from_points(points_m, points_f, img_f.shape, lmbda=lmbda)
         img_a, seg_a = utils.align_moving_img(grid, img_m, seg_m)
         points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
 
-        # Compute metrics (remove the ones you don't want to make code faster)
+        # Compute metrics (remove/add as you see fit)
         mse = loss_ops.MSELoss()(img_f, img_a)
         soft_dice = loss_ops.DiceLoss()(seg_a, seg_f)
         hard_dice = loss_ops.DiceLoss(hard=True)(seg_a, seg_f,
                                                 ign_first_ch=True)
-        hausd = loss_ops.hausdorff_distance(seg_a, seg_f)
-        grid = grid.permute(0, 4, 1, 2, 3)
-        jdstd = loss_ops.jdstd(grid)
-        jdlessthan0 = loss_ops.jdlessthan0(grid, as_percentage=True)
+        # hausd = loss_ops.hausdorff_distance(seg_a, seg_f)
+        # grid = grid.permute(0, 4, 1, 2, 3)
+        # jdstd = loss_ops.jdstd(grid)
+        # jdlessthan0 = loss_ops.jdlessthan0(grid, as_percentage=True)
 
         if args.loss_fn == 'mse':
           loss = mse
@@ -222,9 +224,9 @@ def step(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner, args, aug_p
            'softdice': 1-soft_dice.cpu().detach().numpy(),
            'harddice': 1-hard_dice[0].cpu().detach().numpy(),
         #    'harddiceroi': 1-hard_dice[1].cpu().detach().numpy(),
-           'hausd': hausd,
-           'jdstd': jdstd,
-           'jdlessthan0': jdlessthan0,
+        #    'hausd': hausd,
+        #    'jdstd': jdstd,
+        #    'jdlessthan0': jdlessthan0,
         }
 
     if args.visualize:
@@ -276,45 +278,13 @@ def kpconsistency_step(sub1, sub2, network, optimizer, args):
 
     return loss.cpu().detach().numpy()
 
-def pretrain_step(x_fixed, x_moving, seg_fixed, seg_moving, network, optimizer):
-    '''Pretrain for one step.'''
-    del x_moving, seg_fixed, seg_moving
-
-    x_fixed = x_fixed.float().to(args.device)
-    # Deform image and fixed points
-    x_moving, tgt_points = utils.augment_moving(x_fixed, args.random_points)
-
-    optimizer.zero_grad()
-    with torch.set_grad_enabled(True):
-      pred_points = network(x_moving)
-      pred_points = pred_points.view(-1, args.num_keypoints, args.dim)
-
-      loss = F.mse_loss(tgt_points, pred_points)
-      loss.backward()
-      optimizer.step()
-    
-    if args.visualize:
-      show_warped_vol(
-                x_moving[0,0].cpu().detach().numpy(),
-                x_fixed[0,0].cpu().detach().numpy(),
-                x_fixed[0,0].cpu().detach().numpy(),
-                None,
-                None,
-                None,
-                tgt_points[0].cpu().detach().numpy(),
-                args.random_points[0].cpu().detach().numpy(), 
-                pred_points[0].cpu().detach().numpy(),
-                save_dir='./training_output',
-                save_name='0.png')
-    return loss.cpu().detach().numpy(), len(x_fixed)
-
 def run_train(loader,
-        same_subject_loader,
-        network,
-        optimizer,
-        kp_aligner,
-        args,
-        steps_per_epoch=None):
+              same_subject_loader,
+              network,
+              optimizer,
+              kp_aligner,
+              args,
+              steps_per_epoch=None):
     '''Train for one epoch.
     
     Args:
@@ -385,16 +355,16 @@ if __name__ == "__main__":
                                               args.modalities,
                                               args.downsample)
 
-    # Model
+    # CNN, i.e. keypoint extractor
     h_dims = [32, 64, 64, 128, 128, 256, 256, 512]
-    if args.arch == 'conv_fc':
+    if args.kp_extractor == 'conv_fc':
       network = ConvNetFC(args.dim,
                    1, 
                    h_dims, 
                    args.num_keypoints*args.dim,
                    norm_type=args.norm_type)    
       network = torch.nn.DataParallel(network)
-    elif args.arch == 'conv_com':
+    elif args.extractor == 'conv_com':
       network = ConvNetCoM(args.dim,
                    1, 
                    h_dims, 
@@ -406,6 +376,14 @@ if __name__ == "__main__":
     if args.load_path:
         state_dict = torch.load(args.load_path)['state_dict']
         network.load_state_dict(state_dict)
+
+    # Keypoint alignment module
+    if args.kp_align_method == 'affine':
+        kp_aligner = rt.ClosedFormAffine(args.dim)
+    elif args.kp_align_method == 'tps':
+        kp_aligner = rt.TPS(args.dim)
+    else:
+      raise NotImplementedError
 
     # Optimizer
     params = list(network.parameters())
@@ -422,14 +400,6 @@ if __name__ == "__main__":
     save_path = Path(args.save_dir + arguments + '/')
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-
-    # Keypoint alignment module
-    if args.kp_align_method == 'affine':
-        kp_aligner = rt.ClosedFormAffine(args.dim)
-    elif args.kp_align_method == 'tps':
-        kp_aligner = rt.TPS(args.dim)
-    else:
-      raise NotImplementedError
 
     if args.eval:
         # Evaluate on test set

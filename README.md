@@ -1,46 +1,64 @@
-# KeyMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection
+# KeyMorph: Robust Multi-modal Registration via Keypoint Detection
 
 Implementation of KeyMorph, an end-to-end learning-based image registration framework that relies on automatically detecting corresponding keypoints. Our core insight is straightforward: matching keypoints between images can be used to obtain the optimal transformation via a differentiable closed-form expression. We use this observation to drive the learning of anatomically-consistent keypoints from images. This not only leads to substantially more robust registration but also yields better interpretability, since the keypoints reveal which parts of the image are driving the final alignment. Moreover, KeyMorph can be designed to be equivariant under image translations and/or symmetric with respect to the input image ordering. We demonstrate the proposed framework in solving 3D affine registration of multi-modal brain MRI scans. 
 
 ## Requirements
-We tested our algorithm with ***Python 3.8*** and ***PyTorch 1.10*** and ***Torchvision 0.11.1***. Install the packages with `pip3 install -r requirement.txt`
+We tested our algorithm with ***Python 3.8***, ***PyTorch 1.10***, ***Torchvision 0.11.2***, and ***TorchIO 0.18.90***. Install the packages with `pip3 install -r requirement.txt`
 
-## Decompressing Trained Weights
-The self-supervised pretraining, brain extractor and trained model weights are found in the `./data/` folder. Combine and decompress the files using:
+## Downloading Trained Weights
+You can find trained and self-supervised weights for select variants under [Releases](https://github.com/evanmy/keymorph/releases) in this repository.
+Download them and put them in the `./data/` folder.
 
-`cat ./data/weights* | tar xzpvf -`
-
-## TLDR
-Keypoint registration using close-form solution (equation 2) in the paper can be done as follows:
-
-```python
-from functions import registration_tools as rt
-
-# Predict keypoints
-# model ouputs coordinate for each keypoint 
-# this is a tensor [n_batch, 3, n_keypoints] values ranging -1 to 1 (pytorch grid convention)
-
-moving_kp = model(x_moving)
-target_kp = model(x_target)
-
-# Close form
-affine_matrix = rt.close_form_affine(moving_kp, target_kp)
-inv_matrix = torch.zeros(x_moving.size(0), 4, 4)
-inv_matrix[:, :3, :4] = affine_matrix
-inv_matrix[:, 3, 3] = 1
-inv_matrix = torch.inverse(inv_matrix)[:, :3, :]
-grid = F.affine_grid(inv_matrix,
-                     x.size(),
-                     align_corners=False)
-
-# Align
-x_aligned = F.grid_sample(x_moving,
-                          grid=grid,
-                          mode='bilinear',
-                          padding_mode='border',
-                          align_corners=False)
+## Registering brain volumes (TODO)
+For convenience, we provide a script `register.py` which registers two brain volumes using our trained weights.
+To register two volumes with our best-performing model:
 
 ```
+python register.py vol1.nii.gz vol2.nii.gz 
+                   --load_path ./data/numkey512_tps0_dice.4760.h5
+```
+
+## Keypoint extraction and alignment
+The crux of the code is in the `step()` function in `train.py`, which performs one forward pass through the entire KeyMorph pipeline.
+
+Here's a pseudo-code version of the function:
+```
+def step(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
+    '''Forward pass for one mini-batch step. 
+    Variables with (_f, _m, _a) denotes (fixed, moving, aligned).
+    
+    Args:
+        img_f, img_m: Fixed and moving intensity image (bs, 1, l, w, h)
+        seg_f, seg_m: Fixed and moving one-hot segmentation map (bs, num_classes, l, w, h)
+        network: Keypoint extractor network
+        kp_aligner: Affine or TPS keypoint alignment module
+    '''
+    optimizer.zero_grad()
+
+    # Extract keypoints
+    points_f = network(img_f)
+    points_m = network(img_m)
+
+    # Align via keypoints
+    grid = kp_aligner.grid_from_points(points_m, points_f, img_f.shape, lmbda=lmbda)
+    img_a, seg_a = utils.align_moving_img(grid, img_m, seg_m)
+
+    # Compute losses
+    mse = MSELoss()(img_f, img_a)
+    soft_dice = DiceLoss()(seg_a, seg_f)
+
+    if unsupervised:
+        loss = mse
+    else:
+        loss = soft_dice
+
+    # Backward pass
+    loss.backward()
+    optimizer.step()
+```
+The `network` variable is a CNN with center-of-mass layer which extracts keypoints from the input images.
+The `kp_aligner` variable is a keypoint alignment module, which has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be affine or nonlinear.
+
 ## Step-by-Step Guide
 
 ### Dataset 
@@ -54,64 +72,88 @@ x_aligned = F.grid_sample(x_moving,
 
 This step greatly helps with the convergence of our model. We pick 1 subject and random points within the brain of that subject. We then introduce affine transformation to the subject brain and same transformation to the keypoints. In other words, this is a self-supervised task in where the network learns to predict the keypoints on a brain under random affine transformation. We found that initializing our model with these weights helps with the training.
 
- To pretrain run:`python pretraining.py`
+To pretrain run:
+ 
+```
+python pretraining.py
+```
 
 ### Training KeyMorph
-We use the weights from the pretraining step to initialized our model. The pretraining weights we used in `./data/weights/pretrained_model.pth.tar`.
+We use the weights from the pretraining step to initialize our model. 
+Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
 
-**Affine**
+**Affine, Unsupervised**
 
-To train unsupervised KeyMorph, use mse as the loss function:
+To train unsupervised KeyMorph with affine transformation and 128 keypoints, use `mse` as the loss function:
 
-`python train.py --kp_align_method affine --num_keypoints 128 --loss_fn mse`
+```
+python train.py --kp_align_method affine --num_keypoints 128 --loss_fn mse \
+                --data_dir ./data/centered_IXI/ \
+                --load_path ./data/numkey128_pretrain.2500.h5
+```
 
-For unsupervised KeyMorph, optionally add the --kpconsistency flag to optimize keypoint consistency across modalities for same subject:
+For unsupervised KeyMorph, optionally add the `--kpconsistency` flag to optimize keypoint consistency across modalities for same subject:
 
-`python train.py --kp_align_method affine --num_keypoints 128 --loss_fn mse --kpconsistency`
+```
+python train.py --kp_align_method affine --num_keypoints 128 --loss_fn mse --kpconsistency \
+                --data_dir ./data/centered_IXI/ \
+                --load_path ./data/numkey128_pretrain.2500.h5
+```
 
-To train supervised KeyMorph with affine transformation and 128 keypoints, use dice as the loss function:
+**Affine, Supervised**
 
-`python train.py --kp_align_method affine --num_keypoints 128 --loss_fn dice --mix_modalities`
+To train supervised KeyMorph, use `dice` as the loss function:
 
-Note that `--mix_modalities` allows fixed and moving images to be of different modalities during training. This should not be set for unsupervised training, which uses MSE loss function.
+```
+python train.py --kp_align_method affine --num_keypoints 128 --loss_fn dice --mix_modalities \
+                --data_dir ./data/centered_IXI/ \
+                --load_path ./data/numkey128_pretrain.2500.h5
+```
+
+Note that the `--mix_modalities` flag allows fixed and moving images to be of different modalities during training. This should not be set for unsupervised training, which uses MSE as the loss function.
 
 **Nonlinear thin-plate-spline (TPS)**
 
-To train TPS variant of KeyMorph which allows for nonlinear registrations, specify `tps` as the keypoint alignment method and specify the tps lambda value: 
+To train the TPS variant of KeyMorph which allows for nonlinear registrations, specify `tps` as the keypoint alignment method and specify the tps lambda value: 
 
-`python train.py --kp_align_method tps --tps_lmbda 0.1 --num_keypoints 128 --loss_fn dice`
+```
+python train.py --kp_align_method tps --tps_lmbda 0.1 --num_keypoints 128 --loss_fn dice \
+                --data_dir ./data/centered_IXI/ \
+                --load_path ./data/numkey128_pretrain.2500.h5
+```
 
-The code also supports sampling of tps lambda with respect to some distribution (`uniform`, `lognormal`, `loguniform`). For example, to sample from the `loguniform` distribution during training:
+The code also supports sampling lambda according to some distribution (`uniform`, `lognormal`, `loguniform`). For example, to sample from the `loguniform` distribution during training:
 
-`python train.py --kp_align_method tps --tps_lmbda loguniform --num_keypoints 128 --loss_fn dice`
+```
+python train.py --kp_align_method tps --tps_lmbda loguniform --num_keypoints 128 --loss_fn dice \
+                --data_dir ./data/centered_IXI/ \
+                --load_path ./data/numkey128_pretrain.2500.h5
+```
+
+Note that supervised/unsupervised variants can be run similarly to affine, as described above.
 
 ### Evaluating KeyMorph
-Once trained, this script goes through the data folder and randomly pick two images as moving and fixed pairs. It then introduces random affine transformation to the moving image and register the image to the fixed image. It outputs a dictionary containing the moving, fixed and aligned image. We provided the trained version of our model in  `./data/weights/trained_model.pth.tar`.
+To evaluate on the test set, simply at the `--eval` flag to any of the above commands. For example, for affine, unsupervised KeyMorph evaluation:
 
-Examples of how to run the evaluation script:
+```
+python train.py --kp_align_method affine --num_keypoints 128 --loss_fn mse --eval \
+                --load_path ./data/best_trained_model.h5
+```
 
-`python eval.py 0 0` register T1 to T1 images
+Evaluation proceeds by .... TODO()
 
-`python eval.py 1 0` register T1 to T2 images
+**Automatic Delineation/Segmentation of the Brain**
 
-`python eval.py 1 2` register T1 to PD images
-
-... and so on
-
-### Automatic Delineation/Segmentation of the Brain
 For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 
 
 ## Contact
 Feel free to open an issue in github for any problems or questions.
 
 ## References
-Evan M. Yu, et al. "KeyMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection." (2021).
+If this code is useful to you, please consider citing our papers.
+The first conference paper contains the unsupervised, affine version of KeyMorph.
+The second, follow-up journal paper contains the unsupervised/supervised, affine/TPS versions of KeyMorph.
 
-Alan Q. Wang, et al. "A Robust and Interpretable Deep Learning Framework for Multi-modal Registration via Keypoints." (2023).
+Evan M. Yu, et al. "[KeyMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection.](https://openreview.net/forum?id=OrNzjERFybh)" (2021).
 
-Kleesiek and Urban et al. "Deep MRI brain extraction: A 3D convolutional neural network for skull stripping." NeuroImage (2016).
-
-Billot, Benjamin, et al. "A learning strategy for contrast-agnostic MRI segmentation." MIDL (2020).
-
-
-
+Alan Q. Wang, et al. "[A Robust and Interpretable Deep Learning Framework for Multi-modal Registration via Keypoints.](https://arxiv.org/abs/2304.09941)" (2023).
