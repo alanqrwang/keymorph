@@ -131,6 +131,8 @@ python run.py --kp_align_method tps --tps_lmbda 0 --num_keypoints 128 --loss_fn 
                 --load_path ./data/numkey128_pretrain.2500.h5
 ```
 
+Lambda of 0 corresponds to exact keypoint alignment (maximally nonlinear while minimizing bending energy). 
+As lambda approaches infinity, the transformation becomes more and more linear.
 The code also supports sampling lambda according to some distribution (`uniform`, `lognormal`, `loguniform`). For example, to sample from the `loguniform` distribution during training:
 
 ```
