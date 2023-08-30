@@ -1,18 +1,20 @@
 import os
 import torch
 import numpy as np
-import torch.nn.functional as F
 import random
 from tqdm import tqdm
 from argparse import ArgumentParser
 from pathlib import Path
+import wandb
 
-from functions.loader_maker import get_loaders, get_loader_same_sub
-from functions import registration_tools as rt
-from functions import loss_ops
-from functions.model import ConvNetFC, ConvNetCoM
-from functions import utils
-from functions.cm_plotter import show_warped, show_warped_vol
+from keymorph.data.ixi import get_loaders, get_loader_same_sub
+from keymorph import keypoint_aligners as rt
+from keymorph import loss_ops
+from keymorph.model import ConvNetFC, ConvNetCoM
+from keymorph import utils
+from keymorph.step import step
+from keymorph.utils import ParseKwargs, initialize_wandb
+from keymorph.augmentation import augment_pair
 
 def parse_args():
     parser = ArgumentParser()
@@ -26,7 +28,7 @@ def parse_args():
     parser.add_argument("--save_dir",
                         type=str,
                         dest="save_dir",
-                        default="./training_output/",
+                        default="./output/",
                         help="Path to the folder where outputs are saved")
 
     parser.add_argument("--data_dir",
@@ -72,12 +74,12 @@ def parse_args():
                         help='Keypoint alignment module to use')
 
     parser.add_argument('--tps_lmbda', 
-                        type=float,
                         default=None, 
                         help='TPS lambda value')
 
-    parser.add_argument("--kpconsistency",
-                        action='store_true',
+    parser.add_argument("--kpconsistency_coeff",
+                        type=float,
+                        default=0, 
                         help='Minimize keypoint consistency loss')
 
     # Data
@@ -138,9 +140,9 @@ def parse_args():
                         action='store_true',
                         help='Perform evaluation')
 
-    parser.add_argument("--pretrain",
+    parser.add_argument("--debug_mode",
                         action='store_true',
-                        help='Self-supervised pretraining')
+                        help='Debug mode')
 
     # Miscellaneous
     parser.add_argument("--seed",
@@ -149,141 +151,45 @@ def parse_args():
                         default=23,
                         help="Random seed use to sort the training data")
 
-
     parser.add_argument('--dim', 
                         type=int,
                         default=3)
 
 
+    # Weights & Biases
+    parser.add_argument("--use_wandb",
+                        action='store_true',
+                        help='Use Wandb')
+    parser.add_argument('--wandb_api_key_path', type=str,
+                        help="Path to Weights & Biases API Key. If use_wandb is set to True and this argument is not specified, user will be prompted to authenticate.")
+    parser.add_argument('--wandb_kwargs', nargs='*', action=ParseKwargs, default={},
+                        help='keyword arguments for wandb.init() passed as key1=value1 key2=value2')
+
     args = parser.parse_args()
     return args
-
-def step(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner, args, aug_params=None, is_train=True):
-    '''Forward pass for one mini-batch step. 
-    Variables with (_f, _m, _a) denotes (fixed, moving, aligned).
-    
-    Args:
-        img_f, img_m: Fixed and moving intensity image (bs, 1, l, w, h)
-        seg_f, seg_m: Fixed and moving one-hot segmentation map (bs, num_classes, l, w, h)
-        network: Feature extractor network
-        optimizer: Optimizer
-        kp_aligner: Affine or TPS keypoint alignment module
-        args: Other script parameters
-    '''
-    if is_train:
-       assert network.training
-
-    img_f = img_f.float().to(args.device)
-    img_m = img_m.float().to(args.device)
-    seg_f = seg_f.float().to(args.device)
-    seg_m = seg_m.float().to(args.device)
-
-    img_m, seg_m = utils.augment_moving(img_m, seg_m, args, fixed_params=aug_params)
-
-    optimizer.zero_grad()
-    with torch.set_grad_enabled(is_train):
-        points_f = network(img_f)
-        points_m = network(img_m)
-        points_f = points_f.view(-1, args.num_keypoints, args.dim)
-        points_m = points_m.view(-1, args.num_keypoints, args.dim)
-
-        if args.num_keypoints > 256: # Take mini-batch of keypoints
-          key_batch_idx = np.random.choice(args.num_keypoints, size=256, replace=False)
-          points_f = points_f[:, key_batch_idx]
-          points_m = points_m[:, key_batch_idx]
-        
-        # Align via keypoints
-        lmbda = utils.get_lmbda(len(points_m), args, is_train=is_train)
-        grid = kp_aligner.grid_from_points(points_m, points_f, img_f.shape, lmbda=lmbda)
-        img_a, seg_a = utils.align_moving_img(grid, img_m, seg_m)
-        points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
-
-        # Compute metrics (remove/add as you see fit)
-        mse = loss_ops.MSELoss()(img_f, img_a)
-        soft_dice = loss_ops.DiceLoss()(seg_a, seg_f)
-        hard_dice = loss_ops.DiceLoss(hard=True)(seg_a, seg_f,
-                                                ign_first_ch=True)
-        # hausd = loss_ops.hausdorff_distance(seg_a, seg_f)
-        # grid = grid.permute(0, 4, 1, 2, 3)
-        # jdstd = loss_ops.jdstd(grid)
-        # jdlessthan0 = loss_ops.jdlessthan0(grid, as_percentage=True)
-
-        if args.loss_fn == 'mse':
-          loss = mse
-        elif args.loss_fn == 'dice':
-          loss = soft_dice
-
-        if is_train:
-            # Backward pass
-            loss.backward()
-            optimizer.step()
-
-        metrics = {
-           'loss': loss.cpu().detach().numpy(),
-           'mse': mse.cpu().detach().numpy(),
-           'softdice': 1-soft_dice.cpu().detach().numpy(),
-           'harddice': 1-hard_dice[0].cpu().detach().numpy(),
-        #    'harddiceroi': 1-hard_dice[1].cpu().detach().numpy(),
-        #    'hausd': hausd,
-        #    'jdstd': jdstd,
-        #    'jdlessthan0': jdlessthan0,
-        }
-
-    if args.visualize:
-        if args.dim == 2:
-            show_warped(
-                    img_m[0,0].cpu().detach().numpy(),
-                    img_a[0,0].cpu().detach().numpy(),
-                    img_f[0,0].cpu().detach().numpy(),
-                    seg_m[0,0].cpu().detach().numpy(),
-                    seg_a[0,0].cpu().detach().numpy(),
-                    seg_f[0,0].cpu().detach().numpy(),
-                    points_m[0].cpu().detach().numpy(), 
-                    points_f[0].cpu().detach().numpy(),
-                    save_dir='./training_output/',
-                    save_name='0.png')
-        else:
-            show_warped_vol(
-                    img_m[0,0].cpu().detach().numpy(),
-                    img_f[0,0].cpu().detach().numpy(),
-                    img_a[0,0].cpu().detach().numpy(),
-                    seg_m[0,0].cpu().detach().numpy(),
-                    seg_f[0,0].cpu().detach().numpy(),
-                    seg_a[0,0].cpu().detach().numpy(),
-                    points_m[0].cpu().detach().numpy(), 
-                    points_f[0].cpu().detach().numpy(),
-                    points_a[0].cpu().detach().numpy(),
-                    save_dir='./training_output',
-                    save_name='0.png')
-
-    return metrics, \
-           (img_f, img_m, img_a), \
-           (seg_f, seg_m, seg_a), \
-           (points_f, points_m, points_a), \
-           grid
 
 def kpconsistency_step(sub1, sub2, network, optimizer, args):
     sub1 = sub1.float().to(args.device)
     sub2 = sub2.float().to(args.device)
-    sub1, sub2 = utils.augment_pair(sub1, sub2, args)
+    sub1, sub2 = augment_pair(sub1, sub2, args)
 
     optimizer.zero_grad()
     with torch.set_grad_enabled(True):
         points1 = network(sub1)
         points2 = network(sub2)
 
-        loss = loss_ops.MSELoss()(points1, points2)
+        loss = args.kpconsistency_coeff * loss_ops.MSELoss()(points1, points2)
         loss.backward()
         optimizer.step()
 
     return loss.cpu().detach().numpy()
 
 def run_train(loader,
-              same_subject_loader,
               network,
               optimizer,
               kp_aligner,
               args,
+              same_subject_loader=None,
               steps_per_epoch=None):
     '''Train for one epoch.
     
@@ -298,20 +204,25 @@ def run_train(loader,
     ''' 
     network.train()
 
+    if args.kpconsistency_coeff > 0:
+        assert same_subject_loader is not None, 'same_subject_loader must be provided if kpconsistency_coeff > 0'
+        same_subject_iter = iter(same_subject_loader)
     res = []
     for i, (x_fixed, x_moving, seg_fixed, seg_moving) in tqdm(enumerate(loader), 
         total=min(len(loader), steps_per_epoch)):
 
         metrics, _, _, _, _ = step(x_fixed, x_moving, 
-                                   seg_fixed, seg_moving, 
-                                   network, optimizer, 
+                                   network,  
                                    kp_aligner, 
-                                   args)
+                                   args,
+                                   seg_f=seg_fixed, seg_m=seg_moving, 
+                                   optimizer=optimizer,
+                                   )
         res.append(metrics)
 
         # Keypoint consistency loss
-        if args.kpconsistency:
-            sub1, sub2 = iter(same_subject_loader).next()
+        if args.kpconsistency_coeff > 0:
+            sub1, sub2 = next(same_subject_iter)
             kploss = kpconsistency_step(sub1, sub2, network, optimizer, args)
             metrics['kploss'] = kploss
 
@@ -325,6 +236,17 @@ if __name__ == "__main__":
     if args.loss_fn == 'mse':
         assert not args.mix_modalities, 'MSE loss can\'t mix modalities'
 
+    # Path to save outputs
+    arguments = ('[training]keypoints' + str(args.num_keypoints)
+                 + '_batch' + str(args.batch_size)
+                 + '_normType' + str(args.norm_type)
+                 + '_downsample' + str(args.downsample)
+                 + '_lr' + str(args.lr))
+
+    save_path = Path(args.save_dir) / arguments
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
     # Select GPU
     if torch.cuda.is_available():
         args.device = torch.device('cuda:'+str(args.gpus))
@@ -332,7 +254,7 @@ if __name__ == "__main__":
         args.device = torch.device('cpu')
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
-    print('Number of GPUs {}'.format(torch.cuda.device_count()))
+    print('Number of GPUs: {}'.format(torch.cuda.device_count()))
 
     # Set seed
     random.seed(args.seed)
@@ -349,25 +271,25 @@ if __name__ == "__main__":
                                      num_test_subjects=3, 
                                      mix_modalities=args.mix_modalities,
                                      transform=args.transform)
-    same_subject_loader = get_loader_same_sub(args.data_dir,
-                                              args.seed, 
-                                              args.batch_size, 
-                                              args.modalities,
-                                              args.downsample)
+    if args.kpconsistency_coeff > 0:
+        same_subject_loader = get_loader_same_sub(args.data_dir,
+                                                  args.seed, 
+                                                  args.batch_size, 
+                                                  args.modalities,
+                                                  args.downsample)
+    else:
+        same_subject_loader = None                                            
 
     # CNN, i.e. keypoint extractor
-    h_dims = [32, 64, 64, 128, 128, 256, 256, 512]
     if args.kp_extractor == 'conv_fc':
       network = ConvNetFC(args.dim,
                    1, 
-                   h_dims, 
                    args.num_keypoints*args.dim,
                    norm_type=args.norm_type)    
       network = torch.nn.DataParallel(network)
-    elif args.extractor == 'conv_com':
+    elif args.kp_extractor == 'conv_com':
       network = ConvNetCoM(args.dim,
                    1, 
-                   h_dims, 
                    args.num_keypoints,
                    norm_type=args.norm_type)    
     network = torch.nn.DataParallel(network)
@@ -389,17 +311,6 @@ if __name__ == "__main__":
     params = list(network.parameters())
     optimizer = torch.optim.Adam(params,
                                  lr=args.lr)
-
-    # Path to save outputs
-    arguments = ('[training]keypoints' + str(args.num_keypoints)
-                 + '_batch' + str(args.batch_size)
-                 + '_normType' + str(args.norm_type)
-                 + '_downsample' + str(args.downsample)
-                 + '_lr' + str(args.lr))
-
-    save_path = Path(args.save_dir + arguments + '/')
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
 
     if args.eval:
         # Evaluate on test set
@@ -429,10 +340,12 @@ if __name__ == "__main__":
                     total=len(test_loader[mod1])):
                     for j, (img_m, seg_m) in enumerate(test_loader[mod2]):
                         metrics, imgs, segs, points, grid = step(img_f, img_m, 
-                                                                 seg_f, seg_m, 
                                                                  network, optimizer, 
                                                                  kp_aligner, 
-                                                                 args, aug_params=param, is_train=False)
+                                                                 args, aug_params=param, 
+                                                                 is_train=False,
+                                                                 seg_f=seg_f, seg_m=seg_m, 
+                                                                 )
                         print(f'Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}')
                         img_f, img_m, img_a = imgs
                         seg_f, seg_m, seg_a = segs
@@ -470,13 +383,17 @@ if __name__ == "__main__":
         network.train()
         train_loss = []
         best = 1e10
+        
+        if args.use_wandb:
+            initialize_wandb(args)
+
         for epoch in range(1, args.epochs+1):
             epoch_stats = run_train(train_loader,
-                            same_subject_loader,
                             network,
                             optimizer,
                             kp_aligner,
                             args,
+                            same_subject_loader=same_subject_loader,
                             steps_per_epoch=args.steps_per_epoch)
 
             train_loss.append(epoch_stats['loss'])
@@ -484,6 +401,9 @@ if __name__ == "__main__":
             print(f'Epoch {epoch}/{args.epochs}')
             for name, metric in epoch_stats.items():
                 print(f'[Train Stat] {name}: {metric:.5f}')
+
+            if args.use_wandb:
+                wandb.log(epoch_stats)
 
             # Save model
             state = {'epoch': epoch,

@@ -6,12 +6,12 @@ import torchio as tio
 import torch.nn.functional as F
 
 from tqdm import tqdm
-from functions import model as m
+from keymorph import model as m
 from argparse import ArgumentParser
 from torchio.transforms import Lambda
-from functions import cm_plotter as cp
-from functions import augmentation as aug
-from functions import loader_maker as loader
+from keymorph import cm_plotter as cp
+from keymorph import augmentation as aug
+from keymorph import loader_maker as loader
 
 
 def sample_valid_coordinate(x, reg):
@@ -204,25 +204,6 @@ def run(loader,
     pred_cm = cp.get_cm_plot(y_pred, size, size, size)
     pred_cm = cp.blur_cm_plot(pred_cm, 1)
 
-    if PATH is not None:
-        # Project the keypoints to 2D plane to visualize the result
-        vis.view_cm(x[:, :, :, :, [size // 2]],
-                    x[:, :, :, :, [size // 2]],
-                    x[:, :, :, :, [size // 2]],
-                    y_cm.sum(1, True).sum(-1, True),
-                    pred_cm.sum(1, True).sum(-1, True),
-                    epoch=epoch,
-                    suffix='_' + mode,
-                    image_idx=0,
-                    PATH=PATH,
-                    vmin=None,
-                    vmax=None,
-                    titles=['Moved', 'Moved', 'Moved', 'Keypoints', 'Keypoints'])
-        # ignore repeated images
-        del y_cm
-        del pred_cm
-        del x
-
     return stat
 
 
@@ -231,7 +212,6 @@ if __name__ == "__main__":
 
     matplotlib.use('agg')
     import matplotlib.pyplot as plt
-    from functions import visualization as vis
 
     args = parser()
     """Select GPU"""

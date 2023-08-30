@@ -143,3 +143,9 @@ Thumbs.db
 tmp/
 ./notebooks/weights/
 .idea/
+*.h5
+wandb/*
+training_output/*
+output/*
+
+*.sh
