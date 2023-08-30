@@ -3,9 +3,9 @@
 Implementation of KeyMorph, an end-to-end learning-based image registration framework that relies on automatically detecting corresponding keypoints. Our core insight is straightforward: matching keypoints between images can be used to obtain the optimal transformation via a differentiable closed-form expression. We use this observation to drive the learning of anatomically-consistent keypoints from images. This not only leads to substantially more robust registration but also yields better interpretability, since the keypoints reveal which parts of the image are driving the final alignment. Moreover, KeyMorph can be designed to be equivariant under image translations and/or symmetric with respect to the input image ordering. We demonstrate the proposed framework in solving 3D affine registration of multi-modal brain MRI scans. 
 
 ## Requirements
-We tested our algorithm with ***Python 3.8***, ***Pytorch 1.10***, ***Torchvision 0.11.2***, and ***TorchIO 0.18.90***. Install the packages with `pip install -r requirements.txt`
+Install the packages with `pip install -r requirements.txt`
 
-Installation of Pytorch is done separately, according to your GPU and CUDA version.
+You might need to install Pytorch separately, according to your GPU and CUDA version.
 Install Pytorch [here](https://pytorch.org/get-started/locally/).
 
 ## Downloading Trained Weights
@@ -23,7 +23,7 @@ python register.py --moving vol1.nii.gz --fixed vol2.nii.gz
 ```
 
 ## Keypoint extraction and alignment
-The crux of the code is in the `step()` function in `run.py`, which performs one forward pass through the entire KeyMorph pipeline.
+The crux of the code is in the `step()` function in `keymorph/step.py`, which performs one forward pass through the entire KeyMorph pipeline.
 
 Here's a pseudo-code version of the function:
 ```

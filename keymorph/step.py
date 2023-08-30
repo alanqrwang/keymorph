@@ -111,11 +111,10 @@ def step(fixed, moving,
             jdstd = loss_ops.jdstd(grid)
             jdlessthan0 = loss_ops.jdlessthan0(grid, as_percentage=True)
 
-        if is_train:
-            if args.loss_fn == 'mse':
-              loss = mse
-            elif args.loss_fn == 'dice':
-              loss = soft_dice
+        if args.loss_fn == 'mse':
+          loss = mse
+        elif args.loss_fn == 'dice':
+          loss = soft_dice
 
         if is_train:
             # Backward pass

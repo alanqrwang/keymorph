@@ -334,15 +334,16 @@ if __name__ == "__main__":
         for aug in list_of_test_augs:
             for mod in list_of_test_mods:
                 mod1, mod2, param = utils.parse_test_metric(mod, aug)
-                for i, (img_f, seg_f) in tqdm(enumerate(test_loader[mod1]), 
+                for i, fixed in tqdm(enumerate(test_loader[mod1]), 
                     total=len(test_loader[mod1])):
-                    for j, (img_m, seg_m) in enumerate(test_loader[mod2]):
-                        metrics, imgs, segs, points, grid = step(img_f, img_m, 
-                                                                 network, optimizer, 
+                    img_f, seg_f = fixed['img'], fixed['seg']
+                    for j, moving in enumerate(test_loader[mod2]):
+                        img_m, seg_m = moving['img'], moving['seg']
+                        metrics, imgs, segs, points, grid = step(fixed, moving, 
+                                                                 network, 
                                                                  kp_aligner, 
                                                                  args, aug_params=param, 
                                                                  is_train=False,
-                                                                 seg_f=seg_f, seg_m=seg_m, 
                                                                  )
                         print(f'Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}')
                         img_f, img_m, img_a = imgs
