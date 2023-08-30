@@ -167,8 +167,11 @@ Set `--save_preds` flag to save all outputs to disk.
 
 For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 
 
-## Contact
-Feel free to open an issue in github for any problems or questions.
+## Issues
+This repository is being actively maintained. Feel free to open an issue for any problems or questions.
+
+## Legacy code
+For a legacy version of the code, see our [legacy branch](https://github.com/alanqrwang/keymorph/tree/legacy).
 
 ## References
 If this code is useful to you, please consider citing our papers.

@@ -49,7 +49,6 @@ def step(fixed, moving,
          aug_params=None, 
          is_train=True):
     '''Forward pass for one mini-batch step. 
-    Variables with (_f, _m, _a) denotes (fixed, moving, aligned).
     
     Args:
         fixed, moving: Fixed and moving TorchIO Subjects
