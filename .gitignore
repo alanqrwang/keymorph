@@ -149,3 +149,5 @@ training_output/*
 output/*
 
 *.sh
+job_out/*
+job_err/*

@@ -77,6 +77,8 @@ Affine/TPS refers to the type of transformation (linear or non-linear). A hyperp
 We use the weights from the pretraining step to initialize our model. 
 Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
 
+For all commands, optionally add the `--use_wandb` flag to log results to Weights & Biases.
+
 **Affine, Unsupervised**
 
 To train unsupervised KeyMorph with affine transformation and 128 keypoints, use `mse` as the loss function:

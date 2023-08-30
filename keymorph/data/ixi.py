@@ -57,7 +57,7 @@ def create_dataset(directory,
     """Making loader"""
     loaded_subjects = []
     for i in range(len(paths)):
-        _ls = tio.Subject(mri=tio.ScalarImage(paths[i]),
+        _ls = tio.Subject(img=tio.ScalarImage(paths[i]),
                           mask=tio.LabelMap(mask_path[i]),
                           seg = tio.LabelMap(seg_path[i]),
                           name=subjects[i])
@@ -110,13 +110,13 @@ def create_simple(directory,
     return dataset
 
 class IXIDataset(torch.utils.data.Dataset):
-    def __init__(self, root_path, seed, modality, downsample_rate=1, 
+    '''Sample single image'''
+    def __init__(self, root_path, modality, downsample_rate=1, 
                 start_end=(0,427), transform='none'):
         super().__init__()
         self.directory = root_path
-        self.seed = seed
         self.downsample_rate = downsample_rate
-        assert transform in ['none', 'biasfield+noise']
+        assert transform in [None, 'none', 'biasfield+noise']
         if transform is None or transform == 'none':
             self.transform = Lambda(lambda x: x.permute(0,1,3,2))
         elif transform == 'biasfield+noise':
@@ -134,39 +134,31 @@ class IXIDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         fixed_sub = self.dataset[index]
-        mri_fixed = fixed_sub['mri'][tio.DATA]
-        mask_fixed = fixed_sub['mask'][tio.DATA].float()
-        seg_fixed = fixed_sub['seg'][tio.DATA].float()
-        mri_fixed = mask_fixed * mri_fixed
 
-        mri_fixed = F.avg_pool3d(mri_fixed, self.downsample_rate, self.downsample_rate)
-        seg_fixed = F.interpolate(seg_fixed[None], scale_factor=1/self.downsample_rate, mode='nearest')[0]
-        seg_fixed = one_hot(seg_fixed)
+        fixed_sub['img'] = fixed_sub['img'][tio.DATA]
+        fixed_sub['mask'] = fixed_sub['mask'][tio.DATA].float()
+        fixed_sub['seg'] = fixed_sub['seg'][tio.DATA].float()
+        fixed_sub['img'] = fixed_sub['mask'] * fixed_sub['img']
 
-        return mri_fixed, seg_fixed
+        fixed_sub['img'] = F.avg_pool3d(fixed_sub['img'], self.downsample_rate, self.downsample_rate)
+        fixed_sub['seg'] = F.interpolate(fixed_sub['seg'][None], scale_factor=1/self.downsample_rate, mode='nearest')[0]
+        fixed_sub['seg'] = one_hot(fixed_sub['seg'])
+
+        return fixed_sub
 
 class PairedIXIDataset(torch.utils.data.Dataset):
-    def __init__(self, root_path, seed, modalities, downsample_rate=1, 
+    '''Sample pair of images'''
+    def __init__(self, root_path, modalities, downsample_rate=1, 
                 start_end=(0,427), mix_modalities=False, transform='none'):
         super().__init__()
         self.directory = root_path
-        self.seed = seed
         self.downsample_rate = downsample_rate
         self.mix_modalities = mix_modalities
-        assert transform in ['none', 'biasfield+noise']
-        if transform is None or transform == 'none':
-            self.transform = Lambda(lambda x: x.permute(0,1,3,2))
-        elif transform == 'biasfield+noise':
-            self.transform = tio.Compose(
-                            [RandomBiasField(),
-                            RandomNoise(),
-                            Lambda(lambda x: x.permute(0,1,3,2))])
-
-        self.datasets = [create_dataset(self.directory,
-                            start_end=start_end,
-                            modality=m,
-                            transform=self.transform,
-                            ) for m in modalities]
+        self.datasets = [IXIDataset(self.directory, 
+                                   modality=m, 
+                                   downsample_rate=downsample_rate, 
+                                   start_end=start_end, 
+                                   transform=transform) for m in modalities]
         if mix_modalities:
             combine_dataset = None
             for d in self.datasets:
@@ -181,79 +173,28 @@ class PairedIXIDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         if self.mix_modalities:
+            # Dataset is combined modalities
             dataset = self.datasets
         else:
+            # Restrict to single modality 
             mod_idx = np.random.randint(len(self.datasets))
             dataset = self.datasets[mod_idx]
 
         index2 = np.random.randint(0, self.__len__())
+        return dataset[index], dataset[index2]
 
-        fixed_sub = dataset[index]
-        mri_fixed = fixed_sub['mri'][tio.DATA]
-        mask_fixed = fixed_sub['mask'][tio.DATA].float()
-        seg_fixed = fixed_sub['seg'][tio.DATA].float()
-        mri_fixed = mask_fixed * mri_fixed
-
-        moving_sub = dataset[index2]
-        mri_moving = moving_sub['mri'][tio.DATA]
-        mask_moving = moving_sub['mask'][tio.DATA].float()
-        seg_moving = moving_sub['seg'][tio.DATA].float()
-        mri_moving = mask_moving * mri_moving 
-
-        
-        mri_fixed = F.avg_pool3d(mri_fixed, self.downsample_rate, self.downsample_rate)
-        mri_moving = F.avg_pool3d(mri_moving, self.downsample_rate, self.downsample_rate)
-        seg_fixed = F.interpolate(seg_fixed[None], scale_factor=1/self.downsample_rate, mode='nearest')[0]
-        seg_moving = F.interpolate(seg_moving[None], scale_factor=1/self.downsample_rate, mode='nearest')[0]
-
-        seg_fixed = one_hot(seg_fixed)
-        seg_moving = one_hot(seg_moving)
-        return mri_fixed, mri_moving, seg_fixed, seg_moving
-
-class PairedIXIDatasetSameSubject(torch.utils.data.Dataset):
-    def __init__(self, root_path, seed, modalities, downsample_rate=1, 
+class PairedIXIDatasetSameSubject(PairedIXIDataset):
+    '''Sample pair of images from same subject'''
+    def __init__(self, root_path, modalities, downsample_rate=1, 
                start_end=(0,427), transform='none'):
-        super().__init__()
-        self.directory = root_path
-        self.seed = seed
-        self.downsample_rate = downsample_rate
-        assert transform in ['none', 'biasfield+noise']
-        if transform is None or transform == 'none':
-            self.transform = Lambda(lambda x: x.permute(0,1,3,2))
-        elif transform == 'biasfield+noise':
-            self.transform = tio.Compose(
-                            [RandomBiasField(),
-                            RandomNoise(),
-                            Lambda(lambda x: x.permute(0,1,3,2))])
-
-        self.datasets = [create_dataset(self.directory,
-                            start_end=start_end,
-                            modality=m,
-                            transform=self.transform,
-                            ) for m in modalities]
-
-    def __len__(self):
-        return len(self.datasets[0])
+        super().__init__(root_path, modalities, downsample_rate,
+                        start_end, False, transform)
 
     def __getitem__(self, index):
         mod_idxs = np.random.choice(len(self.datasets), size=2, replace=False)
-        mod1 = self.datasets[mod_idxs[0]]
-        mod2 = self.datasets[mod_idxs[1]]
-
-        fixed_sub = mod1[index]
-        mri_fixed = fixed_sub['mri'][tio.DATA]
-        mask_fixed = fixed_sub['mask'][tio.DATA].float()
-        mri_fixed = mask_fixed * mri_fixed
-
-        moving_sub = mod2[index]
-        mri_moving = moving_sub['mri'][tio.DATA]
-        mask_moving = moving_sub['mask'][tio.DATA].float()
-        mri_moving = mask_moving * mri_moving 
-
-        mri_fixed = F.avg_pool3d(mri_fixed, self.downsample_rate, self.downsample_rate)
-        mri_moving = F.avg_pool3d(mri_moving, self.downsample_rate, self.downsample_rate)
-
-        return mri_fixed, mri_moving
+        mod1_dataset = self.datasets[mod_idxs[0]]
+        mod2_dataset = self.datasets[mod_idxs[1]]
+        return mod1_dataset[index], mod2_dataset[index]
 
 def one_hot(asegs):
     subset_regs = [[0,0],   #Background
@@ -287,7 +228,6 @@ def one_hot(asegs):
     return one_hot
 
 def get_loaders(root_path, 
-                seed, 
                 batch_size, 
                 modalities, 
                 downsample_rate, 
@@ -297,15 +237,15 @@ def get_loaders(root_path,
                 transform='none'):
     modalities = [modalities] if not isinstance(modalities, (list, tuple)) else modalities
 
-    ds_train = PairedIXIDataset(root_path, seed, modalities, downsample_rate, 
+    ds_train = PairedIXIDataset(root_path, modalities, downsample_rate, 
                                 start_end=(0, 427), mix_modalities=mix_modalities, 
                                 transform=transform)
-    ds_val = PairedIXIDataset(root_path, seed, modalities, downsample_rate, 
+    ds_val = PairedIXIDataset(root_path, modalities, downsample_rate, 
                               start_end=(428, 428+num_val_subjects), mix_modalities=True)
     ds_test = {}
     for mod in modalities:
         ds_test.update({mod : 
-                        IXIDataset(root_path, seed, mod, downsample_rate, 
+                        IXIDataset(root_path, mod, downsample_rate, 
                                    start_end=(428, 428+num_test_subjects))})
 
     train_loader = DataLoader(ds_train, batch_size=batch_size, shuffle=True)
@@ -316,8 +256,8 @@ def get_loaders(root_path,
                         DataLoader(ds, batch_size=batch_size, shuffle=False)})
     return train_loader, val_loader, test_loader
 
-def get_loader_same_sub(root_path, seed, batch_size, modalities, downsample_rate):
+def get_loader_same_sub(root_path, batch_size, modalities, downsample_rate):
     modalities = [modalities] if not isinstance(modalities, (list, tuple)) else modalities
-    ds_train = PairedIXIDatasetSameSubject(root_path, seed, modalities, downsample_rate, start_end=(0, 427))
+    ds_train = PairedIXIDatasetSameSubject(root_path, modalities, downsample_rate, start_end=(0, 427))
     train_loader = DataLoader(ds_train, batch_size=batch_size, shuffle=True)
     return train_loader

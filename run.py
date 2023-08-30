@@ -13,7 +13,7 @@ from keymorph import loss_ops
 from keymorph.model import ConvNetFC, ConvNetCoM
 from keymorph import utils
 from keymorph.step import step
-from keymorph.utils import ParseKwargs, initialize_wandb
+from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float
 from keymorph.augmentation import augment_pair
 
 def parse_args():
@@ -74,6 +74,7 @@ def parse_args():
                         help='Keypoint alignment module to use')
 
     parser.add_argument('--tps_lmbda', 
+                        type=str_or_float,
                         default=None, 
                         help='TPS lambda value')
 
@@ -169,8 +170,8 @@ def parse_args():
     return args
 
 def kpconsistency_step(sub1, sub2, network, optimizer, args):
-    sub1 = sub1.float().to(args.device)
-    sub2 = sub2.float().to(args.device)
+    sub1 = sub1['img'].float().to(args.device)
+    sub2 = sub2['img'].float().to(args.device)
     sub1, sub2 = augment_pair(sub1, sub2, args)
 
     optimizer.zero_grad()
@@ -208,14 +209,13 @@ def run_train(loader,
         assert same_subject_loader is not None, 'same_subject_loader must be provided if kpconsistency_coeff > 0'
         same_subject_iter = iter(same_subject_loader)
     res = []
-    for i, (x_fixed, x_moving, seg_fixed, seg_moving) in tqdm(enumerate(loader), 
+    for i, (fixed, moving) in tqdm(enumerate(loader), 
         total=min(len(loader), steps_per_epoch)):
 
-        metrics, _, _, _, _ = step(x_fixed, x_moving, 
+        metrics, _, _, _, _ = step(fixed, moving, 
                                    network,  
                                    kp_aligner, 
                                    args,
-                                   seg_f=seg_fixed, seg_m=seg_moving, 
                                    optimizer=optimizer,
                                    )
         res.append(metrics)
@@ -263,7 +263,6 @@ if __name__ == "__main__":
 
     # Data
     train_loader, _, test_loader = get_loaders(args.data_dir, 
-                                     args.seed, 
                                      args.batch_size, 
                                      args.modalities, 
                                      args.downsample, 
@@ -273,7 +272,6 @@ if __name__ == "__main__":
                                      transform=args.transform)
     if args.kpconsistency_coeff > 0:
         same_subject_loader = get_loader_same_sub(args.data_dir,
-                                                  args.seed, 
                                                   args.batch_size, 
                                                   args.modalities,
                                                   args.downsample)

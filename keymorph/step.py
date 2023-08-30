@@ -42,10 +42,9 @@ def _align_moving_img(grid, x_moving, seg_moving=None):
         return x_aligned, seg_aligned
     return x_aligned
 
-def step(img_f, img_m, 
+def step(fixed, moving, 
          network, kp_aligner, 
          args, 
-         seg_f=None, seg_m=None, 
          optimizer=None, 
          aug_params=None, 
          is_train=True):
@@ -53,8 +52,7 @@ def step(img_f, img_m,
     Variables with (_f, _m, _a) denotes (fixed, moving, aligned).
     
     Args:
-        img_f, img_m: Fixed and moving intensity image (bs, 1, l, w, h)
-        seg_f, seg_m: Fixed and moving one-hot segmentation map (bs, num_classes, l, w, h)
+        fixed, moving: Fixed and moving TorchIO Subjects
         network: Feature extractor network
         optimizer: Optimizer
         kp_aligner: Affine or TPS keypoint alignment module
@@ -63,8 +61,11 @@ def step(img_f, img_m,
     if is_train:
        assert network.training
        assert optimizer is not None
-    if seg_f is not None and seg_m is not None:
+    
+    img_f, img_m = fixed['img'], moving['img']
+    if 'seg' in fixed and 'seg' in moving:
         seg_available = True
+        seg_f, seg_m = fixed['seg'], moving['seg']
     else:
         assert args.loss_fn != 'dice', 'Need segmentation maps for dice loss'
         seg_available = False

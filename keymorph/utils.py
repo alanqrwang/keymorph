@@ -25,6 +25,12 @@ def parse_test_metric(mod, aug):
     
     return mod1, mod2, aug_param
 
+def str_or_float(x):
+    try:
+        return float(x)
+    except ValueError:
+        return x
+
 def aggregate_dicts(dicts):
     result = defaultdict(list)
     for d in dicts:
