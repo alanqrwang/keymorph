@@ -151,3 +151,4 @@ output/*
 *.sh
 job_out/*
 job_err/*
+register.ipynb

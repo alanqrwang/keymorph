@@ -1,14 +1,14 @@
 import os
 import torch
+from torch.utils.data import DataLoader
 import numpy as np
 import random
 from argparse import ArgumentParser
-from pathlib import Path
+import torchio as tio
 
-from keymorph import keypoint_aligners as rt
+from keymorph.keypoint_aligners import ClosedFormAffine, TPS
 from keymorph.model import ConvNetFC, ConvNetCoM
 from keymorph.step import step
-import nibabel as nib
 
 def parse_args():
     parser = ArgumentParser()
@@ -39,8 +39,7 @@ def parse_args():
     # KeyMorph
     parser.add_argument("--num_keypoints",
                         type=int,
-                        dest="num_keypoints",
-                        default=64,
+                        required=True,
                         help="Number of keypoints")
 
     parser.add_argument('--kp_extractor', 
@@ -64,6 +63,13 @@ def parse_args():
                         default='instance',
                         choices=['none', 'instance', 'batch', 'group'],
                         help="Normalization type")
+
+    parser.add_argument("--loss_fn",
+                        type=str,
+                        default='mse',
+                        choices=['mse', 'dice'],
+                        help="Loss function")
+
     # Data
     parser.add_argument('--moving', 
                         type=str,
@@ -74,6 +80,10 @@ def parse_args():
                         type=str,
                         required=True,
                         help='Fixed image path')
+    parser.add_argument("--batch_size",
+                        type=int,
+                        default=1,
+                        help="Batch size")
 
     # Miscellaneous
     parser.add_argument("--seed",
@@ -89,14 +99,6 @@ def parse_args():
 
     args = parser.parse_args()
     return args
-
-def _validate_shape(img):
-    assert len(img) >= 3 and len(img.shape) <= 5
-    if len(img.shape) == 3:
-        img = img.unsqueeze(0).unsqueeze(0)
-    elif len(img.shape) == 4:
-        img = img.unsqueeze(0)
-    return img
 
 if __name__ == "__main__":
     args = parse_args()
@@ -116,10 +118,26 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
 
     # Data
-    img_m = torch.tensor(nib.load(args.moving).get_fdata())
-    img_f = torch.tensor(nib.load(args.fixed).get_fdata())
-    img_m = _validate_shape(img_m)
-    img_f = _validate_shape(img_f)
+    transform = tio.Compose([
+    #                 RandomBiasField(),
+    #                 RandomNoise(),
+                    tio.Lambda(lambda x: x.permute(0,1,3,2)),
+                    tio.Resize(128),
+    ])
+    fixed = [tio.Subject(img=tio.ScalarImage(args.fixed))]
+    moving = [tio.Subject(img=tio.ScalarImage(args.moving))]
+    fixed_dataset = tio.SubjectsDataset(fixed, transform=transform)
+    moving_dataset = tio.SubjectsDataset(moving, transform=transform)
+    fixed_loader = DataLoader(
+                  fixed_dataset,
+                  batch_size=args.batch_size,
+                  shuffle=False,
+    )
+    moving_loader = DataLoader(
+                  moving_dataset,
+                  batch_size=args.batch_size,
+                  shuffle=False,
+    )
 
     # CNN, i.e. keypoint extractor
     if args.kp_extractor == 'conv_fc':
@@ -142,21 +160,30 @@ if __name__ == "__main__":
 
     # Keypoint alignment module
     if args.kp_align_method == 'affine':
-        kp_aligner = rt.ClosedFormAffine(args.dim)
+        kp_aligner = ClosedFormAffine(args.dim)
     elif args.kp_align_method == 'tps':
-        kp_aligner = rt.TPS(args.dim)
+        kp_aligner = TPS(args.dim)
     else:
       raise NotImplementedError
 
     network.eval()
 
-    metrics, imgs, points, grid = step(img_f, img_m, 
+    for fixed in fixed_loader:
+        for moving in moving_loader:
+            metrics, imgs, points, grid = step(fixed, moving, 
                                               network, 
                                               kp_aligner, 
                                               args, 
                                               is_train=False)
-    img_f, img_m, img_a = imgs
-    points_f, points_m, points_a = points
+            img_f, img_m, img_a = imgs
+            points_f, points_m, points_a = points
 
-    for name, metric in metrics.items():
-        print(f'[Eval Stat] {name}: {metric:.5f}')
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(1, 3, figsize=(10, 3))
+            axes[0].imshow(img_f[0,0,64].cpu().numpy(), cmap='gray')
+            axes[1].imshow(img_m[0,0,64].cpu().numpy(), cmap='gray')
+            axes[2].imshow(img_a[0,0,64].cpu().numpy(), cmap='gray')
+            plt.show()
+
+            for name, metric in metrics.items():
+                print(f'[Eval Stat] {name}: {metric:.5f}')

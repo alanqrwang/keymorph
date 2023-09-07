@@ -218,7 +218,6 @@ def show_pretrain(moved, fixed, init_points, pred_points, tgt_points,
   plt.show()
 
 def show_warped_vol(moving, fixed, warped, 
-                seg_moving, seg_aligned, seg_fixed,
                 ctl_points, tgt_points, warped_points,
                 suptitle=None,
                 save_dir=None, save_name=None):

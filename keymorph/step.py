@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from scipy.stats import loguniform
+import torchio as tio
 
 from keymorph import loss_ops
 from keymorph.cm_plotter import show_warped, show_warped_vol
@@ -27,20 +28,12 @@ def _get_tps_lmbda(num_samples, args, is_train=True):
         lmbda = torch.tensor(args.tps_lmbda).repeat(num_samples).to(args.device)
     return lmbda
 
-def _align_moving_img(grid, x_moving, seg_moving=None):
-    x_aligned = F.grid_sample(x_moving,
-                              grid=grid,
-                              mode='bilinear',
-                              padding_mode='border',
-                              align_corners=False)
-    if seg_moving is not None:
-        seg_aligned = F.grid_sample(seg_moving,
-                                    grid=grid, 
-                                    mode='bilinear',
-                                    padding_mode='border',
-                                    align_corners=False)
-        return x_aligned, seg_aligned
-    return x_aligned
+def _align_img(grid, x):
+    return F.grid_sample(x,
+                         grid=grid,
+                         mode='bilinear',
+                         padding_mode='border',
+                         align_corners=False)
 
 def step(fixed, moving, 
          network, kp_aligner, 
@@ -50,57 +43,64 @@ def step(fixed, moving,
          is_train=True):
     '''Forward pass for one mini-batch step. 
     
-    Args:
-        fixed, moving: Fixed and moving TorchIO Subjects
-        network: Feature extractor network
-        optimizer: Optimizer
-        kp_aligner: Affine or TPS keypoint alignment module
-        args: Other script parameters
+    :param fixed, moving: Fixed and moving TorchIO Subjects
+    :param network: Feature extractor network
+    :param optimizer: Optimizer
+    :param kp_aligner: Affine or TPS keypoint alignment module
+    :param args: Other script parameters
     '''
     if is_train:
        assert network.training
        assert optimizer is not None
     
-    img_f, img_m = fixed['img'], moving['img']
+    # Get images, masks, and segmentations
+    img_f, img_m = fixed['img'][tio.DATA], moving['img'][tio.DATA]
     if 'seg' in fixed and 'seg' in moving:
         seg_available = True
-        seg_f, seg_m = fixed['seg'], moving['seg']
+        seg_f, seg_m = fixed['seg'][tio.DATA], moving['seg'][tio.DATA]
     else:
-        assert args.loss_fn != 'dice', 'Need segmentation maps for dice loss'
         seg_available = False
 
+    if hasattr(args, 'loss_fn') and args.loss_fn == 'dice':
+        assert seg_available, 'Need segmentation for dice loss'
+
+    # Move to device
     img_f = img_f.float().to(args.device)
     img_m = img_m.float().to(args.device)
     if seg_available:
         seg_f = seg_f.float().to(args.device)
         seg_m = seg_m.float().to(args.device)
 
-    if seg_available:
-        img_m, seg_m = augment_moving(img_m, args, seg=seg_m, fixed_params=aug_params)
-    else:
-        img_m = augment_moving(img_m, args, fixed_params=aug_params)
-
     if is_train:
+        # Explicitly augment moving image
+        if seg_available:
+            img_m, seg_m = augment_moving(img_m, args, seg=seg_m, fixed_params=aug_params)
+        else:
+            img_m = augment_moving(img_m, args, fixed_params=aug_params)
+
         optimizer.zero_grad()
 
     with torch.set_grad_enabled(is_train):
+        # Extract keypoints
         points_f = network(img_f)
         points_m = network(img_m)
         points_f = points_f.view(-1, args.num_keypoints, args.dim)
         points_m = points_m.view(-1, args.num_keypoints, args.dim)
 
         if args.num_keypoints > 256: # Take mini-batch of keypoints
-          key_batch_idx = np.random.choice(args.num_keypoints, size=256, replace=False)
-          points_f = points_f[:, key_batch_idx]
-          points_m = points_m[:, key_batch_idx]
+            key_batch_idx = np.random.choice(args.num_keypoints, size=256, replace=False)
+            points_f = points_f[:, key_batch_idx]
+            points_m = points_m[:, key_batch_idx]
         
         # Align via keypoints
         lmbda = _get_tps_lmbda(len(points_m), args, is_train=is_train)
         grid = kp_aligner.grid_from_points(points_m, points_f, img_f.shape, lmbda=lmbda)
-        img_a, seg_a = _align_moving_img(grid, img_m, seg_m)
+        img_a = _align_img(grid, img_m)
+        if seg_available:
+            seg_a = _align_img(grid, seg_m)
         points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
 
-        # Compute metrics (remove/add as you see fit)
+        # Compute metrics
         mse = loss_ops.MSELoss()(img_f, img_a)
         if seg_available:
             soft_dice = loss_ops.DiceLoss()(seg_a, seg_f)
@@ -111,13 +111,14 @@ def step(fixed, moving,
             jdstd = loss_ops.jdstd(grid)
             jdlessthan0 = loss_ops.jdlessthan0(grid, as_percentage=True)
 
+        # Compute loss
         if args.loss_fn == 'mse':
           loss = mse
         elif args.loss_fn == 'dice':
           loss = soft_dice
 
+        # Perform backward pass
         if is_train:
-            # Backward pass
             loss.backward()
             optimizer.step()
 
@@ -156,9 +157,15 @@ def step(fixed, moving,
                     img_m[0,0].cpu().detach().numpy(),
                     img_f[0,0].cpu().detach().numpy(),
                     img_a[0,0].cpu().detach().numpy(),
-                    seg_m[0,0].cpu().detach().numpy(),
-                    seg_f[0,0].cpu().detach().numpy(),
-                    seg_a[0,0].cpu().detach().numpy(),
+                    points_m[0].cpu().detach().numpy(), 
+                    points_f[0].cpu().detach().numpy(),
+                    points_a[0].cpu().detach().numpy(),
+                    save_dir='./training_output',
+                    save_name='0.png')
+            show_warped_vol(
+                    seg_m.argmax(1)[0].cpu().detach().numpy(),
+                    seg_f.argmax(1)[0].cpu().detach().numpy(),
+                    seg_a.argmax(1)[0].cpu().detach().numpy(),
                     points_m[0].cpu().detach().numpy(), 
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),

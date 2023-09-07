@@ -1,19 +1,21 @@
 import os
 import torch
+from torch.utils.data import DataLoader, ConcatDataset
 import numpy as np
 import random
 from tqdm import tqdm
 from argparse import ArgumentParser
 from pathlib import Path
 import wandb
+import torchio as tio
 
-from keymorph.data.ixi import get_loaders, get_loader_same_sub
-from keymorph import keypoint_aligners as rt
+from keymorph.keypoint_aligners import ClosedFormAffine, TPS
 from keymorph import loss_ops
 from keymorph.model import ConvNetFC, ConvNetCoM
 from keymorph import utils
 from keymorph.step import step
 from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float
+from keymorph.data import ixi
 from keymorph.augmentation import augment_pair
 
 def parse_args():
@@ -58,7 +60,7 @@ def parse_args():
     parser.add_argument("--num_keypoints",
                         type=int,
                         dest="num_keypoints",
-                        default=64,
+                        required=True,
                         help="Number of keypoints")
 
     parser.add_argument('--kp_extractor', 
@@ -90,16 +92,26 @@ def parse_args():
                         default=2,
                         help="How much to downsample using average pool")
 
-    parser.add_argument('--modalities', 
-                        type=str,
-                        nargs='+', 
-                        default=('T1', 'T2', 'PD'))
-
     parser.add_argument("--mix_modalities",
                         action='store_true',
                         help='Whether or not to mix modalities amongst image pairs')
 
+    parser.add_argument("--num_test_subjects",
+                        type=int,
+                        default=100,
+                        help="How much to downsample using average pool")
+
+    parser.add_argument("--num_workers",
+                        type=int,
+                        default=1,
+                        help="Num workers")
+
     # ML
+    parser.add_argument("--dataset",
+                        type=str,
+                        default='ixi',
+                        help="Dataset")
+
     parser.add_argument("--batch_size",
                         type=int,
                         dest="batch_size",
@@ -170,8 +182,8 @@ def parse_args():
     return args
 
 def kpconsistency_step(sub1, sub2, network, optimizer, args):
-    sub1 = sub1['img'].float().to(args.device)
-    sub2 = sub2['img'].float().to(args.device)
+    sub1 = sub1['img'][tio.DATA].float().to(args.device).unsqueeze(0)
+    sub2 = sub2['img'][tio.DATA].float().to(args.device).unsqueeze(0)
     sub1, sub2 = augment_pair(sub1, sub2, args)
 
     optimizer.zero_grad()
@@ -185,56 +197,76 @@ def kpconsistency_step(sub1, sub2, network, optimizer, args):
 
     return loss.cpu().detach().numpy()
 
-def run_train(loader,
+def run_train(fixed_loaders,
+              moving_loaders,
               network,
               optimizer,
               kp_aligner,
-              args,
-              same_subject_loader=None,
-              steps_per_epoch=None):
+              args):
     '''Train for one epoch.
     
     Args:
-        loader: Dataloader for (fixed, moving) pairs 
-        same_subject_loader: Dataloader for keypoint consistency loss
+        fixed_loaders: list of Dataloaders for fixed images
+        moving_loaders: list of Dataloaders for moving images
         network: keypoint extractor
         optimizer: Pytorch optimizer
         kp_aligner: keypoint aligner
         args: Other script arguments
-        steps_per_epoch: int, number of gradient steps per epoch
     ''' 
     network.train()
 
-    if args.kpconsistency_coeff > 0:
-        assert same_subject_loader is not None, 'same_subject_loader must be provided if kpconsistency_coeff > 0'
-        same_subject_iter = iter(same_subject_loader)
     res = []
-    for i, (fixed, moving) in tqdm(enumerate(loader), 
-        total=min(len(loader), steps_per_epoch)):
 
+    fixed_iters = [iter(loader) for loader in fixed_loaders]
+    moving_iters = [iter(loader) for loader in moving_loaders]
+    for _ in range(args.steps_per_epoch):
+        if args.mix_modalities:
+            fixed_iter = random.choice(fixed_iters)
+            moving_iter = random.choice(moving_iters)
+        else:
+            mod_idx = np.random.randint(0, len(fixed_iters))
+            fixed_iter = fixed_iters[mod_idx]
+            moving_iter = moving_iters[mod_idx]
+        
+        fixed, moving = next(fixed_iter), next(moving_iter)
         metrics, _, _, _, _ = step(fixed, moving, 
-                                   network,  
-                                   kp_aligner, 
-                                   args,
-                                   optimizer=optimizer,
-                                   )
+                                  network,  
+                                  kp_aligner, 
+                                  args,
+                                  optimizer=optimizer,
+                                  is_train=True
+                                  )
         res.append(metrics)
 
         # Keypoint consistency loss
         if args.kpconsistency_coeff > 0:
-            sub1, sub2 = next(same_subject_iter)
+            mods = np.random.choice(len(moving_loaders), size=2, replace=False)
+            rand_subject = np.random.randint(0, len(moving_iter))
+            sub1 = moving_loaders[mods[0]].dataset[rand_subject]
+            sub2 = moving_loaders[mods[1]].dataset[rand_subject]
             kploss = kpconsistency_step(sub1, sub2, network, optimizer, args)
             metrics['kploss'] = kploss
 
-        if steps_per_epoch and i == steps_per_epoch:
-            break
-
     return utils.aggregate_dicts(res)
 
-if __name__ == "__main__":
+def print_dataset_stats(datasets, prefix=''):
+    print(f'{prefix} dataset has {len(datasets)} modalities.')
+    for mod_name, mod_dataset in datasets.items():
+        print('-> Modality {} has {} subjects ({} images, {} masks and {} segmentations)'.format(
+            mod_name,
+            len(mod_dataset),
+            sum('img' in s for s in mod_dataset.dry_iter()),
+            sum('mask' in s for s in mod_dataset.dry_iter()),
+            sum('seg' in s for s in mod_dataset.dry_iter()),
+        ))
+        print(f'-> Transform: {mod_dataset._transform}')
+
+def main():
     args = parse_args()
     if args.loss_fn == 'mse':
         assert not args.mix_modalities, 'MSE loss can\'t mix modalities'
+    if args.debug_mode:
+        args.steps_per_epoch = 3
 
     # Path to save outputs
     arguments = ('[training]keypoints' + str(args.num_keypoints)
@@ -244,7 +276,7 @@ if __name__ == "__main__":
                  + '_lr' + str(args.lr))
 
     save_path = Path(args.save_dir) / arguments
-    if not os.path.exists(save_path):
+    if not os.path.exists(save_path) and not args.debug_mode:
         os.makedirs(save_path)
 
     # Select GPU
@@ -262,21 +294,53 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
 
     # Data
-    train_loader, _, test_loader = get_loaders(args.data_dir, 
-                                     args.batch_size, 
-                                     args.modalities, 
-                                     args.downsample, 
-                                     num_val_subjects=3, 
-                                     num_test_subjects=3, 
-                                     mix_modalities=args.mix_modalities,
-                                     transform=args.transform)
-    if args.kpconsistency_coeff > 0:
-        same_subject_loader = get_loader_same_sub(args.data_dir,
-                                                  args.batch_size, 
-                                                  args.modalities,
-                                                  args.downsample)
+    if args.dataset == 'ixi':
+        modalities = ['T1', 'T2', 'PD']
+    
+        transform = tio.Compose([
+        #                 RandomBiasField(),
+        #                 RandomNoise(),
+                        tio.Lambda(lambda x: x.permute(0,1,3,2)),
+                        tio.Mask(masking_method='mask'),
+                        tio.Resize(128),
+                        tio.Lambda(ixi.one_hot, include=('seg')),
+        ])
+
+        fixed_datasets = {}
+        moving_datasets = {}
+        test_datasets = {}
+        for mod in modalities:
+            train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
+            fixed_datasets[mod] = tio.data.SubjectsDataset(train_subjects, transform=transform)
+            train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
+            moving_datasets[mod] = tio.data.SubjectsDataset(train_subjects, transform=transform)
+            test_subjects = ixi.read_subjects_from_disk(args.data_dir, (428, 428+args.num_test_subjects), mod)
+            test_datasets[mod] = tio.data.SubjectsDataset(test_subjects, transform=transform)
     else:
-        same_subject_loader = None                                            
+        raise NotImplementedError
+
+    print_dataset_stats(fixed_datasets, 'Fixed train')
+    print_dataset_stats(moving_datasets, 'Moving train')
+    print_dataset_stats(test_datasets, 'Test')
+
+    fixed_loaders = {k : DataLoader(v, 
+                                    batch_size=args.batch_size, 
+                                    shuffle=True, 
+                                    num_workers=args.num_workers) for k, v in fixed_datasets.items()}
+    moving_loaders = {k : DataLoader(v, 
+                                    batch_size=args.batch_size, 
+                                    shuffle=True, 
+                                    num_workers=args.num_workers) for k, v in moving_datasets.items()}
+
+    test_loaders = {k : DataLoader(v, 
+                                   batch_size=args.batch_size, 
+                                   shuffle=False) for k, v in test_datasets.items()}
+
+    if args.kpconsistency_coeff > 0:
+        assert len(moving_datasets) > 1, \
+            'Need more than one modality to compute keypoint consistency loss'
+        assert all([len(fd) == len(md) for fd, md in zip(fixed_datasets, moving_datasets)]), \
+            'Must have same number of subjects for fixed and moving datasets'
 
     # CNN, i.e. keypoint extractor
     if args.kp_extractor == 'conv_fc':
@@ -299,9 +363,9 @@ if __name__ == "__main__":
 
     # Keypoint alignment module
     if args.kp_align_method == 'affine':
-        kp_aligner = rt.ClosedFormAffine(args.dim)
+        kp_aligner = ClosedFormAffine(args.dim)
     elif args.kp_align_method == 'tps':
-        kp_aligner = rt.TPS(args.dim)
+        kp_aligner = TPS(args.dim)
     else:
       raise NotImplementedError
 
@@ -311,7 +375,6 @@ if __name__ == "__main__":
                                  lr=args.lr)
 
     if args.eval:
-        # Evaluate on test set
         network.eval()
 
         list_of_test_mods = [
@@ -334,10 +397,10 @@ if __name__ == "__main__":
         for aug in list_of_test_augs:
             for mod in list_of_test_mods:
                 mod1, mod2, param = utils.parse_test_metric(mod, aug)
-                for i, fixed in tqdm(enumerate(test_loader[mod1]), 
-                    total=len(test_loader[mod1])):
+                for i, fixed in tqdm(enumerate(test_loaders[mod1]), 
+                    total=len(test_loaders[mod1])):
                     img_f, seg_f = fixed['img'], fixed['seg']
-                    for j, moving in enumerate(test_loader[mod2]):
+                    for j, moving in enumerate(test_loaders[mod2]):
                         img_m, seg_m = moving['img'], moving['seg']
                         metrics, imgs, segs, points, grid = step(fixed, moving, 
                                                                  network, 
@@ -350,7 +413,7 @@ if __name__ == "__main__":
                         seg_f, seg_m, seg_a = segs
                         points_f, points_m, points_a = points
 
-                        if args.save_preds:
+                        if args.save_preds and not args.debug_mode:
                             assert args.batch_size == 1 # TODO: fix this
                             img_f_path =    save_path / 'data' / f'img_f_{i}-{mod1}.npy'
                             seg_f_path =    save_path / 'data' / f'seg_f_{i}-{mod1}.npy'
@@ -378,22 +441,20 @@ if __name__ == "__main__":
                             print(f'[Eval Stat] {name}: {metric:.5f}')
     
     else:
-        # Train
         network.train()
         train_loss = []
         best = 1e10
         
-        if args.use_wandb:
+        if args.use_wandb and not args.debug_mode:
             initialize_wandb(args)
 
         for epoch in range(1, args.epochs+1):
-            epoch_stats = run_train(train_loader,
-                            network,
-                            optimizer,
-                            kp_aligner,
-                            args,
-                            same_subject_loader=same_subject_loader,
-                            steps_per_epoch=args.steps_per_epoch)
+            epoch_stats = run_train(list(fixed_loaders.values()),
+                                    list(moving_loaders.values()),
+                                    network,
+                                    optimizer,
+                                    kp_aligner,
+                                    args)
 
             train_loss.append(epoch_stats['loss'])
 
@@ -401,7 +462,7 @@ if __name__ == "__main__":
             for name, metric in epoch_stats.items():
                 print(f'[Train Stat] {name}: {metric:.5f}')
 
-            if args.use_wandb:
+            if args.use_wandb and not args.debug_mode:
                 wandb.log(epoch_stats)
 
             # Save model
@@ -410,8 +471,11 @@ if __name__ == "__main__":
                     'state_dict': network.state_dict(),
                     'optimizer': optimizer.state_dict()}
 
-            if train_loss[-1] < best:
+            if train_loss[-1] < best and not args.debug_mode:
                 best = train_loss[-1]
                 torch.save(state, os.path.join(save_path, 'best_trained_model.pth.tar'))
-            if epoch % args.log_interval == 0:
+            if epoch % args.log_interval == 0 and not args.debug_mode:
                 torch.save(state, os.path.join(save_path, 'epoch{}_trained_model.pth.tar'.format(epoch)))
+
+if __name__ == "__main__":
+    main()
