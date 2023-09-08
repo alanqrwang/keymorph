@@ -71,7 +71,7 @@ Use `run.py` to train KeyMorph.
 We use the weights from the pretraining step to initialize our model. 
 Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
 
-The ``--num_keypoints <num_key>" flag specifies the number of keypoints to extract per image as <num_key>.
+The `--num_keypoints <num_key>` flag specifies the number of keypoints to extract per image as `<num_key>`.
 For all commands, optionally add the `--use_wandb` flag to log results to Weights & Biases.
 
 This repository supports several variants of training KeyMorph.
