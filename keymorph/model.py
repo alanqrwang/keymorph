@@ -28,9 +28,7 @@ class KeyMorph(nn.Module):
         '''Forward pass for one mini-batch step. 
         
         :param img_f, img_m: Fixed and moving images 
-        :param network: Feature extractor network
-        :param kp_aligner: Affine or TPS keypoint alignment module
-        :param args: Other script parameters
+        :param tps_lmbda: Lambda value for TPS
         '''
         # Extract keypoints
         points_f, points_m = self.extract_keypoints_step(img_f, img_m)
