@@ -1,90 +1,54 @@
-import torch
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from skimage import morphology
-from . import layers
 
-h_dims = [32, 64, 64, 128, 128, 256, 256, 512]
-class ConvNetFC(nn.Module):
-  def __init__(self, dim, input_ch, out_dim, norm_type):
-    super(ConvNetFC, self).__init__()
-    self.dim = dim
+class KeyMorph(nn.Module):
+    def __init__(self, keypoint_extractor, keypoint_aligner, num_keypoints, dim, max_train_keypoints=256):
+        '''Forward pass for one mini-batch step. 
+        
+        :param keypoint_extractor: Keypoint extractor network
+        :param kp_aligner: Affine or TPS keypoint alignment module
+        :param num_keypoitns: Number of keypoints
+        :param dim: Dimension 
+        :param max_train_keypoints: Maximum number of keypoints to use during training
+        '''
+        super(KeyMorph, self).__init__()
+        self.keypoint_extractor = keypoint_extractor
+        self.keypoint_aligner = keypoint_aligner
+        self.num_keypoints = num_keypoints
+        self.dim = dim
+        self.max_train_keypoints = max_train_keypoints
 
-    self.block1 = layers.ConvBlock(input_ch, h_dims[0], 1, norm_type, False, dim)
-    self.block2 = layers.ConvBlock(h_dims[0], h_dims[1], 1, norm_type, False, dim)
+    def forward(self,
+                img_f, img_m, 
+                tps_lmbda):
+        '''Forward pass for one mini-batch step. 
+        
+        :param img_f, img_m: Fixed and moving images 
+        :param network: Feature extractor network
+        :param kp_aligner: Affine or TPS keypoint alignment module
+        :param args: Other script parameters
+        '''
+        # Extract keypoints
+        points_f, points_m = self.extract_keypoints_step(img_f, img_m)
+        points_f = points_f.view(-1, self.num_keypoints, self.dim)
+        points_m = points_m.view(-1, self.num_keypoints, self.dim)
 
-    self.block3 = layers.ConvBlock(h_dims[1], h_dims[2], 1, norm_type, False, dim)
-    self.block4 = layers.ConvBlock(h_dims[2], h_dims[3], 1, norm_type, False, dim)
+        if self.training and self.num_keypoints > self.max_train_keypoints: 
+            # Take mini-batch of keypoints
+            key_batch_idx = np.random.choice(self.num_keypoints, size=256, replace=False)
+            points_f = points_f[:, key_batch_idx]
+            points_m = points_m[:, key_batch_idx]
+        
+        # Align via keypoints
+        grid = self.keypoint_aligner.grid_from_points(points_m, points_f, img_f.shape, lmbda=tps_lmbda)
+        return grid, points_f, points_m
 
-    self.block5 = layers.ConvBlock(h_dims[3], h_dims[4], 1, norm_type, False, dim)
-    self.block6 = layers.ConvBlock(h_dims[4], h_dims[5], 1, norm_type, False, dim)
-
-    self.block7 = layers.ConvBlock(h_dims[5], h_dims[6], 1, norm_type, False, dim)
-    self.block8 = layers.ConvBlock(h_dims[6], h_dims[7], 1, norm_type, False, dim)
-
-    self.fc = nn.Linear(h_dims[7], out_dim)
-
-  def forward(self, x):
-
-    out = self.block1(x)
-    out = self.block2(out)
-    out = self.block3(out)
-    out = self.block4(out)
-    out = self.block5(out)
-    out = self.block6(out)
-    out = self.block7(out)
-    out = self.block8(out)
-
-    if self.dim == 2:
-      out = F.avg_pool2d(out,
-                kernel_size=out.size()[-1]).view(out.size()[0],-1)
-    elif self.dim == 3:
-      out = F.avg_pool3d(out,
-                kernel_size=out.size()[-1]).view(out.size()[0],-1)
-
-    out = self.fc(out)
-    out = torch.sigmoid(out)
-    return out*2-1 #[-1, 1] for F.grid_sample
-
-class ConvNetCoM(nn.Module):
-  def __init__(self, dim, input_ch, out_dim, norm_type):
-    super(ConvNetCoM, self).__init__()
-    self.dim = dim
-
-    self.block1 = layers.ConvBlock(input_ch, h_dims[0], 1, norm_type, False, dim)
-    self.block2 = layers.ConvBlock(h_dims[0], h_dims[1], 1, norm_type, True, dim)
-
-    self.block3 = layers.ConvBlock(h_dims[1], h_dims[2], 1, norm_type, False, dim)
-    self.block4 = layers.ConvBlock(h_dims[2], h_dims[3], 1, norm_type, True, dim)
-
-    self.block5 = layers.ConvBlock(h_dims[3], h_dims[4], 1, norm_type, False, dim)
-    self.block6 = layers.ConvBlock(h_dims[4], h_dims[5], 1, norm_type, True, dim)
-
-    self.block7 = layers.ConvBlock(h_dims[5], h_dims[6], 1, norm_type, False, dim)
-    self.block8 = layers.ConvBlock(h_dims[6], h_dims[7], 1, norm_type, True, dim)
-
-    self.block9 = layers.ConvBlock(h_dims[7], out_dim, 1, norm_type, False, dim)
-    if self.dim == 2:
-      self.com = layers.CenterOfMass2d()
-    elif self.dim == 3:
-      self.com = layers.CenterOfMass3d()
-    self.relu = nn.ReLU()
-
-  def forward(self, x):
-    out = self.block1(x)
-    out = self.block2(out)
-    out = self.block3(out)
-    out = self.block4(out)
-    out = self.block5(out)
-    out = self.block6(out)
-    out = self.block7(out)
-    out = self.block8(out)
-    out = self.block9(out)
-    out = self.relu(out)
-    out = self.com(out)
-    return out*2-1 #[-1, 1] for F.grid_sample
+    def extract_keypoints_step(self, img1, img2):
+        return self.keypoint_extractor(img1), self.keypoint_extractor(img2)
 
 class Simple_Unet(nn.Module):   	
     """	

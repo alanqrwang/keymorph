@@ -3,11 +3,11 @@
 End-to-end learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
 
 ## TLDR in code
-The crux of the code is in the `step()` function in `keymorph/step.py`, which performs one forward pass through the entire KeyMorph pipeline.
+The crux of the code is in the `forward()` function in `keymorph/model.py`, which performs one forward pass through the entire KeyMorph pipeline.
 
 Here's a pseudo-code version of the function:
 ```
-def step(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
+def forward(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
     '''Forward pass for one mini-batch step. 
     Variables with (_f, _m, _a) denotes (fixed, moving, aligned).
     

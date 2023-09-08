@@ -3,7 +3,6 @@ import torch
 from torch.utils.data import DataLoader
 import numpy as np
 import random
-from tqdm import tqdm
 from argparse import ArgumentParser
 from pathlib import Path
 import wandb
@@ -12,9 +11,9 @@ from scipy.stats import loguniform
 
 from keymorph.keypoint_aligners import ClosedFormAffine, TPS
 from keymorph import loss_ops
-from keymorph.model import ConvNetFC, ConvNetCoM
+from keymorph.net import ConvNetFC, ConvNetCoM
+from keymorph.model import KeyMorph
 from keymorph import utils
-from keymorph.step import step, extract_keypoints_step
 from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float, align_img
 from keymorph.data import ixi
 from keymorph.augmentation import augment_pair
@@ -197,7 +196,7 @@ def _get_tps_lmbda(num_samples, args, is_train=True):
 
 def run_train(fixed_loaders,
               moving_loaders,
-              network,
+              registration_model,
               optimizer,
               kp_aligner,
               args):
@@ -211,7 +210,7 @@ def run_train(fixed_loaders,
         kp_aligner: keypoint aligner
         args: Other script arguments
     ''' 
-    network.train()
+    registration_model.train()
 
     res = []
 
@@ -252,13 +251,9 @@ def run_train(fixed_loaders,
         lmbda = _get_tps_lmbda(len(img_f), args, is_train=True)
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
-            grid, points_f, points_m = step(img_f, img_m, 
-                                            network,  
-                                            kp_aligner, 
-                                            lmbda,
-                                            args.num_keypoints,
-                                            args.dim
-                                            )
+            grid, points_f, points_m = registration_model(img_f, img_m, 
+                                                          lmbda,
+                                                          )
         img_a = align_img(grid, img_m)
         if seg_available:
             seg_a = align_img(grid, seg_m)
@@ -302,7 +297,7 @@ def run_train(fixed_loaders,
 
             optimizer.zero_grad()
             with torch.set_grad_enabled(True):
-                points1, points2 = extract_keypoints_step(sub1, sub2, network)
+                points1, points2 = registration_model.extract_keypoints_step(sub1, sub2)
 
             kploss = args.kpconsistency_coeff * loss_ops.MSELoss()(points1, points2)
             kploss.backward()
@@ -356,7 +351,6 @@ def print_dataset_stats(datasets, prefix=''):
             sum('mask' in s for s in mod_dataset.dry_iter()),
             sum('seg' in s for s in mod_dataset.dry_iter()),
         ))
-        print(f'-> Transform: {mod_dataset._transform}')
 
 def main():
     args = parse_args()
@@ -465,6 +459,9 @@ def main():
         kp_aligner = TPS(args.dim)
     else:
       raise NotImplementedError
+    
+    # Keypoint model
+    registration_model = KeyMorph(network, kp_aligner, args.num_keypoints, args.dim)
 
     # Optimizer
     params = list(network.parameters())
@@ -494,8 +491,7 @@ def main():
         for aug in list_of_test_augs:
             for mod in list_of_test_mods:
                 mod1, mod2, param = utils.parse_test_metric(mod, aug)
-                for i, fixed in tqdm(enumerate(test_loaders[mod1]), 
-                    total=len(test_loaders[mod1])):
+                for i, fixed in enumerate(test_loaders[mod1]):
                     for j, moving in enumerate(test_loaders[mod2]):
                         print(f'Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}')
                         img_f, img_m = fixed['img'][tio.DATA], moving['img'][tio.DATA]
@@ -520,13 +516,9 @@ def main():
                         lmbda = _get_tps_lmbda(len(img_f), args, is_train=False)
 
                         with torch.set_grad_enabled(False):
-                            grid, points_f, points_m = step(img_f, img_m, 
-                                                            network, 
-                                                            kp_aligner, 
-                                                            lmbda,
-                                                            args.num_keypoints,
-                                                            args.dim,
-                                                            )
+                            grid, points_f, points_m = registration_model(img_f, img_m, 
+                                                                          lmbda,
+                                                                          )
                         img_a = align_img(grid, img_m)
                         if seg_available:
                             seg_a = align_img(grid, seg_m)
@@ -584,11 +576,10 @@ def main():
         for epoch in range(1, args.epochs+1):
             epoch_stats = run_train(list(fixed_loaders.values()),
                                     list(moving_loaders.values()),
-                                    network,
+                                    registration_model,
                                     optimizer,
                                     kp_aligner,
                                     args)
-            print(epoch_stats)
             train_loss.append(epoch_stats['loss'])
 
             print(f'Epoch {epoch}/{args.epochs}')
