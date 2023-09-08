@@ -63,6 +63,8 @@ python register.py --moving vol1.nii.gz --fixed vol2.nii.gz
                    --num_keypoints 512
 ```
 
+For all inputs, ensure that pixel values are min-max normalized to the $[0,1]$ range and that the spatial dimensions are $(L, W, H) = (128, 128, 128)$.
+
 ## Training KeyMorph
 Use `run.py` to train KeyMorph.
 
