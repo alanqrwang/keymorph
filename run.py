@@ -1,6 +1,6 @@
 import os
 import torch
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader
 import numpy as np
 import random
 from tqdm import tqdm
@@ -8,15 +8,18 @@ from argparse import ArgumentParser
 from pathlib import Path
 import wandb
 import torchio as tio
+from scipy.stats import loguniform
 
 from keymorph.keypoint_aligners import ClosedFormAffine, TPS
 from keymorph import loss_ops
 from keymorph.model import ConvNetFC, ConvNetCoM
 from keymorph import utils
-from keymorph.step import step
-from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float
+from keymorph.step import step, extract_keypoints_step
+from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float, align_img
 from keymorph.data import ixi
 from keymorph.augmentation import augment_pair
+from keymorph.augmentation import augment_moving
+from keymorph.cm_plotter import show_warped, show_warped_vol
 
 def parse_args():
     parser = ArgumentParser()
@@ -29,13 +32,11 @@ def parse_args():
 
     parser.add_argument("--save_dir",
                         type=str,
-                        dest="save_dir",
                         default="./output/",
                         help="Path to the folder where outputs are saved")
 
     parser.add_argument("--data_dir",
                         type=str,
-                        dest="data_dir",
                         default="./data/centered_IXI/",
                         help="Path to the training data")
 
@@ -59,7 +60,6 @@ def parse_args():
     # KeyMorph
     parser.add_argument("--num_keypoints",
                         type=int,
-                        dest="num_keypoints",
                         required=True,
                         help="Number of keypoints")
 
@@ -88,7 +88,6 @@ def parse_args():
     # Data
     parser.add_argument("--downsample",
                         type=int,
-                        dest="downsample",
                         default=2,
                         help="How much to downsample using average pool")
 
@@ -126,7 +125,6 @@ def parse_args():
 
     parser.add_argument("--lr",
                         type=float,
-                        dest="lr",
                         default=3e-6,
                         help="Learning rate")
 
@@ -140,7 +138,6 @@ def parse_args():
 
     parser.add_argument("--epochs",
                         type=int,
-                        dest="epochs",
                         default=2000,
                         help="Training Epochs")
 
@@ -160,14 +157,12 @@ def parse_args():
     # Miscellaneous
     parser.add_argument("--seed",
                         type=int,
-                        dest="seed",
                         default=23,
                         help="Random seed use to sort the training data")
 
     parser.add_argument('--dim', 
                         type=int,
                         default=3)
-
 
     # Weights & Biases
     parser.add_argument("--use_wandb",
@@ -181,21 +176,24 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def kpconsistency_step(sub1, sub2, network, optimizer, args):
-    sub1 = sub1['img'][tio.DATA].float().to(args.device).unsqueeze(0)
-    sub2 = sub2['img'][tio.DATA].float().to(args.device).unsqueeze(0)
-    sub1, sub2 = augment_pair(sub1, sub2, args)
+def _get_tps_lmbda(num_samples, args, is_train=True):
+    if not is_train and args.tps_lmbda in ['uniform', 'lognormal', 'loguniform']:
+        choices = [0, 0.01, 0.1, 1.0, 10]
+        lmbda = torch.tensor(np.random.choice(choices, size=num_samples)).to(args.device)
 
-    optimizer.zero_grad()
-    with torch.set_grad_enabled(True):
-        points1 = network(sub1)
-        points2 = network(sub2)
-
-        loss = args.kpconsistency_coeff * loss_ops.MSELoss()(points1, points2)
-        loss.backward()
-        optimizer.step()
-
-    return loss.cpu().detach().numpy()
+    if args.tps_lmbda is None:
+        assert args.kp_align_method != 'tps', 'Need to implement this'
+        lmbda = None
+    elif args.tps_lmbda == 'uniform':
+        lmbda = torch.rand(num_samples).to(args.device) * 10
+    elif args.tps_lmbda == 'lognormal':
+        lmbda = torch.tensor(np.random.lognormal(size=num_samples)).to(args.device)
+    elif args.tps_lmbda == 'loguniform':
+        a, b = 1e-6, 10
+        lmbda = torch.tensor(loguniform.rvs(a, b, size=num_samples)).to(args.device)
+    else:
+        lmbda = torch.tensor(args.tps_lmbda).repeat(num_samples).to(args.device)
+    return lmbda
 
 def run_train(fixed_loaders,
               moving_loaders,
@@ -229,14 +227,67 @@ def run_train(fixed_loaders,
             moving_iter = moving_iters[mod_idx]
         
         fixed, moving = next(fixed_iter), next(moving_iter)
-        metrics, _, _, _, _ = step(fixed, moving, 
-                                  network,  
-                                  kp_aligner, 
-                                  args,
-                                  optimizer=optimizer,
-                                  is_train=True
-                                  )
-        res.append(metrics)
+
+        # Get images and segmentations from TorchIO subject
+        img_f, img_m = fixed['img'][tio.DATA], moving['img'][tio.DATA]
+        if 'seg' in fixed and 'seg' in moving:
+            seg_available = True
+            seg_f, seg_m = fixed['seg'][tio.DATA], moving['seg'][tio.DATA]
+        else:
+            seg_available = False
+
+        # Move to device
+        img_f = img_f.float().to(args.device)
+        img_m = img_m.float().to(args.device)
+        if seg_available:
+            seg_f = seg_f.float().to(args.device)
+            seg_m = seg_m.float().to(args.device)
+
+        # Explicitly augment moving image
+        if seg_available:
+            img_m, seg_m = augment_moving(img_m, args, seg=seg_m, fixed_params=None)
+        else:
+            img_m = augment_moving(img_m, args, fixed_params=None)
+
+        lmbda = _get_tps_lmbda(len(img_f), args, is_train=True)
+        optimizer.zero_grad()
+        with torch.set_grad_enabled(True):
+            grid, points_f, points_m = step(img_f, img_m, 
+                                            network,  
+                                            kp_aligner, 
+                                            lmbda,
+                                            args.num_keypoints,
+                                            args.dim
+                                            )
+        img_a = align_img(grid, img_m)
+        if seg_available:
+            seg_a = align_img(grid, seg_m)
+        points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
+
+        # Compute metrics
+        metrics = {}
+        metrics['mse'] = loss_ops.MSELoss()(img_f, img_a)
+        if seg_available:
+            metrics['softdiceloss'] = loss_ops.DiceLoss()(seg_a, seg_f)
+            metrics['softdice'] = 1-metrics['softdiceloss']
+            metrics['harddice'] = 1-loss_ops.DiceLoss(hard=True)(seg_a, seg_f,
+                                                    ign_first_ch=True)[0]
+            if args.dim == 3: # TODO: Implement 2D metrics
+                metrics['hausd'] = loss_ops.hausdorff_distance(seg_a, seg_f)
+                grid = grid.permute(0, 4, 1, 2, 3)
+                metrics['jdstd'] = loss_ops.jdstd(grid)
+                metrics['jdlessthan0'] = loss_ops.jdlessthan0(grid, as_percentage=True)
+
+        # Compute loss
+        if args.loss_fn == 'mse':
+          loss = metrics['mse']
+        elif args.loss_fn == 'dice':
+          loss = metrics['softdiceloss']
+        metrics['loss'] = loss
+
+        # Perform backward pass
+        loss.backward()
+        optimizer.step()
 
         # Keypoint consistency loss
         if args.kpconsistency_coeff > 0:
@@ -244,8 +295,54 @@ def run_train(fixed_loaders,
             rand_subject = np.random.randint(0, len(moving_iter))
             sub1 = moving_loaders[mods[0]].dataset[rand_subject]
             sub2 = moving_loaders[mods[1]].dataset[rand_subject]
-            kploss = kpconsistency_step(sub1, sub2, network, optimizer, args)
+
+            sub1 = sub1['img'][tio.DATA].float().to(args.device).unsqueeze(0)
+            sub2 = sub2['img'][tio.DATA].float().to(args.device).unsqueeze(0)
+            sub1, sub2 = augment_pair(sub1, sub2, args)
+
+            optimizer.zero_grad()
+            with torch.set_grad_enabled(True):
+                points1, points2 = extract_keypoints_step(sub1, sub2, network)
+
+            kploss = args.kpconsistency_coeff * loss_ops.MSELoss()(points1, points2)
+            kploss.backward()
+            optimizer.step()
             metrics['kploss'] = kploss
+
+        # Convert metrics to numpy
+        metrics = {k: torch.as_tensor(v).detach().cpu().numpy().item() 
+                      for k, v in metrics.items()}
+        res.append(metrics)
+
+        if args.visualize:
+            if args.dim == 2:
+                show_warped(
+                        img_m[0,0].cpu().detach().numpy(),
+                        img_a[0,0].cpu().detach().numpy(),
+                        img_f[0,0].cpu().detach().numpy(),
+                        seg_m[0,0].cpu().detach().numpy(),
+                        seg_a[0,0].cpu().detach().numpy(),
+                        seg_f[0,0].cpu().detach().numpy(),
+                        points_m[0].cpu().detach().numpy(), 
+                        points_f[0].cpu().detach().numpy(),
+                        )
+            else:
+                show_warped_vol(
+                        img_m[0,0].cpu().detach().numpy(),
+                        img_f[0,0].cpu().detach().numpy(),
+                        img_a[0,0].cpu().detach().numpy(),
+                        points_m[0].cpu().detach().numpy(), 
+                        points_f[0].cpu().detach().numpy(),
+                        points_a[0].cpu().detach().numpy(),
+                        )
+                show_warped_vol(
+                        seg_m.argmax(1)[0].cpu().detach().numpy(),
+                        seg_f.argmax(1)[0].cpu().detach().numpy(),
+                        seg_a.argmax(1)[0].cpu().detach().numpy(),
+                        points_m[0].cpu().detach().numpy(), 
+                        points_f[0].cpu().detach().numpy(),
+                        points_a[0].cpu().detach().numpy(),
+                        )
 
     return utils.aggregate_dicts(res)
 
@@ -399,19 +496,55 @@ def main():
                 mod1, mod2, param = utils.parse_test_metric(mod, aug)
                 for i, fixed in tqdm(enumerate(test_loaders[mod1]), 
                     total=len(test_loaders[mod1])):
-                    img_f, seg_f = fixed['img'], fixed['seg']
                     for j, moving in enumerate(test_loaders[mod2]):
-                        img_m, seg_m = moving['img'], moving['seg']
-                        metrics, imgs, segs, points, grid = step(fixed, moving, 
-                                                                 network, 
-                                                                 kp_aligner, 
-                                                                 args, aug_params=param, 
-                                                                 is_train=False,
-                                                                 )
                         print(f'Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}')
-                        img_f, img_m, img_a = imgs
-                        seg_f, seg_m, seg_a = segs
-                        points_f, points_m, points_a = points
+                        img_f, img_m = fixed['img'][tio.DATA], moving['img'][tio.DATA]
+                        if 'seg' in fixed and 'seg' in moving:
+                            seg_available = True
+                            seg_f, seg_m = fixed['seg'][tio.DATA], moving['seg'][tio.DATA]
+                        else:
+                            seg_available = False
+
+                        # Move to device
+                        img_f = img_f.float().to(args.device)
+                        img_m = img_m.float().to(args.device)
+                        if seg_available:
+                            seg_f = seg_f.float().to(args.device)
+                            seg_m = seg_m.float().to(args.device)
+
+                        # Explicitly augment moving image
+                        if seg_available:
+                            img_m, seg_m = augment_moving(img_m, args, seg=seg_m, fixed_params=param)
+                        else:
+                            img_m = augment_moving(img_m, args, fixed_params=param)
+                        lmbda = _get_tps_lmbda(len(img_f), args, is_train=False)
+
+                        with torch.set_grad_enabled(False):
+                            grid, points_f, points_m = step(img_f, img_m, 
+                                                            network, 
+                                                            kp_aligner, 
+                                                            lmbda,
+                                                            args.num_keypoints,
+                                                            args.dim,
+                                                            )
+                        img_a = align_img(grid, img_m)
+                        if seg_available:
+                            seg_a = align_img(grid, seg_m)
+                        points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
+
+                        # Compute metrics
+                        metrics = {}
+                        metrics['mse'] = loss_ops.MSELoss()(img_f, img_a)
+                        if seg_available:
+                            metrics['softdiceloss'] = loss_ops.DiceLoss()(seg_a, seg_f)
+                            metrics['softdice'] = 1-metrics['softdiceloss']
+                            metrics['harddice'] = 1-loss_ops.DiceLoss(hard=True)(seg_a, seg_f,
+                                                                    ign_first_ch=True)[0]
+                            if args.dim == 3: # TODO: Implement 2D metrics
+                                metrics['hausd'] = loss_ops.hausdorff_distance(seg_a, seg_f)
+                                grid = grid.permute(0, 4, 1, 2, 3)
+                                metrics['jdstd'] = loss_ops.jdstd(grid)
+                                metrics['jdlessthan0'] = loss_ops.jdlessthan0(grid, as_percentage=True)
 
                         if args.save_preds and not args.debug_mode:
                             assert args.batch_size == 1 # TODO: fix this
@@ -455,7 +588,7 @@ def main():
                                     optimizer,
                                     kp_aligner,
                                     args)
-
+            print(epoch_stats)
             train_loss.append(epoch_stats['loss'])
 
             print(f'Epoch {epoch}/{args.epochs}')

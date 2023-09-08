@@ -6,6 +6,13 @@ import wandb
 import os
 import argparse
 
+def align_img(grid, x):
+    return F.grid_sample(x,
+                         grid=grid,
+                         mode='bilinear',
+                         padding_mode='border',
+                         align_corners=False)
+
 def parse_test_metric(mod, aug):
     mod1, mod2 = mod.split('_')
     if 'rot' in aug:

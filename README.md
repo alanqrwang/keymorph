@@ -85,7 +85,7 @@ To specify supervised, set `--loss_fn dice`.
 ### Affine vs. TPS
 Affine uses an affine transformation to align the corresponding keypoints.
 
-TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter `tps_lmbda` controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
+TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter `--tps_lmbda` controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
 
 To specify affine, set `--kp_align_method affine`.
 To specify tps, set `--kp_align_method tps` and the lmbda value `--tps_lmbda 0`.
