@@ -313,13 +313,19 @@ def run_train(fixed_loaders,
             if args.dim == 2:
                 show_warped(
                         img_m[0,0].cpu().detach().numpy(),
-                        img_a[0,0].cpu().detach().numpy(),
                         img_f[0,0].cpu().detach().numpy(),
-                        seg_m[0,0].cpu().detach().numpy(),
-                        seg_a[0,0].cpu().detach().numpy(),
-                        seg_f[0,0].cpu().detach().numpy(),
+                        img_a[0,0].cpu().detach().numpy(),
                         points_m[0].cpu().detach().numpy(), 
                         points_f[0].cpu().detach().numpy(),
+                        points_a[0].cpu().detach().numpy(),
+                        )
+                show_warped(
+                        img_m[0,0].cpu().detach().numpy(),
+                        img_f[0,0].cpu().detach().numpy(),
+                        img_a[0,0].cpu().detach().numpy(),
+                        points_m[0].cpu().detach().numpy(), 
+                        points_f[0].cpu().detach().numpy(),
+                        points_a[0].cpu().detach().numpy(),
                         )
             else:
                 show_warped_vol(

@@ -99,11 +99,9 @@ def get_cm_plot(Y_cm, dim0, dim1, dim2):
 
     return torch.cat(out, 0)
 
-def show_warped(moved, aligned, fixed, 
-                seg_moved, seg_aligned, seg_fixed,
-                ctl_points, tgt_points, 
-                save_dir=None, save_name=None, 
-                extra_start=None, extra_end=None):
+def show_warped(img_m, img_f, img_a, 
+                points_m, points_f, points_a,
+                save_dir=None, save_name=None):
 
   '''
   Moved, aligned, and fixed should be images with 2 dimensions.
@@ -126,55 +124,32 @@ def show_warped(moved, aligned, fixed,
   gets filled in first, the rows get filled with varying first coordinates,
   as we desire.
   '''
-  tgt_points = (tgt_points+1) / 2
-  ctl_points = (ctl_points+1) / 2
-  disp_points = tgt_points - ctl_points
-  fig, axes = plt.subplots(2, 3, figsize=(16,16))
-  [ax.set_xticks([0, moved.shape[-1]]) for ax in axes.ravel()]
+  points_m = (points_m+1) / 2
+  points_f = (points_f+1) / 2
+  points_a = (points_a+1) / 2
+  fig, axes = plt.subplots(1, 3, figsize=(3*4,1*4))
+  [ax.set_xticks([0, img_m.shape[-1]]) for ax in axes.ravel()]
   [ax.set_xticklabels([-1, 1]) for ax in axes.ravel()]
-  [ax.set_yticks([0, moved.shape[-1]]) for ax in axes.ravel()]
+  [ax.set_yticks([0, img_m.shape[-1]]) for ax in axes.ravel()]
   [ax.set_yticklabels([-1, 1]) for ax in axes.ravel()]
 
-  colors = cm.Reds(np.linspace(0, 1, len(ctl_points)))
+  colors = cm.Reds(np.linspace(0, 1, len(points_m)))
 
-  axes[0,0].imshow(moved, origin='upper', cmap='gray')
-  axes[0,0].set_title('Moved')
-  for i, c in zip(range(len(ctl_points)), colors):
-    axes[0,0].scatter(ctl_points[i, 0]*moved.shape[1], ctl_points[i, 1]*moved.shape[0], marker='+', s=100, color=c)
+  axes[0].imshow(img_m, origin='upper', cmap='gray')
+  axes[0].set_title('Moving')
+  for i, c in zip(range(len(points_m)), colors):
+    axes[0].scatter(points_m[i, 0]*img_m.shape[1], points_m[i, 1]*img_m.shape[0], marker='+', s=100, color=c)
 
-  axes[0,1].imshow(aligned, origin='upper', cmap='gray')
-  axes[0,1].set_title('Warped')
-  for i, c in zip(range(len(ctl_points)), colors):
-    axes[0,1].scatter(tgt_points[i, 0]*aligned.shape[1], tgt_points[i, 1]*aligned.shape[0], marker='+', s=100, color=c)
+  axes[1].imshow(img_f, origin='upper', cmap='gray')
+  axes[1].set_title('Fixed')
+  for i, c in zip(range(len(points_f)), colors):
+    axes[1].scatter(points_f[i, 0]*img_f.shape[1], points_f[i, 1]*img_f.shape[0], marker='+', s=100, color=c)
 
-  axes[0,2].imshow(fixed, origin='upper', cmap='gray')
-  axes[0,2].set_title('Fixed')
-  for i, c in zip(range(len(ctl_points)), colors):
-    axes[0,2].arrow(ctl_points[i, 0]*fixed.shape[1], ctl_points[i, 1]*fixed.shape[0], 
-                  disp_points[i, 0]*fixed.shape[1], disp_points[i, 1]*fixed.shape[0], color=c, width=1.0)
-
-  axes[1,0].imshow(seg_moved, origin='upper')
-  axes[1,0].set_title('Moved')
-
-  axes[1,1].imshow(seg_aligned, origin='upper')
-  axes[1,1].set_title('Warped')
-
-  axes[1,2].imshow(seg_fixed, origin='upper')
-  axes[1,2].set_title('Fixed')
-
-  if extra_start is not None:
-    print(extra_start.shape, extra_end.shape)
-    extra_start = (extra_start+1) / 2
-    extra_end = (extra_end+1) / 2
-    disp_points = extra_end - extra_start
-    colors = cm.Blues(np.linspace(0, 1, len(extra_start)))
-
-    for i, c in zip(range(len(extra_start)), colors):
-      axes[0,0].scatter(extra_start[i, 0]*aligned.shape[1], extra_start[i, 1]*aligned.shape[0], marker='+', s=100, color=c)
-      axes[0,1].scatter(extra_end[i, 0]*aligned.shape[1], extra_end[i, 1]*aligned.shape[0], marker='+', s=100, color=c)
-
-      axes[0,2].arrow(extra_start[i, 0]*fixed.shape[1], extra_start[i, 1]*fixed.shape[0], 
-                  disp_points[i, 0]*fixed.shape[1], disp_points[i, 1]*fixed.shape[0], color=c, width=2.0)
+  axes[2].imshow(img_a, origin='upper', cmap='gray')
+  axes[2].set_title('Aligned')
+  for i, c in zip(range(len(points_a)), colors):
+    axes[2].scatter(points_f[i, 0]*img_f.shape[1], points_f[i, 1]*img_f.shape[0], marker='.', color=c, s=100)
+    axes[2].scatter(points_a[i, 0]*img_a.shape[1], points_a[i, 1]*img_a.shape[0], marker='+', color=c, s=100)
 
   if save_name is not None:
     fig.savefig(os.path.join(save_dir, save_name),
@@ -266,10 +241,6 @@ def show_warped_vol(moving, fixed, warped,
   all_xz = (moving[:, xz_ind, :], fixed[:, xz_ind, :], warped[:, xz_ind, :])
   all_yz = (moving[yz_ind, :, :], fixed[yz_ind, :, :], warped[yz_ind, :, :])
 
-  # all_seg_moving = (seg_moving[:, :, xy_ind], seg_moving[:, xz_ind, :], seg_moving[yz_ind, :, :])
-  # all_seg_aligned = (seg_aligned[:, :, xy_ind], seg_aligned[:, xz_ind, :], seg_aligned[yz_ind, :, :])
-  # all_seg_fixed = (seg_fixed[:, :, xy_ind], seg_fixed[:, xz_ind, :], seg_fixed[yz_ind, :, :])
-
   # Loop over different dimensions, i.e. axial, sagittal, coronal.
   for index, ((m, f, w), (i, j)) in enumerate(zip([all_xy, all_xz, all_yz], [(0, 1), (0, 2), (1, 2)])):
     if index == 0:
@@ -293,15 +264,6 @@ def show_warped_vol(moving, fixed, warped,
     for k, c in zip(range(len(ctl_points)), colors):
       axes[p_index,2].scatter(warped_points[k, i]*img_dim, warped_points[k, j]*img_dim, marker='.', s=100, color=c)
       axes[p_index,2].scatter(tgt_points[k, i]*img_dim, tgt_points[k, j]*img_dim, marker='+', s=100, color=c)
-
-  # axes[1,0].imshow(seg_moved, origin='lower')
-  # axes[1,0].set_title('Moved')
-
-  # axes[1,1].imshow(seg_aligned, origin='lower')
-  # axes[1,1].set_title('Warped')
-
-  # axes[1,2].imshow(seg_fixed, origin='lower')
-  # axes[1,2].set_title('Fixed')
 
   axes[0,0].set_title('Moving')
   axes[0,1].set_title('Fixed')
