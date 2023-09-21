@@ -58,9 +58,13 @@ For convenience, we provide a script `register.py` which registers two brain vol
 To register two volumes with our best-performing model:
 
 ```
-python register.py --moving vol1.nii.gz --fixed vol2.nii.gz 
-                   --load_path ./weights/numkey512_tps0_dice.4760.h5
-                   --num_keypoints 512
+python register.py \
+    --moving ./example_data/images/IXI_001.nii.gz \
+    --fixed ./example_data/images/IXI_002.nii.gz \
+    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
+    --num_keypoints 512 \
+    --moving_seg ./example_data/labels/IXI_001.nii.gz \
+    --fixed_seg ./example_data/labels/IXI_002.nii.gz 
 ```
 
 For all inputs, ensure that pixel values are min-max normalized to the $[0,1]$ range and that the spatial dimensions are $(L, W, H) = (128, 128, 128)$.

@@ -5,10 +5,14 @@ import numpy as np
 import random
 from argparse import ArgumentParser
 import torchio as tio
+from scipy.stats import loguniform
 
 from keymorph.keypoint_aligners import ClosedFormAffine, TPS
-from keymorph.model import ConvNetFC, ConvNetCoM
-from keymorph.step import step
+from keymorph.net import ConvNetFC, ConvNetCoM
+from keymorph.model import KeyMorph
+from keymorph.utils import align_img
+from keymorph import loss_ops
+from keymorph.data import ixi
 
 def parse_args():
     parser = ArgumentParser()
@@ -80,6 +84,17 @@ def parse_args():
                         type=str,
                         required=True,
                         help='Fixed image path')
+
+    parser.add_argument('--moving_seg', 
+                        type=str,
+                        default=None,
+                        help='Moving seg path')
+
+    parser.add_argument('--fixed_seg', 
+                        type=str,
+                        default=None,
+                        help='Fixed seg path')
+
     parser.add_argument("--batch_size",
                         type=int,
                         default=1,
@@ -99,6 +114,14 @@ def parse_args():
 
     args = parser.parse_args()
     return args
+
+def _get_tps_lmbda(num_samples, args):
+    if args.tps_lmbda is None:
+        assert args.kp_align_method != 'tps', 'Need to implement this'
+        lmbda = None
+    else:
+        lmbda = torch.tensor(float(args.tps_lmbda)).repeat(num_samples).to(args.device)
+    return lmbda
 
 if __name__ == "__main__":
     args = parse_args()
@@ -123,9 +146,20 @@ if __name__ == "__main__":
     #                 RandomNoise(),
                     tio.Lambda(lambda x: x.permute(0,1,3,2)),
                     tio.Resize(128),
+                    tio.Lambda(ixi.one_hot, include=('seg'))
     ])
-    fixed = [tio.Subject(img=tio.ScalarImage(args.fixed))]
-    moving = [tio.Subject(img=tio.ScalarImage(args.moving))]
+    
+    # Build subject
+    moving_dict = {'img': tio.ScalarImage(args.moving)}
+    fixed_dict = {'img': tio.ScalarImage(args.fixed)}
+    if args.moving_seg is not None:
+        moving_dict['seg'] = tio.LabelMap(args.moving_seg)
+    if args.fixed_seg is not None:
+        fixed_dict['seg'] = tio.LabelMap(args.fixed_seg)
+    fixed = [tio.Subject(**fixed_dict)]
+    moving = [tio.Subject(**moving_dict)]
+
+    # Build dataset
     fixed_dataset = tio.SubjectsDataset(fixed, transform=transform)
     moving_dataset = tio.SubjectsDataset(moving, transform=transform)
     fixed_loader = DataLoader(
@@ -166,24 +200,54 @@ if __name__ == "__main__":
     else:
       raise NotImplementedError
 
-    network.eval()
+    # Keypoint model
+    registration_model = KeyMorph(network, kp_aligner, args.num_keypoints, args.dim)
+    registration_model.eval()
 
     for fixed in fixed_loader:
         for moving in moving_loader:
-            metrics, imgs, points, grid = step(fixed, moving, 
-                                              network, 
-                                              kp_aligner, 
-                                              args, 
-                                              is_train=False)
-            img_f, img_m, img_a = imgs
-            points_f, points_m, points_a = points
 
-            import matplotlib.pyplot as plt
-            fig, axes = plt.subplots(1, 3, figsize=(10, 3))
-            axes[0].imshow(img_f[0,0,64].cpu().numpy(), cmap='gray')
-            axes[1].imshow(img_m[0,0,64].cpu().numpy(), cmap='gray')
-            axes[2].imshow(img_a[0,0,64].cpu().numpy(), cmap='gray')
-            plt.show()
+            # Get images and segmentations from TorchIO subject
+            img_f, img_m = fixed['img'][tio.DATA], moving['img'][tio.DATA]
+            if 'seg' in fixed and 'seg' in moving:
+                seg_available = True
+                seg_f, seg_m = fixed['seg'][tio.DATA], moving['seg'][tio.DATA]
+            else:
+                seg_available = False
+
+            # Move to device
+            img_f = img_f.float().to(args.device)
+            img_m = img_m.float().to(args.device)
+            if seg_available:
+                seg_f = seg_f.float().to(args.device)
+                seg_m = seg_m.float().to(args.device)
+            lmbda = _get_tps_lmbda(len(img_f), args)
+            grid, points_f, points_m = registration_model(img_f, img_m, 
+                                              lmbda)
+            img_a = align_img(grid, img_m)
+            if seg_available:
+                seg_a = align_img(grid, seg_m)
+
+            # import matplotlib.pyplot as plt
+            # fig, axes = plt.subplots(1, 3, figsize=(10, 3))
+            # axes[0].imshow(img_f[0,0,64].cpu().numpy(), cmap='gray')
+            # axes[1].imshow(img_m[0,0,64].cpu().numpy(), cmap='gray')
+            # axes[2].imshow(img_a[0,0,64].cpu().numpy(), cmap='gray')
+            # plt.show()
+
+            # Compute metrics
+            metrics = {}
+            metrics['mse'] = loss_ops.MSELoss()(img_f, img_a)
+            if seg_available:
+                metrics['softdiceloss'] = loss_ops.DiceLoss()(seg_a, seg_f)
+                metrics['softdice'] = 1-metrics['softdiceloss']
+                metrics['harddice'] = 1-loss_ops.DiceLoss(hard=True)(seg_a, seg_f,
+                                                        ign_first_ch=True)[0]
+                if args.dim == 3: # TODO: Implement 2D metrics
+                    metrics['hausd'] = loss_ops.hausdorff_distance(seg_a, seg_f)
+                    grid = grid.permute(0, 4, 1, 2, 3)
+                    metrics['jdstd'] = loss_ops.jdstd(grid)
+                    metrics['jdlessthan0'] = loss_ops.jdlessthan0(grid, as_percentage=True)
 
             for name, metric in metrics.items():
                 print(f'[Eval Stat] {name}: {metric:.5f}')

@@ -6,7 +6,7 @@ import torchio as tio
 import torch.nn.functional as F
 
 from tqdm import tqdm
-from keymorph import model as m
+from keymorph import net as m
 from argparse import ArgumentParser
 from torchio.transforms import Lambda
 from keymorph import cm_plotter as cp
