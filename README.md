@@ -67,6 +67,8 @@ python register.py \
     --fixed_seg ./example_data/labels/IXI_002.nii.gz 
 ```
 
+`--moving_seg` and `--fixed_seg` are optional. If provided, the script will compute the Dice score between the registered moving segmentation map and the fixed segmentation map. Otherwise, it will only compute MSE between the registered moving image and the fixed image.
+
 For all inputs, ensure that pixel values are min-max normalized to the $[0,1]$ range and that the spatial dimensions are $(L, W, H) = (128, 128, 128)$.
 
 ## Training KeyMorph
