@@ -165,7 +165,7 @@ This step helps with the convergence of our model. We pick 1 subject and random 
 To pretrain, run:
  
 ```
-python pretraining.py --data_dir ./data/centered_IXI/ 
+python pretraining.py --num_keypoints 128 --data_dir ./data/centered_IXI/ 
 ```
 
 ### Training KeyMorph
