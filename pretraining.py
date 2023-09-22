@@ -1,52 +1,21 @@
-'''Input Libraries'''
+import random
 import os
 import torch
 import numpy as np
 import torchio as tio
 import torch.nn.functional as F
-
-from tqdm import tqdm
-from keymorph import net as m
+from torch.utils.data import DataLoader
 from argparse import ArgumentParser
-from torchio.transforms import Lambda
-from keymorph import cm_plotter as cp
-from keymorph import augmentation as aug
-from keymorph import loader_maker as loader
+from tqdm import tqdm
+from pathlib import Path
 
+from keymorph.net import ConvNetFC, ConvNetCoM
+from keymorph.cm_plotter import show_warped, show_warped_vol
+from keymorph.data import ixi
+from keymorph import utils
+from keymorph.augmentation import AffineDeformation2d, AffineDeformation3d
 
-def sample_valid_coordinate(x, reg):
-    """
-    x: input mri with shape [1,1,dim1,dim2,dim3]
-    reg: how many points within the brain
-    """
-    eps = 1e-1
-    mask = x > eps
-    indeces = []
-    for i in range(reg):
-        hit = 0
-        while hit == 0:
-            sample = torch.zeros_like(x)
-            dim1 = np.random.randint(0, x.size(2))
-            dim2 = np.random.randint(0, x.size(3))
-            dim3 = np.random.randint(0, x.size(4))
-            sample[:, :, dim1, dim2, dim3] = 1
-            hit = (sample * mask).sum()
-            if hit == 1:
-                indeces += [[dim1, dim2, dim3]]
-
-    grid = F.affine_grid(torch.Tensor([[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]]),
-                         x.size(),
-                         align_corners=True)
-    grid = grid.permute(0, 4, 1, 2, 3)
-
-    coordinates = []
-    for idx in indeces:
-        coordinates += [grid[:, :, idx[0], idx[1], idx[2]].view(1, 3, 1)]
-
-    return torch.cat(coordinates, -1)
-
-
-def parser():
+def parse_args():
     parser = ArgumentParser()
 
     parser.add_argument("--gpus",
@@ -54,15 +23,13 @@ def parser():
                         default="0",
                         help="Which GPUs to use? Index from 0")
 
-    parser.add_argument("--out_dim",
+    parser.add_argument("--num_keypoints",
                         type=int,
-                        dest="out_dim",
-                        default=64,
-                        help="How many center masses")
+                        default=128,
+                        help="Number of keypoints")
 
     parser.add_argument("--batch_size",
                         type=int,
-                        dest="batch_size",
                         default=1,
                         help="Batch size")
 
@@ -78,247 +45,273 @@ def parser():
                         default='./pretraining_output/',
                         help="Path to the folder where data is saved")
 
+    parser.add_argument("--data_dir",
+                        type=str,
+                        default="./data/centered_IXI/",
+                        help="Path to the training data")
+
     parser.add_argument("--epochs",
                         type=int,
-                        dest="epochs",
                         default=2000,
                         help="Training Epochs")
 
-    parser.add_argument("--downsample",
-                        type=int,
-                        dest="downsample",
-                        default=2,
-                        help="how much to downsample")
-
     parser.add_argument("--seed",
                         type=int,
-                        dest="seed",
                         default=23,
                         help="Random seed use to sort the training data")
 
-    parser.add_argument("--c",
+    parser.add_argument("--affine_slope",
                         type=int,
-                        dest="c",
-                        default=300,
+                        default=100,
                         help="Constant to control how slow to increase augmentation")
 
     parser.add_argument("--norm_type",
+                        type=str,
+                        default='instance',
+                        choices=['none', 'instance', 'batch', 'group'],
+                        help="Normalization type")
+
+    parser.add_argument('--dim', 
+                        type=int,
+                        default=3)
+
+    parser.add_argument("--debug_mode",
+                        action='store_true',
+                        help='Debug mode')
+
+    parser.add_argument("--dataset",
+                        type=str,
+                        default='ixi',
+                        help="Dataset")
+
+    parser.add_argument("--num_test_subjects",
+                        type=int,
+                        default=100,
+                        help="Number of test subjects")
+
+    parser.add_argument("--num_workers",
                         type=int,
                         default=1,
-                        choices=[0, 1, 2])
+                        help="Num workers")
+
+    parser.add_argument("--visualize",
+                        action='store_true',
+                        help='Visualize images and points')
+
+    parser.add_argument('--kp_extractor', 
+                        type=str,
+                        default='conv_com', 
+                        choices=['conv_fc', 'conv_com'], 
+                        help='Keypoint extractor module to use')
+
+    parser.add_argument('--steps_per_epoch', 
+                        type=int,
+                        default=32, 
+                        help='Number of gradient steps per epoch')
+
+    parser.add_argument('--log_interval', 
+                        type=int,
+                        default=25, 
+                        help='Frequency of logs')
+
+
 
     args = parser.parse_args()
     return args
 
+def augment_moving(augmenter, x_fixed, points, epoch, args, s=0.2, o=0.2, a=3.1416, z=0.1):
+    s = np.clip(s*epoch / args.affine_slope, None, s)
+    o = np.clip(o*epoch / args.affine_slope, None, o)
+    a = np.clip(a*epoch / args.affine_slope, None, a)
+    z = np.clip(z*epoch / args.affine_slope, None, z)
+    if args.dim == 2:
+        scale = torch.FloatTensor(1, 2).uniform_(1-s, 1+s)
+        offset = torch.FloatTensor(1, 2).uniform_(-o, o)
+        theta = torch.FloatTensor(1, 1).uniform_(-a, a)
+        shear = torch.FloatTensor(1, 2).uniform_(-z, z)
+    else:
+        scale = torch.FloatTensor(1, 3).uniform_(1-s, 1+s)
+        offset = torch.FloatTensor(1, 3).uniform_(-o, o)
+        theta = torch.FloatTensor(1, 3).uniform_(-a, a)
+        shear = torch.FloatTensor(1, 6).uniform_(-z, z)
+    params = (scale, offset, theta, shear)
 
-def run(loader,
-        tc,
-        model,
-        optimizer,
-        epoch,
-        mode,
-        args,
-        PATH,
-        steps_per_epoch):
-    u1 = model
-    running_loss = []
+    x_moving = augmenter.deform_img(x_fixed, params)
+    tgt_points = augmenter.deform_points(points, params)
+    return x_moving, tgt_points
 
-    """Choose samples"""
-    u1.train() if mode == 'train' else u1.eval()
+def run_train(loaders,
+              augmenter,
+              random_points,
+              network,
+              optimizer,
+              epoch,
+              args):
+    network.train()
 
-    for j in range(steps_per_epoch):
+    res = []
 
-        """Target"""
+    random_points = random_points.to(args.device)
+    for _ in range(args.steps_per_epoch):
         # Choose modality at random
-        mod = np.random.randint(3)
-        data = iter(loader[mod]).next()
+        subject = next(iter(random.choice(loaders)))
 
-        x = data['mri'][tio.DATA]
-        x_mask = data['mask'][tio.DATA].float()
-        x = x.repeat(args.batch_size, 1, 1, 1, 1)
-        x_mask = x_mask.repeat(args.batch_size, 1, 1, 1, 1)
+        x_fixed = subject['img'][tio.DATA].float().to(args.device)
 
-        n_batch, _, dim1, dim2, dim3 = x.size()
-        y = tc
+        # Deform image and fixed points
+        x_moving, tgt_points = augment_moving(augmenter, x_fixed, random_points, epoch, args)
 
-        """Augment"""
-        # Augment
-        Ma = aug.affine_matrix(x.size(),
-                               s=np.clip(0.2 * epoch / (args.c), None, 0.2),
-                               o=np.clip(0.2 * epoch / (args.c), None, 0.2),
-                               a=np.clip(3.1416 * epoch / (args.c), None, 3.1416),
-                               z=np.clip(0.1 * epoch / (args.c), None, 0.1),
-                               cuda=False)
-
-        _grid = F.affine_grid(torch.inverse(Ma)[:, :3, :],
-                              x.size(),
-                              align_corners=False)
-
-        x = F.grid_sample(x,
-                          grid=_grid,
-                          mode='bilinear',
-                          padding_mode='border',
-                          align_corners=False).detach()
-
-        x_mask = F.grid_sample(x_mask,
-                               grid=_grid,
-                               mode='nearest',
-                               padding_mode='border',
-                               align_corners=False).detach()
-
-        if not args.downsample == 1:
-            x = F.avg_pool3d(x, args.downsample, args.downsample)
-            x_mask = F.avg_pool3d(x_mask, args.downsample, args.downsample)
-
-        x = x.cuda().requires_grad_()
-
-        y = torch.cat([y, torch.ones(x.size(0), 1, args.out_dim)], 1)
-        y = torch.bmm(Ma[:, :3, :], y)
-        y = y.cuda()
-
-        """Predict"""
         optimizer.zero_grad()
-        x = x_mask.cuda() * x
-        y_pred = u1(x)
+        with torch.set_grad_enabled(True):
+            pred_points = network(x_moving)
+            pred_points = pred_points.view(-1, args.num_keypoints, args.dim)
 
-        loss = F.mse_loss(y_pred, y.detach())
-
-        if mode == 'train':
+            loss = F.mse_loss(tgt_points, pred_points)
             loss.backward()
             optimizer.step()
 
-        """Save"""
-        running_loss += [loss.item()]
+        # Compute metrics
+        metrics = {}
+        metrics['loss'] = loss.cpu().detach().numpy()
+        res.append(metrics)
+        
+        if args.visualize:
+            if args.dim == 2:
+                show_warped(
+                      x_moving[0,0].cpu().detach().numpy(),
+                      x_fixed[0,0].cpu().detach().numpy(),
+                      x_fixed[0,0].cpu().detach().numpy(),
+                      tgt_points[0].cpu().detach().numpy(),
+                      random_points[0].cpu().detach().numpy(), 
+                      pred_points[0].cpu().detach().numpy())
+            else:
+                show_warped_vol(
+                      x_moving[0,0].cpu().detach().numpy(),
+                      x_fixed[0,0].cpu().detach().numpy(),
+                      x_fixed[0,0].cpu().detach().numpy(),
+                      tgt_points[0].cpu().detach().numpy(),
+                      random_points[0].cpu().detach().numpy(), 
+                      pred_points[0].cpu().detach().numpy())
 
-        x = x.cpu()
-        y_pred = y_pred.cpu()
-        y = y.cpu()
+    return utils.aggregate_dicts(res)
 
-    loss = np.mean(running_loss)
-    stat = [loss]
+def main():
+    args = parse_args()
 
-    size = 256 // args.downsample
-    y_cm = cp.get_cm_plot(y, size, size, size)
-    y_cm = cp.blur_cm_plot(y_cm, 1)
+    # Path to save outputs
+    arguments = ('[training]keypoints' + str(args.num_keypoints)
+                 + '_batch' + str(args.batch_size)
+                 + '_normType' + str(args.norm_type)
+                 + '_lr' + str(args.lr))
 
-    pred_cm = cp.get_cm_plot(y_pred, size, size, size)
-    pred_cm = cp.blur_cm_plot(pred_cm, 1)
+    save_path = Path(args.save_dir) / arguments
+    if not os.path.exists(save_path) and not args.debug_mode:
+        os.makedirs(save_path)
 
-    return stat
-
-
-if __name__ == "__main__":
-    import matplotlib
-
-    matplotlib.use('agg')
-    import matplotlib.pyplot as plt
-
-    args = parser()
-    """Select GPU"""
+    # Select GPU
+    if torch.cuda.is_available():
+        args.device = torch.device('cuda:'+str(args.gpus))
+    else:
+        args.device = torch.device('cpu')
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+    print('Number of GPUs: {}'.format(torch.cuda.device_count()))
 
-    """Load Data"""
-    directory = './data/centered_IXI/'
-    transform = Lambda(lambda x: x.permute(0, 1, 3, 2))
+    # Data
+    if args.dataset == 'ixi':
+        modalities = ['T1', 'T2', 'PD']
+    
+        transform = tio.Compose([
+        #                 RandomBiasField(),
+        #                 RandomNoise(),
+                        tio.Lambda(lambda x: x.permute(0,1,3,2)),
+                        tio.Mask(masking_method='mask'),
+                        tio.Resize(128),
+                        tio.Lambda(ixi.one_hot, include=('seg')),
+        ])
 
-    train_set, t1_loader = loader.create(directory,
-                                         start_end=[0, 1],
-                                         modality='T1',
-                                         transform=transform,
-                                         batch_size=1,
-                                         shuffle=True,
-                                         drop_last=True,
-                                         num_workers=0,
-                                         seed=args.seed)
+        train_datasets = {}
+        test_datasets = {}
+        for mod in modalities:
+            train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
+            train_datasets[mod] = tio.data.SubjectsDataset(train_subjects, transform=transform)
+            test_subjects = ixi.read_subjects_from_disk(args.data_dir, (428, 428+args.num_test_subjects), mod)
+            test_datasets[mod] = tio.data.SubjectsDataset(test_subjects, transform=transform)
+    else:
+        raise NotImplementedError
 
-    _, t2_loader = loader.create(directory,
-                                 start_end=[0, 1],
-                                 modality='T2',
-                                 transform=transform,
-                                 batch_size=1,
-                                 shuffle=True,
-                                 drop_last=True,
-                                 num_workers=0,
-                                 seed=args.seed)
+    fixed_loaders = {k : DataLoader(v, 
+                                    batch_size=args.batch_size, 
+                                    shuffle=True, 
+                                    num_workers=args.num_workers) for k, v in train_datasets.items()}
 
-    _, pd_loader = loader.create(directory,
-                                 start_end=[0, 1],
-                                 modality='PD',
-                                 transform=transform,
-                                 batch_size=1,
-                                 shuffle=True,
-                                 drop_last=True,
-                                 num_workers=0,
-                                 seed=args.seed)
-
-    """Create a fix subject and target"""
-    x_tg = train_set[0]['mask'][tio.DATA]
+    # Get a single subject and extract random keypoints
+    x_tg = train_datasets[modalities[0]][0]['mask'][tio.DATA]
     x_tg = x_tg.float().unsqueeze(0)
-    x_tg = F.avg_pool3d(x_tg, args.downsample, args.downsample)
 
-    tc = sample_valid_coordinate(x_tg, args.out_dim)
+    print('sampling random keypoints...')
+    random_points = utils.sample_valid_coordinates(x_tg, args.num_keypoints, args.dim)
+    random_points = random_points*2-1
+    random_points = random_points.repeat(args.batch_size, 1, 1)
 
-    x_tg = x_tg.repeat(args.batch_size, 1, 1, 1, 1)
-    tc = tc.repeat(args.batch_size, 1, 1)
+    if args.dim == 2:
+        augmenter = AffineDeformation2d(args.device)
+    else:
+        augmenter = AffineDeformation3d(args.device)
 
-    """Model"""
-    u1 = m.KeyMorph(1, args.out_dim, args.norm_type)
-    u1 = torch.nn.DataParallel(u1)
-    u1.cuda()
+    # CNN, i.e. keypoint extractor
+    if args.kp_extractor == 'conv_fc':
+      network = ConvNetFC(args.dim,
+                   1, 
+                   args.num_keypoints*args.dim,
+                   norm_type=args.norm_type)    
+      network = torch.nn.DataParallel(network)
+    elif args.kp_extractor == 'conv_com':
+      network = ConvNetCoM(args.dim,
+                   1, 
+                   args.num_keypoints,
+                   norm_type=args.norm_type)    
+    network = torch.nn.DataParallel(network)
+    network.to(args.device)
 
-    params = list(u1.parameters())
+    # Optimizer
+    params = list(network.parameters())
     optimizer = torch.optim.Adam(params,
                                  lr=args.lr)
 
     train_loss = []
-    arguments = ('[pretrain]keypoints' + str(args.out_dim)
-                 + '_batch' + str(args.batch_size)
-                 + '_c' + str(args.c)
-                 + '_lr' + str(args.lr)
-                 + '_downsample' + str(args.downsample)
-                 + '_normtype' + str(args.norm_type))
 
-    PATH = args.save_dir + arguments + '/'
-
-    if not os.path.exists(PATH):
-        os.makedirs(PATH)
-    else:
-        raise Exception('Path exists')
-
-    '''Train'''
+    # Train
+    network.train()
     best = 1e10
-    val_loss = []
-    for epoch in tqdm(range(args.epochs)):
+    for epoch in range(args.epochs):
         epoch = epoch
-        stat = run(loader=[t1_loader, t2_loader, pd_loader],
-                   tc=tc,
-                   model=u1,
-                   optimizer=optimizer,
-                   epoch=epoch,
-                   mode='train',
-                   args=args,
-                   PATH=PATH,
-                   steps_per_epoch=32)
+        epoch_stats = run_train(list(fixed_loaders.values()),
+                                augmenter,
+                                random_points,
+                                network,
+                                optimizer,
+                                epoch,
+                                args)
 
-        train_loss += [stat[0]]
+        train_loss.append(epoch_stats['loss'])
 
-        print('Epoch %d' % (epoch))
-        print('[Train Stat] Loss: %.5f'
-              % (train_loss[-1]))
+        print(f'Epoch {epoch}/{args.epochs}')
+        for name, metric in epoch_stats.items():
+            print(f'[Train Stat] {name}: {metric:.5f}')
 
-        train_summary = np.vstack((train_loss))
-
-        '''Save model'''
+        # Save model
         state = {'epoch': epoch,
                  'args': args,
-                 'u1': u1.state_dict(),
-                 'optimizer': optimizer.state_dict(),
-                 'train_summary': train_summary}
+                 'state_dict': network.state_dict(),
+                 'optimizer': optimizer.state_dict()}
 
         if train_loss[-1] < best:
             best = train_loss[-1]
-            torch.save(state, PATH + 'pretrained_model.pth.tar')
-        if (epoch + 1) % 49 == 0:
-            torch.save(state, PATH + 'epoch{}_model.pth.tar'.format(epoch))
+            torch.save(state, os.path.join(save_path, 'pretrained_model.pth.tar'))
+        if epoch % args.log_interval == 0 and not args.debug_mode:
+            torch.save(state, os.path.join(save_path, 'pretrained_epoch{}_model.pth.tar'.format(epoch)))
         del state
+
+if __name__ == "__main__":
+    main()

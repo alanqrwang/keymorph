@@ -1,3 +1,4 @@
+import torch
 import torch.nn.functional as F
 import math
 import numpy as np
@@ -70,3 +71,55 @@ class ParseKwargs(argparse.Action):
             else:
                 processed_val = value_str
             getattr(namespace, self.dest)[key] = processed_val
+
+def sample_valid_coordinates(x, num_points, dim):
+    """
+    x: input img, (1,1,dim1,dim2) or (1,1,dim1,dim2,dim3)
+    num_points: how many points within the brain
+    dim: Dimension, either 2 or 3
+
+    Returns:
+      points: Normalized coordinates in [0, 1], (1, num_points, dim)
+    """
+    if dim == 2:
+        coords = sample_valid_coordinates_2d(x, num_points)
+    elif dim == 3:
+        coords = sample_valid_coordinates_3d(x, num_points)
+    else:
+        raise NotImplementedError
+    return coords
+
+def sample_valid_coordinates_2d(x, num_points):
+    eps = 0
+    mask = x>eps
+    indices = []
+    for _ in range(num_points):
+        hit = 0
+        while hit==0:
+            sample = torch.zeros_like(x)
+            dim1 = np.random.randint(0,x.size(2))
+            dim2 = np.random.randint(0,x.size(3))
+            sample[:,:,dim1,dim2] = 1
+            hit = (sample*mask).sum()
+            if hit==1:
+                indices.append([dim2/x.size(3),dim1/x.size(2)])
+    
+    return torch.tensor(indices).view(1, num_points, 2)
+    
+def sample_valid_coordinates_3d(x, num_points):
+    eps = 1e-1
+    mask = x>eps
+    indices = []
+    for _ in range(num_points):
+        hit = 0
+        while hit==0:
+            sample = torch.zeros_like(x)
+            dim1 = np.random.randint(0,x.size(2))
+            dim2 = np.random.randint(0,x.size(3))
+            dim3 = np.random.randint(0,x.size(4))
+            sample[:,:,dim1,dim2,dim3] = 1
+            hit = (sample*mask).sum()
+            if hit==1:
+                indices.append([dim3/x.size(4),dim2/x.size(3),dim1/x.size(2)])
+
+    return torch.tensor(indices).view(1, num_points, 3)

@@ -85,11 +85,6 @@ def parse_args():
                         help='Minimize keypoint consistency loss')
 
     # Data
-    parser.add_argument("--downsample",
-                        type=int,
-                        default=2,
-                        help="How much to downsample using average pool")
-
     parser.add_argument("--mix_modalities",
                         action='store_true',
                         help='Whether or not to mix modalities amongst image pairs')
@@ -97,7 +92,7 @@ def parse_args():
     parser.add_argument("--num_test_subjects",
                         type=int,
                         default=100,
-                        help="How much to downsample using average pool")
+                        help="Number of test subjects")
 
     parser.add_argument("--num_workers",
                         type=int,
@@ -112,7 +107,6 @@ def parse_args():
 
     parser.add_argument("--batch_size",
                         type=int,
-                        dest="batch_size",
                         default=1,
                         help="Batch size")
 
@@ -369,7 +363,6 @@ def main():
     arguments = ('[training]keypoints' + str(args.num_keypoints)
                  + '_batch' + str(args.batch_size)
                  + '_normType' + str(args.norm_type)
-                 + '_downsample' + str(args.downsample)
                  + '_lr' + str(args.lr))
 
     save_path = Path(args.save_dir) / arguments

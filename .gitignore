@@ -147,6 +147,7 @@ tmp/
 wandb/*
 training_output/*
 output/*
+pretraining_output/*
 
 *.sh
 job_out/*

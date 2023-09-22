@@ -162,10 +162,10 @@ Note that supervised/unsupervised variants can be run similarly to affine, as de
 
 This step helps with the convergence of our model. We pick 1 subject and random points within the brain of that subject. We then introduce affine transformation to the subject brain and same transformation to the keypoints. In other words, this is a self-supervised task in where the network learns to predict the keypoints on a brain under random affine transformation. We found that initializing our model with these weights helps with the training.
 
-To pretrain run:
+To pretrain, run:
  
 ```
-python pretraining.py
+python pretraining.py --data_dir ./data/centered_IXI/ 
 ```
 
 ### Training KeyMorph
