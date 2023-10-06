@@ -6,6 +6,7 @@ import random
 from argparse import ArgumentParser
 import torchio as tio
 from scipy.stats import loguniform
+from pathlib import Path
 
 from keymorph.keypoint_aligners import ClosedFormAffine, TPS
 from keymorph.net import ConvNetFC, ConvNetCoM
@@ -26,7 +27,7 @@ def parse_args():
     parser.add_argument("--save_dir",
                         type=str,
                         dest="save_dir",
-                        default="./training_output/",
+                        default="./register_output/",
                         help="Path to the folder where outputs are saved")
 
     parser.add_argument('--load_path', type=str, default=None,
@@ -135,6 +136,11 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
     print('Number of GPUs: {}'.format(torch.cuda.device_count()))
 
+    # Create save path
+    save_path = Path(args.save_dir)
+    if not os.path.exists(save_path) and args.save_preds:
+        os.makedirs(save_path)
+
     # Set seed
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -204,8 +210,8 @@ if __name__ == "__main__":
     registration_model = KeyMorph(network, kp_aligner, args.num_keypoints, args.dim)
     registration_model.eval()
 
-    for fixed in fixed_loader:
-        for moving in moving_loader:
+    for i, fixed in enumerate(fixed_loader):
+        for j, moving in enumerate(moving_loader):
 
             # Get images and segmentations from TorchIO subject
             img_f, img_m = fixed['img'][tio.DATA], moving['img'][tio.DATA]
@@ -227,6 +233,7 @@ if __name__ == "__main__":
             img_a = align_img(grid, img_m)
             if seg_available:
                 seg_a = align_img(grid, seg_m)
+            points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
 
             # import matplotlib.pyplot as plt
             # fig, axes = plt.subplots(1, 3, figsize=(10, 3))
@@ -248,6 +255,24 @@ if __name__ == "__main__":
                     grid = grid.permute(0, 4, 1, 2, 3)
                     metrics['jdstd'] = loss_ops.jdstd(grid)
                     metrics['jdlessthan0'] = loss_ops.jdlessthan0(grid, as_percentage=True)
+
+            if args.save_preds:
+                assert args.batch_size == 1 # TODO: fix this
+                img_a_path =    save_path  / f'img_a_{i}_{j}.npy'
+                seg_a_path =    save_path  / f'seg_a_{i}_{j}.npy'
+                points_f_path = save_path  / f'points_f_{i}_{j}.npy'
+                points_m_path = save_path  / f'points_m_{i}_{j}.npy'
+                points_a_path = save_path  / f'points_a_{i}_{j}.npy'
+                grid_path =     save_path  / f'grid_{i}_{j}.npy'
+                print('Saving:\n{}\n{}\n{}\n{}\n{}\n{}'.format(img_a_path, seg_a_path, 
+                                                               points_f_path, points_m_path,
+                                                               points_a_path, grid_path))
+                np.save(img_a_path, img_a[0].cpu().detach().numpy())
+                np.save(seg_a_path, np.argmax(seg_a.cpu().detach().numpy(), axis=1))
+                np.save(points_f_path, points_f[0].cpu().detach().numpy())
+                np.save(points_m_path, points_m[0].cpu().detach().numpy())
+                np.save(points_a_path, points_a[0].cpu().detach().numpy())
+                np.save(grid_path, grid[0].cpu().detach().numpy())
 
             for name, metric in metrics.items():
                 print(f'[Eval Stat] {name}: {metric:.5f}')
