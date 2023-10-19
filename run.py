@@ -1,5 +1,8 @@
 import os
+from pprint import pprint
 import torch
+import torch.nn.functional as F
+import time
 from torch.utils.data import DataLoader
 import numpy as np
 import random
@@ -15,7 +18,7 @@ from keymorph.net import ConvNetFC, ConvNetCoM
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float, align_img
-from keymorph.data import ixi
+from keymorph.data import ixi, gigamed
 from keymorph.augmentation import augment_pair
 from keymorph.augmentation import augment_moving
 from keymorph.cm_plotter import show_warped, show_warped_vol
@@ -157,6 +160,10 @@ def parse_args():
                         type=int,
                         default=3)
 
+    parser.add_argument("--use_amp",
+                        action='store_true',
+                        help='Use AMP')
+
     # Weights & Biases
     parser.add_argument("--use_wandb",
                         action='store_true',
@@ -204,12 +211,19 @@ def run_train(fixed_loaders,
         kp_aligner: keypoint aligner
         args: Other script arguments
     ''' 
+    start_time = time.time()
+
+    if args.use_amp:
+        scaler = torch.cuda.amp.GradScaler()
+
     registration_model.train()
 
     res = []
 
-    fixed_iters = [iter(loader) for loader in fixed_loaders]
-    moving_iters = [iter(loader) for loader in moving_loaders]
+    # fixed_iters = [iter(loader) for loader in fixed_loaders]
+    # moving_iters = [iter(loader) for loader in moving_loaders]
+    fixed_iters = [loader for loader in fixed_loaders]
+    moving_iters = [loader for loader in moving_loaders]
     for _ in range(args.steps_per_epoch):
         if args.mix_modalities:
             fixed_iter = random.choice(fixed_iters)
@@ -219,7 +233,8 @@ def run_train(fixed_loaders,
             fixed_iter = fixed_iters[mod_idx]
             moving_iter = moving_iters[mod_idx]
         
-        fixed, moving = next(fixed_iter), next(moving_iter)
+        fixed = next(iter(fixed_iter))
+        moving = next(iter(moving_iter))
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed['img'][tio.DATA], moving['img'][tio.DATA]
@@ -235,6 +250,12 @@ def run_train(fixed_loaders,
         if seg_available:
             seg_f = seg_f.float().to(args.device)
             seg_m = seg_m.float().to(args.device)
+        
+        print(img_f.shape, img_m.shape, seg_f.shape, seg_m.shape)
+        print(img_f.min(), img_f.max())
+        print(img_m.min(), img_m.max())
+        print(torch.unique(seg_f.argmax(1)))
+        print(torch.unique(seg_m.argmax(1)))
 
         # Explicitly augment moving image
         if seg_available:
@@ -248,35 +269,45 @@ def run_train(fixed_loaders,
             grid, points_f, points_m = registration_model(img_f, img_m, 
                                                           lmbda,
                                                           )
-        img_a = align_img(grid, img_m)
-        if seg_available:
-            seg_a = align_img(grid, seg_m)
-        points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
+            img_a = align_img(grid, img_m)
+            if seg_available:
+                seg_a = align_img(grid, seg_m)
+            points_a = kp_aligner.points_from_points(points_m, points_f, points_m, lmbda=lmbda)
 
-        # Compute metrics
-        metrics = {}
-        metrics['mse'] = loss_ops.MSELoss()(img_f, img_a)
-        if seg_available:
-            metrics['softdiceloss'] = loss_ops.DiceLoss()(seg_a, seg_f)
-            metrics['softdice'] = 1-metrics['softdiceloss']
-            metrics['harddice'] = 1-loss_ops.DiceLoss(hard=True)(seg_a, seg_f,
-                                                    ign_first_ch=True)[0]
-            if args.dim == 3: # TODO: Implement 2D metrics
-                metrics['hausd'] = loss_ops.hausdorff_distance(seg_a, seg_f)
-                grid = grid.permute(0, 4, 1, 2, 3)
-                metrics['jdstd'] = loss_ops.jdstd(grid)
-                metrics['jdlessthan0'] = loss_ops.jdlessthan0(grid, as_percentage=True)
+            # Compute metrics
+            metrics = {}
+            metrics['mse'] = loss_ops.MSELoss()(img_f, img_a)
+            if seg_available:
+                metrics['softdiceloss'] = loss_ops.DiceLoss()(seg_a, seg_f)
+                metrics['softdice'] = 1-metrics['softdiceloss']
+                metrics['harddice'] = 1-loss_ops.DiceLoss(hard=True)(seg_a, seg_f,
+                                                        ign_first_ch=True)[0]
+                if args.dim == 3: # TODO: Implement 2D metrics
+                    metrics['hausd'] = loss_ops.hausdorff_distance(seg_a, seg_f)
+                    grid = grid.permute(0, 4, 1, 2, 3)
+                    metrics['jdstd'] = loss_ops.jdstd(grid)
+                    metrics['jdlessthan0'] = loss_ops.jdlessthan0(grid, as_percentage=True)
 
-        # Compute loss
-        if args.loss_fn == 'mse':
-          loss = metrics['mse']
-        elif args.loss_fn == 'dice':
-          loss = metrics['softdiceloss']
-        metrics['loss'] = loss
+            # Compute loss
+            if args.loss_fn == 'mse':
+                loss = metrics['mse']
+            elif args.loss_fn == 'dice':
+                loss = metrics['softdiceloss']
+            metrics['loss'] = loss
 
         # Perform backward pass
-        loss.backward()
-        optimizer.step()
+        if args.use_amp:
+            # Scales the loss, and calls backward()
+            # to create scaled gradients
+            scaler.scale(loss).backward()
+            # Unscales gradients and calls
+            # or skips optimizer.step()
+            scaler.step(optimizer)
+            # Updates the scale for next iteration
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
 
         # Keypoint consistency loss
         if args.kpconsistency_coeff > 0:
@@ -297,6 +328,9 @@ def run_train(fixed_loaders,
             kploss.backward()
             optimizer.step()
             metrics['kploss'] = kploss
+
+        end_time = time.time()
+        metrics['epoch_time'] = end_time - start_time
 
         # Convert metrics to numpy
         metrics = {k: torch.as_tensor(v).detach().cpu().numpy().item() 
@@ -352,12 +386,17 @@ def print_dataset_stats(datasets, prefix=''):
             sum('seg' in s for s in mod_dataset.dry_iter()),
         ))
 
+def _random_channel(x):
+    rand_ch = np.random.randint(x.shape[0])
+    return x[rand_ch:rand_ch+1]
+
 def main():
     args = parse_args()
     if args.loss_fn == 'mse':
         assert not args.mix_modalities, 'MSE loss can\'t mix modalities'
     if args.debug_mode:
         args.steps_per_epoch = 3
+    pprint(vars(args))
 
     # Path to save outputs
     arguments = ('[training]keypoints' + str(args.num_keypoints)
@@ -371,8 +410,10 @@ def main():
 
     # Select GPU
     if torch.cuda.is_available():
+        print(f'Using GPU: {args.gpus}')
         args.device = torch.device('cuda:'+str(args.gpus))
     else:
+        print('No GPU available, using the CPU instead. Very slow!!')
         args.device = torch.device('cpu')
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
@@ -406,12 +447,66 @@ def main():
             moving_datasets[mod] = tio.data.SubjectsDataset(train_subjects, transform=transform)
             test_subjects = ixi.read_subjects_from_disk(args.data_dir, (428, 428+args.num_test_subjects), mod)
             test_datasets[mod] = tio.data.SubjectsDataset(test_subjects, transform=transform)
+    elif args.dataset == 'gigamed':
+        dataset_names = [
+            'Dataset5000_BraTS-GLI_2023',
+            'Dataset5001_BraTS-SSA_2023',
+            'Dataset5002_BraTS-MEN_2023',
+            'Dataset5003_BraTS-MET_2023',
+            'Dataset5004_BraTS-MET-NYU_2023',
+            'Dataset5005_BraTS-PED_2023',
+            'Dataset5006_BraTS-MET-UCSF_2023',
+            'Dataset5007_UCSF-BMSR',
+            'Dataset5010_ATLASR2',
+            'Dataset5011_BONBID-HIE_2023',
+            'Dataset5012_ShiftsBest',
+            'Dataset5013_ShiftsLjubljana',
+            'Dataset5018_TopCoWMRAwholeBIN',
+            'Dataset5024_TopCoWcrownMRAwholeBIN',
+            'Dataset5038_BrainTumour',
+            'Dataset5044_EPISURG',
+            'Dataset5046_FeTA',
+            'Dataset5066_WMH',
+            'Dataset5085_IXIPD',
+            ]
+
+        transform = tio.Compose([
+                        tio.CropOrPad(
+                            (256, 256, 256),
+                            padding_mode=0,
+                            include=('img')
+                        ),
+                        tio.CropOrPad(
+                            (256, 256, 256),
+                            padding_mode=0,
+                            include=('seg')
+                        ),
+                        tio.Lambda(
+                            _random_channel, 
+                            include=('img')
+                        ), # Some images have multiple channels for different modalities, so I just randomly sample 1 of them
+                        tio.RescaleIntensity(
+                            out_min_max=(0, 1)
+                        ),
+                        tio.OneHot(
+                            num_classes=15,
+                            include=('seg')
+                        ),
+        ])
+
+        fixed_datasets = {}
+        moving_datasets = {}
+        test_datasets = {}
+        for mod in dataset_names:
+            fixed_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
+            moving_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
+            test_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
     else:
         raise NotImplementedError
 
-    print_dataset_stats(fixed_datasets, 'Fixed train')
-    print_dataset_stats(moving_datasets, 'Moving train')
-    print_dataset_stats(test_datasets, 'Test')
+    # print_dataset_stats(fixed_datasets, 'Fixed train')
+    # print_dataset_stats(moving_datasets, 'Moving train')
+    # print_dataset_stats(test_datasets, 'Test')
 
     fixed_loaders = {k : DataLoader(v, 
                                     batch_size=args.batch_size, 

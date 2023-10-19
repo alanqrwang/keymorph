@@ -6,7 +6,13 @@ import torch.nn.functional as F
 from skimage import morphology
 
 class KeyMorph(nn.Module):
-    def __init__(self, keypoint_extractor, keypoint_aligner, num_keypoints, dim, max_train_keypoints=256):
+    def __init__(self, 
+                 keypoint_extractor, 
+                 keypoint_aligner, 
+                 num_keypoints, 
+                 dim, 
+                 max_train_keypoints=256,
+                 use_amp=False):
         '''Forward pass for one mini-batch step. 
         
         :param keypoint_extractor: Keypoint extractor network
@@ -21,6 +27,7 @@ class KeyMorph(nn.Module):
         self.num_keypoints = num_keypoints
         self.dim = dim
         self.max_train_keypoints = max_train_keypoints
+        self.use_amp = use_amp
 
     def forward(self,
                 img_f, img_m, 
@@ -30,16 +37,17 @@ class KeyMorph(nn.Module):
         :param img_f, img_m: Fixed and moving images 
         :param tps_lmbda: Lambda value for TPS
         '''
-        # Extract keypoints
-        points_f, points_m = self.extract_keypoints_step(img_f, img_m)
-        points_f = points_f.view(-1, self.num_keypoints, self.dim)
-        points_m = points_m.view(-1, self.num_keypoints, self.dim)
+        with torch.amp.autocast(device_type='cuda', enabled=self.use_amp, dtype=torch.float16):
+            # Extract keypoints
+            points_f, points_m = self.extract_keypoints_step(img_f, img_m)
+            points_f = points_f.view(-1, self.num_keypoints, self.dim)
+            points_m = points_m.view(-1, self.num_keypoints, self.dim)
 
-        if self.training and self.num_keypoints > self.max_train_keypoints: 
-            # Take mini-batch of keypoints
-            key_batch_idx = np.random.choice(self.num_keypoints, size=256, replace=False)
-            points_f = points_f[:, key_batch_idx]
-            points_m = points_m[:, key_batch_idx]
+            if self.training and self.num_keypoints > self.max_train_keypoints: 
+                # Take mini-batch of keypoints
+                key_batch_idx = np.random.choice(self.num_keypoints, size=256, replace=False)
+                points_f = points_f[:, key_batch_idx]
+                points_m = points_m[:, key_batch_idx]
         
         # Align via keypoints
         grid = self.keypoint_aligner.grid_from_points(points_m, points_f, img_f.shape, lmbda=tps_lmbda)
