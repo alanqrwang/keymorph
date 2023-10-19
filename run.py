@@ -9,7 +9,7 @@ import wandb
 import torchio as tio
 from scipy.stats import loguniform
 
-from keymorph.keypoint_aligners import ClosedFormAffine, TPS
+from keymorph.keypoint_aligners import ClosedFormRigid, ClosedFormAffine, TPS
 from keymorph import loss_ops
 from keymorph.net import ConvNetFC, ConvNetCoM
 from keymorph.model import KeyMorph
@@ -71,7 +71,7 @@ def parse_args():
     parser.add_argument('--kp_align_method', 
                         type=str,
                         default='affine', 
-                        choices=['affine', 'tps'], 
+                        choices=['rigid', 'affine', 'tps'], 
                         help='Keypoint alignment module to use')
 
     parser.add_argument('--tps_lmbda', 
@@ -83,6 +83,10 @@ def parse_args():
                         type=float,
                         default=0, 
                         help='Minimize keypoint consistency loss')
+
+    parser.add_argument("--weighted_kp_align",
+                        action='store_true',
+                        help='Use weighted keypoint alignment')
 
     # Data
     parser.add_argument("--mix_modalities",
@@ -246,8 +250,7 @@ def run_train(fixed_loaders,
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
             grid, points_f, points_m = registration_model(img_f, img_m, 
-                                                          lmbda,
-                                                          )
+                                                          lmbda)
         img_a = align_img(grid, img_m)
         if seg_available:
             seg_a = align_img(grid, seg_m)
@@ -272,6 +275,8 @@ def run_train(fixed_loaders,
           loss = metrics['mse']
         elif args.loss_fn == 'dice':
           loss = metrics['softdiceloss']
+        elif args.loss_fn == 'lc2':
+          loss = loss_ops.LC2()(img_f, img_a)
         metrics['loss'] = loss
 
         # Perform backward pass
@@ -443,16 +448,19 @@ def main():
       network = ConvNetCoM(args.dim,
                    1, 
                    args.num_keypoints,
-                   norm_type=args.norm_type)    
+                   norm_type=args.norm_type,
+                   return_weights=args.weighted_kp_align)    
     network = torch.nn.DataParallel(network)
     network.to(args.device)
 
     if args.load_path:
         state_dict = torch.load(args.load_path)['state_dict']
-        network.load_state_dict(state_dict)
+        network.load_state_dict(state_dict, strict=False)
 
     # Keypoint alignment module
-    if args.kp_align_method == 'affine':
+    if args.kp_align_method == 'rigid':
+        kp_aligner = ClosedFormRigid(args.dim)
+    elif args.kp_align_method == 'affine':
         kp_aligner = ClosedFormAffine(args.dim)
     elif args.kp_align_method == 'tps':
         kp_aligner = TPS(args.dim)

@@ -1,36 +1,121 @@
 import torch
 import torch.nn.functional as F
 
+class ClosedFormRigid:
+    '''See https://ieeexplore.ieee.org/document/4767965'''
+    def __init__(self, dim):
+        self.dim = dim
+
+    def get_rigid_matrix(self, p1_t, p2_t):
+        # #Writing points with rows as the coordinates
+        # p1_t = np.array([[0,0,0], [1,0,0],[0,1,0]])
+        # p2_t = np.array([[0,0,1], [1,0,1],[0,0,2]]) #Approx transformation is 90 degree rot over x-axis and +1 in Z axis
+
+        # Take transpose as columns should be the points
+        p1 = p1_t.permute(0, 2, 1)
+        p2 = p2_t.permute(0, 2, 1)
+
+        # Calculate centroids
+        p1_c = torch.mean(p1, axis=2, keepdim=True)
+        p2_c = torch.mean(p2, axis=2, keepdim=True)
+
+        # Subtract centroids
+        q1 = p1 - p1_c
+        q2 = p2 - p2_c
+
+        # Calculate covariance matrix
+        H = torch.bmm(q1,q2.transpose(1, 2))
+
+        # Calculate singular value decomposition (SVD)
+        U, _, V_t = torch.linalg.svd(H) #the SVD of linalg gives you Vt
+
+        # Calculate rotation matrix
+        R = torch.bmm(V_t.transpose(1, 2), U.transpose(1, 2))
+
+        assert torch.allclose(torch.linalg.det(R), torch.tensor(1.0)), "Rotation matrix of N-point registration not 1, see paper Arun et al."
+
+        # Calculate translation matrix
+        T = p2_c - torch.bmm(R,p1_c)
+
+        # Create augmented affine matrix
+        aug_mat = torch.cat([R, T], axis=-1)
+        return aug_mat
+
+    def grid_from_points(self, moving_points, fixed_points, grid_shape, **kwargs):
+        del kwargs
+        affine_matrix = self.get_rigid_matrix(fixed_points, moving_points)
+        grid = F.affine_grid(affine_matrix,
+                              grid_shape,
+                              align_corners=False)
+        return grid
+    
+    def deform_points(self, points, matrix):
+        square_mat = torch.zeros(len(points),self.dim+1,self.dim+1).to(points.device)
+        square_mat[:,:self.dim,:self.dim+1] = matrix
+        square_mat[:,-1,-1] = 1
+        batch_size, num_points, _ = points.shape
+
+        points = torch.cat((points, torch.ones(batch_size, num_points, 1).to(points.device)), dim=-1)
+        warp_points = torch.bmm(square_mat[:,:3,:], points.permute(0,2,1)).permute(0,2,1)
+        return warp_points
+
+    def points_from_points(self, moving_points, fixed_points, points, **kwargs):
+        affine_matrix = self.get_rigid_matrix(moving_points, fixed_points)
+        square_mat = torch.zeros(len(points),self.dim+1,self.dim+1).to(moving_points.device)
+        square_mat[:,:self.dim,:self.dim+1] = affine_matrix
+        square_mat[:,-1,-1] = 1
+        batch_size, num_points, _ = points.shape
+
+        points = torch.cat((points, torch.ones(batch_size, num_points, 1).to(moving_points.device)), dim=-1)
+        warped_points = torch.bmm(square_mat[:,:3,:], points.permute(0,2,1)).permute(0,2,1)
+        return warped_points
+
 class ClosedFormAffine:
     def __init__(self, dim):
         self.dim = dim
 
-    def get_affine_matrix(self, x, y):
+    def get_affine_matrix(self, x, y, w=None):
         """
         Solve the closed-form affine equation: A = y x^T (x x^T)^(-1).
         A is the solution to argmin_A ||Ax - y||_F
 
+        If w provided, solves the weighted affine equation: 
+          A = y diag(w) x^T  (x diag(w) x^T)^(-1).
+
         Args:
           x, y: [n_batch, n_points, dim]
+          w: [n_batch, n_points]
         Returns:
           A: [n_batch, 3, 4]
         """
         x = x.permute(0,2,1)
         y = y.permute(0,2,1)
 
+        if w is not None:
+            print('w:', w)
+            w = torch.diag_embed(w)
+
         # Convert y to homogenous coordinates
         one = torch.ones(x.shape[0], 1, x.shape[2]).float().to(x.device) 
         x = torch.cat([x, one],1)    
         
-        out = torch.bmm(x, torch.transpose(x,-2,-1))
-        out = torch.inverse(out)
-        out = torch.bmm(torch.transpose(x,-2,-1), out)
+        if w is not None:
+            out = torch.bmm(x, w)
+            out = torch.bmm(out, torch.transpose(x,-2,-1))
+        else:
+            out = torch.bmm(x, torch.transpose(x,-2,-1))
+        inv = torch.inverse(out)
+        if w is not None:
+            out = torch.bmm(w, torch.transpose(x,-2,-1))
+            out = torch.bmm(out, inv)
+        else:
+            out = torch.bmm(torch.transpose(x,-2,-1), inv)
         out = torch.bmm(y, out)
         return out
 
-    def grid_from_points(self, moving_points, fixed_points, grid_shape, **kwargs):
+    def grid_from_points(self, moving_points, fixed_points, grid_shape, weights=None, **kwargs):
         del kwargs
-        affine_matrix = self.get_affine_matrix(fixed_points, moving_points)
+        affine_matrix = self.get_affine_matrix(fixed_points, moving_points, w=weights)
         grid = F.affine_grid(affine_matrix,
                               grid_shape,
                               align_corners=False)
