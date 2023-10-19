@@ -1,19 +1,16 @@
 import numpy as np
 import os
-import glob
 from torch.utils.data import Dataset
 import torchio as tio
  
-from batchgenerators.utilities.file_and_folder_operations import join, load_pickle, isfile
-
 class GigaMedDataset(Dataset):
     def __init__(self, dataset_name: str, transform=None):
         data_folder_name = 'nnUNetPlans_3d_fullres'
         MFM_preprocessed_folder = '/midtier/sablab/scratch/data/'
  
-        dataset_data_folder = join(MFM_preprocessed_folder, dataset_name, data_folder_name)
+        dataset_data_folder = os.path.join(MFM_preprocessed_folder, dataset_name, data_folder_name)
  
-        case_identifiers = [join(dataset_data_folder,i) for i in os.listdir(dataset_data_folder) if i.endswith("npz")]
+        case_identifiers = [os.path.join(dataset_data_folder,i) for i in os.listdir(dataset_data_folder) if i.endswith("npz")]
         self.dataset = []
         for data_file_path in case_identifiers:
             self.dataset.append(data_file_path)
