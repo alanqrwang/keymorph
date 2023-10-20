@@ -12,7 +12,7 @@ import wandb
 import torchio as tio
 from scipy.stats import loguniform
 
-from keymorph.keypoint_aligners import ClosedFormAffine, TPS
+from keymorph.keypoint_aligners import ClosedFormRigid, ClosedFormAffine, TPS
 from keymorph import loss_ops
 from keymorph.net import ConvNetFC, ConvNetCoM
 from keymorph.model import KeyMorph
@@ -74,7 +74,7 @@ def parse_args():
     parser.add_argument('--kp_align_method', 
                         type=str,
                         default='affine', 
-                        choices=['affine', 'tps'], 
+                        choices=['rigid', 'affine', 'tps'], 
                         help='Keypoint alignment module to use')
 
     parser.add_argument('--tps_lmbda', 
@@ -86,6 +86,10 @@ def parse_args():
                         type=float,
                         default=0, 
                         help='Minimize keypoint consistency loss')
+
+    parser.add_argument("--weighted_kp_align",
+                        action='store_true',
+                        help='Use weighted keypoint alignment')
 
     # Data
     parser.add_argument("--mix_modalities",
@@ -448,6 +452,7 @@ def main():
             test_subjects = ixi.read_subjects_from_disk(args.data_dir, (428, 428+args.num_test_subjects), mod)
             test_datasets[mod] = tio.data.SubjectsDataset(test_subjects, transform=transform)
     elif args.dataset == 'gigamed':
+        gigamed_dir = '/share/sablab/nfs04/users/rs2492/data/nnUNet_preprocessed_DATA/nnUNet_raw_data_base'
         dataset_names = [
             'Dataset5000_BraTS-GLI_2023',
             'Dataset5001_BraTS-SSA_2023',
@@ -497,10 +502,13 @@ def main():
         fixed_datasets = {}
         moving_datasets = {}
         test_datasets = {}
-        for mod in dataset_names:
-            fixed_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
-            moving_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
-            test_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
+        for ds_name in dataset_names:
+            train_subjects = gigamed.read_subjects_from_disk(gigamed_dir, True, ds_name)
+            fixed_datasets[ds_name] = tio.data.SubjectsDataset(train_subjects, transform=transform)
+            train_subjects = gigamed.read_subjects_from_disk(gigamed_dir, True, ds_name)
+            moving_datasets[ds_name] = tio.data.SubjectsDataset(train_subjects, transform=transform)
+            # test_subjects = gigamed.read_subjects_from_disk(gigamed_dir, False, ds_name)
+            # test_datasets[ds_name] = tio.data.SubjectsDataset(test_subjects, transform=transform)
     else:
         raise NotImplementedError
 
@@ -538,16 +546,19 @@ def main():
       network = ConvNetCoM(args.dim,
                    1, 
                    args.num_keypoints,
-                   norm_type=args.norm_type)    
+                   norm_type=args.norm_type,
+                   return_weights=args.weighted_kp_align)    
     network = torch.nn.DataParallel(network)
     network.to(args.device)
 
     if args.load_path:
         state_dict = torch.load(args.load_path)['state_dict']
-        network.load_state_dict(state_dict)
+        network.load_state_dict(state_dict, strict=False)
 
     # Keypoint alignment module
-    if args.kp_align_method == 'affine':
+    if args.kp_align_method == 'rigid':
+        kp_aligner = ClosedFormRigid(args.dim)
+    elif args.kp_align_method == 'affine':
         kp_aligner = ClosedFormAffine(args.dim)
     elif args.kp_align_method == 'tps':
         kp_aligner = TPS(args.dim)
