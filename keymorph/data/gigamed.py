@@ -1,36 +1,29 @@
-import numpy as np
 import os
-from torch.utils.data import Dataset
 import torchio as tio
  
-class GigaMedDataset(Dataset):
-    def __init__(self, dataset_name: str, transform=None):
-        data_folder_name = 'nnUNetPlans_3d_fullres'
-        MFM_preprocessed_folder = '/midtier/sablab/scratch/data/'
- 
-        dataset_data_folder = os.path.join(MFM_preprocessed_folder, dataset_name, data_folder_name)
- 
-        case_identifiers = [os.path.join(dataset_data_folder,i) for i in os.listdir(dataset_data_folder) if i.endswith("npz")]
-        self.dataset = []
-        for data_file_path in case_identifiers:
-            self.dataset.append(data_file_path)
-            # self.dataset[c]['data_file'] = data_file_path
-            # self.dataset[c]['properties_file'] = data_file_path.replace(".npz", ".pkl")
-        
-        self.transform = transform
+def read_subjects_from_disk(directory: str, train: bool, dataset_name: str):
 
-    def __len__(self):
-        return len(self.dataset)
+    if train:
+        split_folder_img, split_folder_seg = 'imagesTr', 'labelsTr'
+    else:
+        split_folder_img, split_folder_seg = 'imagesTs', 'labelsTs'
+    img_data_folder = os.path.join(directory, dataset_name, split_folder_img)
+    seg_data_folder = os.path.join(directory, dataset_name, split_folder_seg)
+
+    img_data_paths = [os.path.join(img_data_folder,i) for i in os.listdir(img_data_folder)]
     
-    def __getitem__(self, index):
-        npz_data = np.load(self.dataset[index])
-        img = npz_data['data']
-        seg = npz_data['seg'].astype(int)+1
+    loaded_subjects = []
+    for img_path in img_data_paths:
+        basename = os.path.basename(img_path)
+        path_name = basename.split('.')[0]
+        extension = '.'.join(basename.split('.')[1:])
+        seg_path = os.path.join(seg_data_folder, path_name[:-5]+'.'+extension)
         subject_kwargs = {
-            'img' : tio.ScalarImage(tensor=img),
-            'seg' : tio.LabelMap(tensor=seg),
+            'img' : tio.ScalarImage(img_path),
+            'seg' : tio.LabelMap(seg_path),
         }
         subject = tio.Subject(**subject_kwargs)
-        if self.transform:
-            subject = self.transform(subject)
-        return subject
+        loaded_subjects.append(subject)
+    print(dataset_name, len(loaded_subjects))
+    
+    return loaded_subjects

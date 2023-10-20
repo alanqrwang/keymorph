@@ -452,6 +452,7 @@ def main():
             test_subjects = ixi.read_subjects_from_disk(args.data_dir, (428, 428+args.num_test_subjects), mod)
             test_datasets[mod] = tio.data.SubjectsDataset(test_subjects, transform=transform)
     elif args.dataset == 'gigamed':
+        gigamed_dir = '/share/sablab/nfs04/users/rs2492/data/nnUNet_preprocessed_DATA/nnUNet_raw_data_base'
         dataset_names = [
             'Dataset5000_BraTS-GLI_2023',
             'Dataset5001_BraTS-SSA_2023',
@@ -501,10 +502,13 @@ def main():
         fixed_datasets = {}
         moving_datasets = {}
         test_datasets = {}
-        for mod in dataset_names:
-            fixed_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
-            moving_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
-            test_datasets[mod] = gigamed.GigaMedDataset(mod, transform=transform)
+        for ds_name in dataset_names:
+            train_subjects = gigamed.read_subjects_from_disk(gigamed_dir, True, ds_name)
+            fixed_datasets[ds_name] = tio.data.SubjectsDataset(train_subjects, transform=transform)
+            train_subjects = gigamed.read_subjects_from_disk(gigamed_dir, True, ds_name)
+            moving_datasets[ds_name] = tio.data.SubjectsDataset(train_subjects, transform=transform)
+            # test_subjects = gigamed.read_subjects_from_disk(gigamed_dir, False, ds_name)
+            # test_datasets[ds_name] = tio.data.SubjectsDataset(test_subjects, transform=transform)
     else:
         raise NotImplementedError
 
