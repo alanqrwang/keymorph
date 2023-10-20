@@ -156,3 +156,4 @@ job_err/*
 register.ipynb
 
 *.npy
+*.out
