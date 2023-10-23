@@ -157,3 +157,4 @@ register.ipynb
 
 *.npy
 *.out
+.vscode/
