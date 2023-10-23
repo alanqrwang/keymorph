@@ -14,6 +14,23 @@ def align_img(grid, x):
                          padding_mode='border',
                          align_corners=False)
 
+def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
+    array = array.float()
+
+    if percentiles != (0, 100):
+        cutoff = np.percentile(array, percentiles)
+        np.clip(array, *cutoff, out=array)  # type: ignore[call-overload]
+    in_min = array.min()
+    in_range = array.max() - in_min
+    out_min = out_range[0]
+    out_range = out_range[1] - out_range[0]
+    
+    array -= in_min
+    array /= in_range
+    array *= out_range
+    array += out_min
+    return array
+
 def parse_test_metric(mod, aug):
     mod1, mod2 = mod.split('_')
     if 'rot' in aug:
@@ -123,3 +140,14 @@ def sample_valid_coordinates_3d(x, num_points):
                 indices.append([dim3/x.size(4),dim2/x.size(3),dim1/x.size(2)])
 
     return torch.tensor(indices).view(1, num_points, 3)
+
+def summary(network):
+    """Print model summary."""
+    print('')
+    print('Model Summary')
+    print('---------------------------------------------------------------')
+    for name, _ in network.named_parameters():
+        print(name)
+    print('Total parameters:', sum(p.numel() for p in network.parameters() if p.requires_grad))
+    print('---------------------------------------------------------------')
+    print('')
