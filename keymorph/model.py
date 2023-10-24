@@ -15,7 +15,6 @@ class KeyMorph(nn.Module):
         dim,
         max_train_keypoints=256,
         use_amp=False,
-        return_aligned_points=False,
     ):
         """Forward pass for one mini-batch step.
 
@@ -60,7 +59,7 @@ class KeyMorph(nn.Module):
             points_m, points_f, img_f.shape, lmbda=tps_lmbda
         )
         if return_aligned_points:
-            points_a = self.kp_aligner.points_from_points(
+            points_a = self.keypoint_aligner.points_from_points(
                 points_m, points_f, points_m, lmbda=tps_lmbda
             )
             return grid, points_f, points_m, points_a

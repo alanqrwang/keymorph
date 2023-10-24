@@ -19,8 +19,11 @@ from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float, align_img
 from keymorph.data import ixi, gigamed
-from keymorph.augmentation import augment_pair
-from keymorph.augmentation import augment_moving
+from keymorph.augmentation import (
+    affine_augment,
+    random_affine_augment,
+    random_affine_augment_pair,
+)
 from keymorph.cm_plotter import show_warped, show_warped_vol
 
 
@@ -32,6 +35,12 @@ def parse_args():
         "--gpus", type=str, default="0", help="Which GPUs to use? Index from 0"
     )
 
+    parser.add_argument(
+        "--job_name",
+        type=str,
+        default="keymorph",
+        help="Name of job",
+    )
     parser.add_argument(
         "--save_dir",
         type=str,
@@ -48,6 +57,10 @@ def parse_args():
 
     parser.add_argument(
         "--load_path", type=str, default=None, help="Load checkpoint at .h5 path"
+    )
+
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume checkpoint, must set --load_path"
     )
 
     parser.add_argument("--save_preds", action="store_true", help="Perform evaluation")
@@ -141,6 +154,13 @@ def parse_args():
 
     parser.add_argument("--eval", action="store_true", help="Perform evaluation")
 
+    parser.add_argument(
+        "--affine_slope",
+        type=int,
+        default=-1,
+        help="Constant to control how slow to increase augmentation. If negative, disabled.",
+    )
+
     # Miscellaneous
     parser.add_argument("--debug_mode", action="store_true", help="Debug mode")
 
@@ -214,11 +234,9 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
 
     res = []
 
-    # fixed_iters = [iter(loader) for loader in fixed_loaders]
-    # moving_iters = [iter(loader) for loader in moving_loaders]
-    fixed_iters = [loader for loader in fixed_loaders]
-    moving_iters = [loader for loader in moving_loaders]
-    for _ in range(args.steps_per_epoch):
+    fixed_iters = [iter(loader) for loader in fixed_loaders]
+    moving_iters = [iter(loader) for loader in moving_loaders]
+    for step_idx in range(args.steps_per_epoch):
         if args.mix_modalities:
             fixed_iter = random.choice(fixed_iters)
             moving_iter = random.choice(moving_iters)
@@ -226,9 +244,8 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
             mod_idx = np.random.randint(0, len(fixed_iters))
             fixed_iter = fixed_iters[mod_idx]
             moving_iter = moving_iters[mod_idx]
-
-        fixed = next(iter(fixed_iter))
-        moving = next(iter(moving_iter))
+        fixed = next(fixed_iter)
+        moving = next(moving_iter)
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
@@ -246,16 +263,22 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
             seg_m = seg_m.float().to(args.device)
 
         # Explicitly augment moving image
-        if seg_available:
-            img_m, seg_m = augment_moving(img_m, args, seg=seg_m, fixed_params=None)
+        if args.affine_slope >= 0:
+            scale_augment = np.clip(args.curr_epoch / args.affine_slope, None, 1)
         else:
-            img_m = augment_moving(img_m, args, fixed_params=None)
+            scale_augment = 1
+        if seg_available:
+            img_m, seg_m = random_affine_augment(
+                img_m, seg=seg_m, scale_params=scale_augment
+            )
+        else:
+            img_m = random_affine_augment(img_m, scale_params=scale_augment)
 
         lmbda = _get_tps_lmbda(len(img_f), args, is_train=True)
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
             grid, points_f, points_m, points_a = registration_model(
-                img_f, img_m, lmbda, return_aligned_points=True
+                img_f, img_m, lmbda, True
             )
             img_a = align_img(grid, img_m)
             if seg_available:
@@ -263,6 +286,7 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
 
             # Compute metrics
             metrics = {}
+            metrics["scale_augment"] = scale_augment
             metrics["mse"] = loss_ops.MSELoss()(img_f, img_a)
             if seg_available:
                 metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
@@ -308,7 +332,9 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
 
             sub1 = sub1["img"][tio.DATA].float().to(args.device).unsqueeze(0)
             sub2 = sub2["img"][tio.DATA].float().to(args.device).unsqueeze(0)
-            sub1, sub2 = augment_pair(sub1, sub2, args)
+            sub1, sub2 = random_affine_augment_pair(
+                sub1, sub2, scale_params=scale_augment
+            )
 
             optimizer.zero_grad()
             with torch.set_grad_enabled(True):
@@ -329,7 +355,7 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
         }
         res.append(metrics)
 
-        if args.visualize:
+        if args.visualize and step_idx == 0:
             if args.dim == 2:
                 show_warped(
                     img_m[0, 0].cpu().detach().numpy(),
@@ -355,6 +381,9 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
                     points_m[0].cpu().detach().numpy(),
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
+                    save_path=os.path.join(
+                        args.model_dir, f"img_{args.curr_epoch}.png"
+                    ),
                 )
                 show_warped_vol(
                     seg_m.argmax(1)[0].cpu().detach().numpy(),
@@ -363,6 +392,9 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
                     points_m[0].cpu().detach().numpy(),
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
+                    save_path=os.path.join(
+                        args.model_dir, f"seg_{args.curr_epoch}.png"
+                    ),
                 )
 
     return utils.aggregate_dicts(res)
@@ -392,7 +424,8 @@ def main():
 
     # Path to save outputs
     arguments = (
-        "[training]keypoints"
+        args.job_name
+        + "_[training]keypoints"
         + str(args.num_keypoints)
         + "_batch"
         + str(args.batch_size)
@@ -402,17 +435,15 @@ def main():
         + str(args.lr)
     )
 
-    save_path = Path(args.save_dir) / arguments
-    if not os.path.exists(save_path) and not args.debug_mode:
-        os.makedirs(save_path)
+    args.model_dir = Path(args.save_dir) / arguments
+    if not os.path.exists(args.model_dir) and not args.debug_mode:
+        os.makedirs(args.model_dir)
 
     # Select GPU
     if torch.cuda.is_available():
-        print(f"Using GPU: {args.gpus}")
-        # args.device = torch.device("cuda:" + str(args.gpus))
         args.device = torch.device("cuda")
     else:
-        print("No GPU available, using the CPU instead. Very slow!!")
+        print("WARNING! No GPU available, using the CPU instead...")
         args.device = torch.device("cpu")
     # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
@@ -457,33 +488,31 @@ def main():
                 test_subjects, transform=transform
             )
     elif args.dataset == "gigamed":
-        # gigamed_dir = '/share/sablab/nfs04/users/rs2492/data/nnUNet_preprocessed_DATA/nnUNet_raw_data_base'
-        # gigamed_dir = '/midtier/sablab/scratch/alw4013/'
         dataset_names = [
-            # 'Dataset5000_BraTS-GLI_2023',
-            # 'Dataset5001_BraTS-SSA_2023',
+            "Dataset5000_BraTS-GLI_2023",
+            "Dataset5001_BraTS-SSA_2023",
             "Dataset5002_BraTS-MEN_2023",
             "Dataset5003_BraTS-MET_2023",
             "Dataset5004_BraTS-MET-NYU_2023",
-            # 'Dataset5005_BraTS-PED_2023',
-            # 'Dataset5006_BraTS-MET-UCSF_2023',
-            # 'Dataset5007_UCSF-BMSR',
-            # 'Dataset5010_ATLASR2',
-            # 'Dataset5011_BONBID-HIE_2023',
-            # 'Dataset5012_ShiftsBest',
-            # 'Dataset5013_ShiftsLjubljana',
-            # 'Dataset5018_TopCoWMRAwholeBIN',
-            # 'Dataset5024_TopCoWcrownMRAwholeBIN',
-            # 'Dataset5038_BrainTumour',
-            # 'Dataset5044_EPISURG',
-            # 'Dataset5046_FeTA',
-            # 'Dataset5066_WMH',
-            # 'Dataset5085_IXIPD',
+            "Dataset5005_BraTS-PED_2023",
+            "Dataset5006_BraTS-MET-UCSF_2023",
+            "Dataset5007_UCSF-BMSR",
+            "Dataset5010_ATLASR2",
+            "Dataset5011_BONBID-HIE_2023",
+            "Dataset5012_ShiftsBest",
+            "Dataset5013_ShiftsLjubljana",
+            "Dataset5018_TopCoWMRAwholeBIN",
+            "Dataset5024_TopCoWcrownMRAwholeBIN",
+            "Dataset5038_BrainTumour",
+            "Dataset5044_EPISURG",
+            "Dataset5046_FeTA",
+            "Dataset5066_WMH",
         ]
 
         transform = tio.Compose(
             [
                 tio.ToCanonical(),
+                tio.Resample(1),
                 tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img")),
                 tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg")),
                 tio.Lambda(utils.rescale_intensity, include=("img")),
@@ -550,7 +579,6 @@ def main():
         network = ConvNetFC(
             args.dim, 1, args.num_keypoints * args.dim, norm_type=args.norm_type
         )
-        network = torch.nn.DataParallel(network)
     elif args.kp_extractor == "conv_com":
         network = ConvNetCoM(
             args.dim,
@@ -560,12 +588,10 @@ def main():
             return_weights=args.weighted_kp_align,
         )
     network = torch.nn.DataParallel(network)
-    network.to(args.device)
 
     if args.load_path:
         state_dict = torch.load(args.load_path)["state_dict"]
-        network.load_state_dict(state_dict, strict=False)
-    utils.summary(network)
+        network.load_state_dict(state_dict)
 
     # Keypoint alignment module
     if args.kp_align_method == "rigid":
@@ -581,13 +607,15 @@ def main():
     registration_model = KeyMorph(
         network, kp_aligner, args.num_keypoints, args.dim, use_amp=args.use_amp
     )
+    registration_model = torch.nn.DataParallel(registration_model)
+    registration_model.to(args.device)
+    utils.summary(registration_model)
 
     # Optimizer
-    params = list(network.parameters())
-    optimizer = torch.optim.Adam(params, lr=args.lr)
+    optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
 
     if args.eval:
-        network.eval()
+        registration_model.eval()
 
         list_of_test_mods = [
             "T1_T1",
@@ -633,11 +661,9 @@ def main():
 
                         # Explicitly augment moving image
                         if seg_available:
-                            img_m, seg_m = augment_moving(
-                                img_m, args, seg=seg_m, fixed_params=param
-                            )
+                            img_m, seg_m = affine_augment(img_m, param, seg=seg_m)
                         else:
-                            img_m = augment_moving(img_m, args, fixed_params=param)
+                            img_m = affine_augment(img_m, param)
                         lmbda = _get_tps_lmbda(len(img_f), args, is_train=False)
 
                         with torch.set_grad_enabled(False):
@@ -677,37 +703,43 @@ def main():
 
                         if args.save_preds and not args.debug_mode:
                             assert args.batch_size == 1  # TODO: fix this
-                            img_f_path = save_path / "data" / f"img_f_{i}-{mod1}.npy"
-                            seg_f_path = save_path / "data" / f"seg_f_{i}-{mod1}.npy"
+                            img_f_path = (
+                                args.model_dir / "data" / f"img_f_{i}-{mod1}.npy"
+                            )
+                            seg_f_path = (
+                                args.model_dir / "data" / f"seg_f_{i}-{mod1}.npy"
+                            )
                             points_f_path = (
-                                save_path / "data" / f"points_f_{i}-{mod1}.npy"
+                                args.model_dir / "data" / f"points_f_{i}-{mod1}.npy"
                             )
                             img_m_path = (
-                                save_path / "data" / f"img_m_{j}-{mod2}-{aug}.npy"
+                                args.model_dir / "data" / f"img_m_{j}-{mod2}-{aug}.npy"
                             )
                             seg_m_path = (
-                                save_path / "data" / f"seg_m_{j}-{mod2}-{aug}.npy"
+                                args.model_dir / "data" / f"seg_m_{j}-{mod2}-{aug}.npy"
                             )
                             points_m_path = (
-                                save_path / "data" / f"points_m_{j}-{mod2}-{aug}.npy"
+                                args.model_dir
+                                / "data"
+                                / f"points_m_{j}-{mod2}-{aug}.npy"
                             )
                             img_a_path = (
-                                save_path
+                                args.model_dir
                                 / "data"
                                 / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
                             )
                             seg_a_path = (
-                                save_path
+                                args.model_dir
                                 / "data"
                                 / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
                             )
                             points_a_path = (
-                                save_path
+                                args.model_dir
                                 / "data"
                                 / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
                             )
                             grid_path = (
-                                save_path
+                                args.model_dir
                                 / "data"
                                 / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
                             )
@@ -740,14 +772,22 @@ def main():
                             print(f"[Eval Stat] {name}: {metric:.5f}")
 
     else:
-        network.train()
+        registration_model.train()
         train_loss = []
-        best = 1e10
 
         if args.use_wandb and not args.debug_mode:
             initialize_wandb(args)
 
-        for epoch in range(1, args.epochs + 1):
+        if args.resume:
+            state = torch.load(args.load_path)
+            registration_model.load_state_dict(state["state_dict"])
+            optimizer.load_state_dict(state["optimizer"])
+            start_epoch = state["epoch"] + 1
+        else:
+            start_epoch = 1
+
+        for epoch in range(start_epoch, args.epochs + 1):
+            args.curr_epoch = epoch
             epoch_stats = run_train(
                 list(fixed_loaders.values()),
                 list(moving_loaders.values()),
@@ -768,18 +808,15 @@ def main():
             state = {
                 "epoch": epoch,
                 "args": args,
-                "state_dict": network.state_dict(),
+                "state_dict": registration_model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
 
-            if train_loss[-1] < best and not args.debug_mode:
-                best = train_loss[-1]
-                torch.save(state, os.path.join(save_path, "best_trained_model.pth.tar"))
             if epoch % args.log_interval == 0 and not args.debug_mode:
                 torch.save(
                     state,
                     os.path.join(
-                        save_path, "epoch{}_trained_model.pth.tar".format(epoch)
+                        args.model_dir, "epoch{}_trained_model.pth.tar".format(epoch)
                     ),
                 )
 

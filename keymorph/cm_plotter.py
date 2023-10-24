@@ -252,8 +252,7 @@ def show_warped_vol(
     tgt_points,
     warped_points,
     suptitle=None,
-    save_dir=None,
-    save_name=None,
+    save_path=None,
 ):
     """
     Moved, aligned, and fixed should be volumes with 3 dimensions.
@@ -360,9 +359,9 @@ def show_warped_vol(
 
     axes[2, 0].set_xlabel("y")
     axes[2, 0].set_ylabel("z")
-    if save_name is not None:
+    if save_path is not None:
         fig.savefig(
-            os.path.join(save_dir, save_name),
+            save_path,
             format="png",
             dpi=100,
             bbox_inches="tight",
