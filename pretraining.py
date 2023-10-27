@@ -285,56 +285,6 @@ def main():
                 test_subjects, transform=transform
             )
         ref_subject = train_datasets[dataset_names[0]][0]
-    elif args.dataset == "gigamed":
-        dataset_names = [
-            "Dataset5000_BraTS-GLI_2023",
-            "Dataset5001_BraTS-SSA_2023",
-            "Dataset5002_BraTS-MEN_2023",
-            "Dataset5003_BraTS-MET_2023",
-            "Dataset5004_BraTS-MET-NYU_2023",
-            "Dataset5005_BraTS-PED_2023",
-            "Dataset5006_BraTS-MET-UCSF_2023",
-            "Dataset5007_UCSF-BMSR",
-            "Dataset5010_ATLASR2",
-            "Dataset5011_BONBID-HIE_2023",
-            "Dataset5012_ShiftsBest",
-            "Dataset5013_ShiftsLjubljana",
-            "Dataset5018_TopCoWMRAwholeBIN",
-            "Dataset5024_TopCoWcrownMRAwholeBIN",
-            "Dataset5038_BrainTumour",
-            "Dataset5044_EPISURG",
-            "Dataset5046_FeTA",
-            "Dataset5066_WMH",
-            # 'Dataset5085_IXIPD',
-        ]
-
-        transform = tio.Compose(
-            [
-                tio.ToCanonical(),
-                tio.Resample(1),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img")),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg")),
-                tio.Lambda(utils.rescale_intensity, include=("img")),
-                tio.OneHot(num_classes=15, include=("seg")),
-            ]
-        )
-
-        train_datasets = {}
-        test_datasets = {}
-        for ds_name in dataset_names:
-            train_subject_dict = gigamed.read_subjects_from_disk(
-                args.data_dir, True, ds_name
-            )
-            for k, train_subject_list in train_subject_dict.items():
-                train_datasets[ds_name + k] = tio.data.SubjectsDataset(
-                    train_subject_list, transform=transform
-                )
-            # test_subjects = gigamed.read_subjects_from_disk(args.data_dir, False, ds_name)
-            # for k, train_subject_list in train_subject_dict.items():
-            #     test_datasets[ds_name+k] = tio.data.SubjectsDataset(train_subject_list, transform=transform)
-
-        # Reference subject
-        ref_subject = train_datasets[list(train_datasets.keys())[0]][0]
     else:
         raise NotImplementedError
 
