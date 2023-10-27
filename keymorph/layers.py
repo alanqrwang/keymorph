@@ -8,33 +8,32 @@ class CenterOfMass2d(nn.Module):
 
     def forward(self, img):
         """
-        x: tensor of shape [n_batch, chs, dim1, dim2]
-        returns: center of mass, shape [n_batch, chs, 2]
+        x: tensor of shape [n_batch, chs, dimy, dimx]
+        returns: center of mass in normalized coordinates [0,1]x[0,1], shape [n_batch, chs, 2]
         """
-        n_batch, chs, dim1, dim2 = img.shape
+        n_batch, chs, dimy, dimx = img.shape
         eps = 1e-8
         arangex = (
-            torch.linspace(0, 1, dim2).float().view(1, 1, -1).repeat(n_batch, chs, 1)
+            torch.linspace(0, 1, dimx).float().view(1, 1, -1).repeat(n_batch, chs, 1)
         )
         arangey = (
-            torch.linspace(0, 1, dim1).float().view(1, 1, -1).repeat(n_batch, chs, 1)
+            torch.linspace(0, 1, dimy).float().view(1, 1, -1).repeat(n_batch, chs, 1)
         )
 
         arangex, arangey = arangex.to(img.device), arangey.to(img.device)
 
-        mx = img.sum(dim=2)  # mass along the dimN, shape [n_batch, chs, dimN]
-        Mx = mx.sum(-1, True) + eps  # total mass along dimN
+        mx = img.sum(dim=-2)  # mass along the dimN, shape [n_batch, chs, dimN]
+        Mx = mx.sum(dim=-1, keepdim=True) + eps  # total mass along dimN
 
-        my = img.sum(dim=3)
-        My = my.sum(-1, True) + eps
+        my = img.sum(dim=-1)
+        My = my.sum(dim=-1, keepdim=True) + eps
 
-        cx = (arangex * mx).sum(
-            -1, True
-        ) / Mx  # center of mass along dimN, shape [n_batch, chs, 1]
-        cy = (arangey * my).sum(-1, True) / My
+        # center of mass along dimN, shape [n_batch, chs, 1]
+        cx = (arangex * mx).sum(dim=-1, keepdim=True) / Mx
+        cy = (arangey * my).sum(dim=-1, keepdim=True) / My
 
-        C = torch.cat([cx, cy], -1)  # center of mass, shape [n_batch, chs, 2]
-        return C
+        # center of mass, shape [n_batch, chs, 2]
+        return torch.cat([cx, cy], dim=-1)
 
 
 class CenterOfMass3d(nn.Module):
@@ -43,43 +42,43 @@ class CenterOfMass3d(nn.Module):
 
     def forward(self, vol):
         """
-        x: tensor of shape [n_batch, chs, dim1, dim2, dim3]
-        returns: center of mass, shape [n_batch, chs, 3]
+        x: tensor of shape [n_batch, chs, dimz, dimy, dimx]
+        returns: center of mass in normalized coordinates [0,1]x[0,1]x[0,1], shape [n_batch, chs, 2]
         """
-        n_batch, chs, dim1, dim2, dim3 = vol.shape
+        n_batch, chs, dimz, dimy, dimx = vol.shape
         eps = 1e-8
-        arange1 = (
-            torch.linspace(0, 1, dim1).float().view(1, 1, -1).repeat(n_batch, chs, 1)
+        arangex = (
+            torch.linspace(0, 1, dimx).float().view(1, 1, -1).repeat(n_batch, chs, 1)
         )
-        arange2 = (
-            torch.linspace(0, 1, dim2).float().view(1, 1, -1).repeat(n_batch, chs, 1)
+        arangey = (
+            torch.linspace(0, 1, dimy).float().view(1, 1, -1).repeat(n_batch, chs, 1)
         )
-        arange3 = (
-            torch.linspace(0, 1, dim3).float().view(1, 1, -1).repeat(n_batch, chs, 1)
+        arangez = (
+            torch.linspace(0, 1, dimz).float().view(1, 1, -1).repeat(n_batch, chs, 1)
         )
 
-        arange1, arange2, arange3 = (
-            arange1.to(vol.device),
-            arange2.to(vol.device),
-            arange3.to(vol.device),
+        arangex, arangey, arangez = (
+            arangex.to(vol.device),
+            arangey.to(vol.device),
+            arangez.to(vol.device),
         )
 
         mx = vol.sum(dim=(2, 3))  # mass along the dimN, shape [n_batch, chs, dimN]
-        Mx = mx.sum(-1, True) + eps  # total mass along dimN
+        Mx = mx.sum(dim=-1, keepdim=True) + eps  # total mass along dimN
 
         my = vol.sum(dim=(2, 4))
-        My = my.sum(-1, True) + eps
+        My = my.sum(dim=-1, keepdim=True) + eps
 
         mz = vol.sum(dim=(3, 4))
-        Mz = mz.sum(-1, True) + eps
+        Mz = mz.sum(dim=-1, keepdim=True) + eps
 
         # center of mass along dimN, shape [n_batch, chs, 1]
-        cx = (arange1 * mx).sum(-1, True) / Mx
-        cy = (arange2 * my).sum(-1, True) / My
-        cz = (arange3 * mz).sum(-1, True) / Mz
+        cx = (arangex * mx).sum(dim=-1, keepdim=True) / Mx
+        cy = (arangey * my).sum(dim=-1, keepdim=True) / My
+        cz = (arangez * mz).sum(dim=-1, keepdim=True) / Mz
 
-        C = torch.cat([cx, cy, cz], -1)  # center of mass, shape [n_batch, chs, 3]
-        return C
+        # center of mass, shape [n_batch, chs, 3]
+        return torch.cat([cx, cy, cz], dim=-1)
 
 
 class ConvBlock(nn.Module):
