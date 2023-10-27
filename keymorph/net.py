@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from .unet3d.model import UNet2D, UNet3D
 from . import layers
 
 h_dims = [32, 64, 64, 128, 128, 256, 256, 512]
+
 
 class ConvNetFC(nn.Module):
     def __init__(self, dim, input_ch, out_dim, norm_type):
@@ -26,7 +27,6 @@ class ConvNetFC(nn.Module):
         self.fc = nn.Linear(h_dims[7], out_dim)
 
     def forward(self, x):
-
         out = self.block1(x)
         out = self.block2(out)
         out = self.block3(out)
@@ -37,15 +37,14 @@ class ConvNetFC(nn.Module):
         out = self.block8(out)
 
         if self.dim == 2:
-            out = F.avg_pool2d(out,
-                    kernel_size=out.size()[-1]).view(out.size()[0],-1)
+            out = F.avg_pool2d(out, kernel_size=out.size()[-1]).view(out.size()[0], -1)
         elif self.dim == 3:
-            out = F.avg_pool3d(out,
-                    kernel_size=out.size()[-1]).view(out.size()[0],-1)
+            out = F.avg_pool3d(out, kernel_size=out.size()[-1]).view(out.size()[0], -1)
 
         out = self.fc(out)
         out = torch.sigmoid(out)
-        return out*2-1 #[-1, 1] for F.grid_sample
+        return out * 2 - 1  # [-1, 1] for F.grid_sample
+
 
 class ConvNetCoM(nn.Module):
     def __init__(self, dim, input_ch, out_dim, norm_type, return_weights=False):
@@ -77,9 +76,9 @@ class ConvNetCoM(nn.Module):
 
     def get_variances(self, heatmap):
         if self.dim == 2:
-            return torch.var(heatmap, dim=(2,3))
+            return torch.var(heatmap, dim=(2, 3))
         else:
-            return torch.var(heatmap, dim=(2,3,4))
+            return torch.var(heatmap, dim=(2, 3, 4))
 
     def forward(self, x):
         out = self.block1(x)
@@ -95,6 +94,48 @@ class ConvNetCoM(nn.Module):
         points = self.com(heatmap)
         if self.return_weights:
             variances = self.get_variances(heatmap)
-            variances = self.scales*variances + self.biases
-            return points*2-1, 1/variances
-        return points*2-1 #[-1, 1] for F.grid_sample
+            variances = self.scales * variances + self.biases
+            return points * 2 - 1, 1 / variances
+        return points * 2 - 1  # [-1, 1] for F.grid_sample
+
+
+class UNetCoM(nn.Module):
+    def __init__(self, dim, input_ch, out_dim, norm_type, return_weights=False):
+        super(UNetCoM, self).__init__()
+        if dim == 2:
+            backbone = UNet2D(
+                input_ch,
+                out_dim,
+                final_sigmoid=False,
+                f_maps=64,
+                layer_order="gcr",
+                num_groups=8,
+                num_levels=4,
+                is_segmentation=False,
+                conv_padding=1,
+            )
+        if dim == 3:
+            backbone = UNet3D(
+                input_ch,
+                out_dim,
+                final_sigmoid=False,
+                f_maps=64,
+                layer_order="gcr",
+                num_groups=8,
+                num_levels=4,
+                is_segmentation=False,
+                conv_padding=1,
+            )
+        self.backbone = backbone
+
+        if dim == 2:
+            self.com = layers.CenterOfMass2d()
+        elif dim == 3:
+            self.com = layers.CenterOfMass3d()
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        out = self.backbone(x)
+        heatmap = self.relu(out)
+        points = self.com(heatmap)
+        return points * 2 - 1  # [-1, 1] for F.grid_sample

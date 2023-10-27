@@ -10,7 +10,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 import wandb
 
-from keymorph.net import ConvNetFC, ConvNetCoM
+from keymorph.net import ConvNetFC, ConvNetCoM, UNetCoM
 from keymorph.cm_plotter import show_warped, show_warped_vol
 from keymorph.data import ixi, gigamed
 from keymorph import utils
@@ -22,6 +22,12 @@ def parse_args():
     parser = ArgumentParser()
 
     # I/O
+    parser.add_argument(
+        "--job_name",
+        type=str,
+        default="keymorph",
+        help="Name of job",
+    )
     parser.add_argument(
         "--gpus", type=str, default="0", help="Which GPUs to use? Index from 0"
     )
@@ -65,7 +71,7 @@ def parse_args():
         "--kp_extractor",
         type=str,
         default="conv_com",
-        choices=["conv_fc", "conv_com"],
+        choices=["conv_fc", "conv_com", "unet_com"],
         help="Keypoint extractor module to use",
     )
 
@@ -210,14 +216,16 @@ def run_train(loaders, random_points, network, optimizer, epoch, args):
                     pred_points[0].cpu().detach().numpy(),
                 )
             else:
-                show_warped_vol(
-                    x_moving[0, 0].cpu().detach().numpy(),
-                    x_fixed[0, 0].cpu().detach().numpy(),
-                    x_fixed[0, 0].cpu().detach().numpy(),
-                    tgt_points[0].cpu().detach().numpy(),
-                    random_points[0].cpu().detach().numpy(),
-                    pred_points[0].cpu().detach().numpy(),
-                )
+                for bs in range(len(x_moving)):
+                    print("bs", bs)
+                    show_warped_vol(
+                        x_moving[bs, 0].cpu().detach().numpy(),
+                        x_fixed[bs, 0].cpu().detach().numpy(),
+                        x_fixed[bs, 0].cpu().detach().numpy(),
+                        tgt_points[bs].cpu().detach().numpy(),
+                        random_points[bs].cpu().detach().numpy(),
+                        pred_points[bs].cpu().detach().numpy(),
+                    )
 
     return utils.aggregate_dicts(res)
 
@@ -227,7 +235,8 @@ def main():
 
     # Path to save outputs
     arguments = (
-        "[pretraining]keypoints"
+        args.job_name
+        + "[pretraining]keypoints"
         + str(args.num_keypoints)
         + "_batch"
         + str(args.batch_size)
@@ -346,7 +355,7 @@ def main():
     }
 
     # Extract random keypoints from reference subject
-    ref_img = ref_subject["img"][tio.DATA].float().unsqueeze(0)
+    ref_img = ref_subject["mask"][tio.DATA].float().unsqueeze(0)
     print("sampling random keypoints...")
     random_points = utils.sample_valid_coordinates(
         ref_img, args.num_keypoints, args.dim
@@ -370,6 +379,13 @@ def main():
         network = torch.nn.DataParallel(network)
     elif args.kp_extractor == "conv_com":
         network = ConvNetCoM(args.dim, 1, args.num_keypoints, norm_type=args.norm_type)
+    elif args.kp_extractor == "unet_com":
+        network = UNetCoM(
+            args.dim,
+            1,
+            args.num_keypoints,
+            norm_type=args.norm_type,
+        )
     network = torch.nn.DataParallel(network)
     network.to(args.device)
     utils.summary(network)

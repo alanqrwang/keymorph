@@ -108,10 +108,10 @@ class TestCenterOfMass2d(unittest.TestCase):
 
 
 class TestCenterOfMass3d(unittest.TestCase):
+    """Test center of mass layer for 3D inputs."""
+
     def test_com3d_0(self):
-        """
-        Test center of mass layer for 2D inputs
-        """
+        """Test input with point in center."""
         com_layer = CenterOfMass3d()
 
         input = torch.tensor(
@@ -128,9 +128,7 @@ class TestCenterOfMass3d(unittest.TestCase):
         assert_close(result, true)
 
     def test_com3d_1(self):
-        """
-        Test center of mass layer for 2D inputs
-        """
+        """Test input with 3 spread out points."""
         com_layer = CenterOfMass3d()
 
         input = torch.tensor(
@@ -147,6 +145,7 @@ class TestCenterOfMass3d(unittest.TestCase):
         assert_close(result, true)
 
     def test_com3d_3(self):
+        """Center points smoothed with Gaussian filter."""
         com_layer = CenterOfMass3d()
 
         # Generate a 2D array of zeros
@@ -165,6 +164,7 @@ class TestCenterOfMass3d(unittest.TestCase):
         assert_close(result, true)
 
     def test_com3d_4(self):
+        """Input with non-uniform dimensions."""
         com_layer = CenterOfMass3d()
 
         # Generate a 2D array of zeros
@@ -183,6 +183,7 @@ class TestCenterOfMass3d(unittest.TestCase):
         assert_close(result, true)
 
     def test_com3d_5(self):
+        """Input with uniform dimensions but point is off-center."""
         com_layer = CenterOfMass3d()
 
         # Generate a 2D array of zeros
@@ -201,6 +202,7 @@ class TestCenterOfMass3d(unittest.TestCase):
         assert_close(result, true)
 
     def test_com3d_6(self):
+        """Batched inputs."""
         com_layer = CenterOfMass3d()
 
         # Generate a 2D array of zeros

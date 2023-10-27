@@ -316,9 +316,9 @@ def show_warped_vol(
             axes[p_index, 0].scatter(
                 ctl_points[k, i] * img_dim,
                 ctl_points[k, j] * img_dim,
-                marker="+",
+                marker=".",
                 s=100,
-                color=c,
+                color="r",
             )
 
         axes[index, 1].imshow(f, origin="upper", cmap="gray")
@@ -328,7 +328,7 @@ def show_warped_vol(
                 tgt_points[k, j] * img_dim,
                 marker="+",
                 s=100,
-                color=c,
+                color="b",
             )
 
         axes[index, 2].imshow(w, origin="upper", cmap="gray")
@@ -338,14 +338,14 @@ def show_warped_vol(
                 warped_points[k, j] * img_dim,
                 marker=".",
                 s=100,
-                color=c,
+                color="r",
             )
             axes[p_index, 2].scatter(
                 tgt_points[k, i] * img_dim,
                 tgt_points[k, j] * img_dim,
                 marker="+",
                 s=100,
-                color=c,
+                color="b",
             )
 
     axes[0, 0].set_title("Moving")

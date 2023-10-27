@@ -14,7 +14,7 @@ from scipy.stats import loguniform
 
 from keymorph.keypoint_aligners import ClosedFormRigid, ClosedFormAffine, TPS
 from keymorph import loss_ops
-from keymorph.net import ConvNetFC, ConvNetCoM
+from keymorph.net import ConvNetFC, ConvNetCoM, UNetCoM
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float, align_img
@@ -31,10 +31,6 @@ def parse_args():
     parser = ArgumentParser()
 
     # I/O
-    parser.add_argument(
-        "--gpus", type=str, default="0", help="Which GPUs to use? Index from 0"
-    )
-
     parser.add_argument(
         "--job_name",
         type=str,
@@ -82,7 +78,7 @@ def parse_args():
         "--kp_extractor",
         type=str,
         default="conv_com",
-        choices=["conv_fc", "conv_com"],
+        choices=["conv_fc", "conv_com", "unet_com"],
         help="Keypoint extractor module to use",
     )
 
@@ -587,6 +583,14 @@ def main():
             norm_type=args.norm_type,
             return_weights=args.weighted_kp_align,
         )
+    elif args.kp_extractor == "unet_com":
+        network = UNetCoM(
+            args.dim,
+            1,
+            args.num_keypoints,
+            norm_type=args.norm_type,
+            return_weights=args.weighted_kp_align,
+        )
     network = torch.nn.DataParallel(network)
 
     if args.load_path:
@@ -607,7 +611,6 @@ def main():
     registration_model = KeyMorph(
         network, kp_aligner, args.num_keypoints, args.dim, use_amp=args.use_amp
     )
-    registration_model = torch.nn.DataParallel(registration_model)
     registration_model.to(args.device)
     utils.summary(registration_model)
 
