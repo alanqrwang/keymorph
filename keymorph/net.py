@@ -100,7 +100,7 @@ class ConvNetCoM(nn.Module):
 
 
 class UNetCoM(nn.Module):
-    def __init__(self, dim, input_ch, out_dim, norm_type, return_weights=False):
+    def __init__(self, dim, input_ch, out_dim):
         super(UNetCoM, self).__init__()
         if dim == 2:
             backbone = UNet2D(

@@ -17,7 +17,13 @@ from keymorph import loss_ops
 from keymorph.net import ConvNetFC, ConvNetCoM, UNetCoM
 from keymorph.model import KeyMorph
 from keymorph import utils
-from keymorph.utils import ParseKwargs, initialize_wandb, str_or_float, align_img
+from keymorph.utils import (
+    ParseKwargs,
+    initialize_wandb,
+    str_or_float,
+    align_img,
+    save_summary_json,
+)
 from keymorph.data import ixi, gigamed
 from keymorph.augmentation import (
     affine_augment,
@@ -378,7 +384,7 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
                     save_path=os.path.join(
-                        args.model_dir, f"img_{args.curr_epoch}.png"
+                        args.model_img_dir, f"img_{args.curr_epoch}.png"
                     ),
                 )
                 show_warped_vol(
@@ -389,7 +395,7 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
                     save_path=os.path.join(
-                        args.model_dir, f"seg_{args.curr_epoch}.png"
+                        args.model_img_dir, f"seg_{args.curr_epoch}.png"
                     ),
                 )
 
@@ -434,6 +440,15 @@ def main():
     args.model_dir = Path(args.save_dir) / arguments
     if not os.path.exists(args.model_dir) and not args.debug_mode:
         os.makedirs(args.model_dir)
+    args.model_ckpt_dir = args.model_dir / "checkpoints"
+    if not os.path.exists(args.model_ckpt_dir) and not args.debug_mode:
+        os.makedirs(args.model_ckpt_dir)
+    args.model_result_dir = args.model_dir / "results"
+    if not os.path.exists(args.model_result_dir) and not args.debug_mode:
+        os.makedirs(args.model_result_dir)
+    args.model_img_dir = args.model_dir / "img"
+    if not os.path.exists(args.model_img_dir) and not args.debug_mode:
+        os.makedirs(args.model_img_dir)
 
     # Select GPU
     if torch.cuda.is_available():
@@ -494,24 +509,28 @@ def main():
             "Dataset5006_BraTS-MET-UCSF_2023",
             "Dataset5007_UCSF-BMSR",
             "Dataset5010_ATLASR2",
-            "Dataset5011_BONBID-HIE_2023",
             "Dataset5012_ShiftsBest",
             "Dataset5013_ShiftsLjubljana",
-            "Dataset5018_TopCoWMRAwholeBIN",
-            "Dataset5024_TopCoWcrownMRAwholeBIN",
             "Dataset5038_BrainTumour",
+            "Dataset5041_BRATS",
+            "Dataset5042_BRATS2016",
+            "Dataset5043_BrainDevelopment",
             "Dataset5044_EPISURG",
-            "Dataset5046_FeTA",
+            # "Dataset5046_FeTA",
             "Dataset5066_WMH",
+            # "Dataset5083_IXIT1",
+            # "Dataset5084_IXIT2",
+            # "Dataset5085_IXIPD",
+            "Dataset5090_ISLES2022",
+            "Dataset5095_MSSEG",
+            "Dataset5096_MSSEG2",
+            "Dataset5111_UCSF-ALPTDG-time1",
+            "Dataset5112_UCSF-ALPTDG-time2",
+            "Dataset5113_StanfordMETShare",
         ]
 
         transform = tio.Compose(
             [
-                tio.ToCanonical(),
-                tio.Resample(1),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img")),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg")),
-                tio.Lambda(utils.rescale_intensity, include=("img")),
                 tio.OneHot(num_classes=15, include=("seg")),
             ]
         )
@@ -588,14 +607,8 @@ def main():
             args.dim,
             1,
             args.num_keypoints,
-            norm_type=args.norm_type,
-            return_weights=args.weighted_kp_align,
         )
     network = torch.nn.DataParallel(network)
-
-    if args.load_path:
-        state_dict = torch.load(args.load_path)["state_dict"]
-        network.load_state_dict(state_dict)
 
     # Keypoint alignment module
     if args.kp_align_method == "rigid":
@@ -613,13 +626,25 @@ def main():
     )
     registration_model.to(args.device)
     utils.summary(registration_model)
+    if args.load_path:
+        state_dict = torch.load(args.load_path)["state_dict"]
+        # try:
+        registration_model.load_state_dict(state_dict)
+        # except Exception as e:
+        #     registration_model.keypoint_extractor.load_state_dict(state_dict)
 
     # Optimizer
     optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
 
     if args.eval:
+        assert args.batch_size == 1, ":("
         registration_model.eval()
 
+        list_of_test_metrics = [
+            "mse:test",
+            "dice_total:test",
+            "dice_roi:test",
+        ]
         list_of_test_mods = [
             "T1_T1",
             "T2_T2",
@@ -636,6 +661,13 @@ def main():
             "rot135",
             "rot180",
         ]
+        list_of_all_test = []
+        for s1 in list_of_test_metrics:
+            for s2 in list_of_test_mods:
+                for s3 in list_of_test_augs:
+                    list_of_all_test.append("{}:{}:{}".format(s1, s2, s3))
+        test_metrics = {}
+        test_metrics.update({key: [] for key in list_of_all_test})
 
         for aug in list_of_test_augs:
             for mod in list_of_test_mods:
@@ -684,16 +716,17 @@ def main():
 
                         # Compute metrics
                         metrics = {}
-                        metrics["mse"] = loss_ops.MSELoss()(img_f, img_a)
+                        metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
                         if seg_available:
                             metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
                             metrics["softdice"] = 1 - metrics["softdiceloss"]
-                            metrics["harddice"] = (
-                                1
-                                - loss_ops.DiceLoss(hard=True)(
-                                    seg_a, seg_f, ign_first_ch=True
-                                )[0]
+                            dice = loss_ops.DiceLoss(hard=True)(
+                                seg_a, seg_f, ign_first_ch=True
                             )
+                            dice_total = 1 - dice[0].item()
+                            dice_roi = (1 - dice[1].cpu().detach().numpy()).tolist()
+                            metrics["harddice"] = dice_total
+                            metrics["harddice_roi"] = dice_roi
                             if args.dim == 3:  # TODO: Implement 2D metrics
                                 metrics["hausd"] = loss_ops.hausdorff_distance(
                                     seg_a, seg_f
@@ -702,6 +735,20 @@ def main():
                                 metrics["jdstd"] = loss_ops.jdstd(grid)
                                 metrics["jdlessthan0"] = loss_ops.jdlessthan0(
                                     grid, as_percentage=True
+                                )
+
+                        for m in list_of_test_metrics:
+                            if m == "mse:test":
+                                test_metrics["{}:{}:{}".format(m, mod, aug)].append(
+                                    metrics["mse"]
+                                )
+                            elif m == "dice_total:test":
+                                test_metrics["{}:{}:{}".format(m, mod, aug)].append(
+                                    dice_total
+                                )
+                            elif m == "dice_roi:test":
+                                test_metrics["{}:{}:{}".format(m, mod, aug)].append(
+                                    dice_roi
                                 )
 
                         if args.save_preds and not args.debug_mode:
@@ -772,7 +819,11 @@ def main():
                             np.save(grid_path, grid[0].cpu().detach().numpy())
 
                         for name, metric in metrics.items():
-                            print(f"[Eval Stat] {name}: {metric:.5f}")
+                            if not isinstance(metric, list):
+                                print(f"[Eval Stat] {name}: {metric:.5f}")
+                        save_summary_json(
+                            test_metrics, args.model_result_dir / "summary.json"
+                        )
 
     else:
         registration_model.train()
@@ -819,7 +870,8 @@ def main():
                 torch.save(
                     state,
                     os.path.join(
-                        args.model_dir, "epoch{}_trained_model.pth.tar".format(epoch)
+                        args.model_ckpt_dir,
+                        "epoch{}_trained_model.pth.tar".format(epoch),
                     ),
                 )
 
