@@ -11,14 +11,18 @@ def read_subjects_from_disk(directory: str, train: bool, dataset_name: str):
     seg_data_folder = os.path.join(directory, dataset_name, split_folder_seg)
 
     img_data_paths = sorted(
-        [os.path.join(img_data_folder, name) for name in os.listdir(img_data_folder)]
+        [
+            os.path.join(img_data_folder, name)
+            for name in os.listdir(img_data_folder)
+            if "mask" not in name
+        ]
     )
 
     # First, run through and get all unique modalities
     all_modalities = set()
     for img_path in img_data_paths:
         basename = os.path.basename(img_path)
-        case_id, modality_id = (
+        _, modality_id = (
             basename.split(".")[0][:-5],
             basename.split(".")[0][-5:],
         )
@@ -28,12 +32,11 @@ def read_subjects_from_disk(directory: str, train: bool, dataset_name: str):
     subject_dict = {mod: [] for mod in all_modalities}
     for img_path in img_data_paths:
         basename = os.path.basename(img_path)
-        case_id, modality_id = (
+        _, modality_id = (
             basename.split(".")[0][:-5],
             basename.split(".")[0][-5:],
         )
-        extension = ".".join(basename.split(".")[1:])
-        seg_path = os.path.join(seg_data_folder, case_id + "." + extension)
+        seg_path = os.path.join(seg_data_folder, basename)
         subject_kwargs = {
             "img": tio.ScalarImage(img_path),
             "seg": tio.LabelMap(seg_path),
