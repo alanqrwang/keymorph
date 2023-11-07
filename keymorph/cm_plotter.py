@@ -280,6 +280,10 @@ def show_warped_vol(
     ctl_points = (ctl_points + 1) / 2
     warped_points = (warped_points + 1) / 2
 
+    # Set global vmin and vmax so intensities values are comparable relative to each other
+    vmin = min(moving.min(), fixed.min(), warped.min())
+    vmax = max(moving.max(), fixed.max(), warped.max())
+
     fig, axes = plt.subplots(3, 3, figsize=(16, 16))
     [ax.set_xticks([0, moving.shape[-1]]) for ax in axes.ravel()]
     [ax.set_xticklabels([-1, 1]) for ax in axes.ravel()]
@@ -311,7 +315,7 @@ def show_warped_vol(
             p_index = 1
         elif index == 2:
             p_index = 0
-        axes[index, 0].imshow(m, origin="upper", cmap="gray")
+        axes[index, 0].imshow(m, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
         for k, c in zip(range(len(ctl_points)), colors):
             axes[p_index, 0].scatter(
                 ctl_points[k, i] * img_dim,
@@ -321,7 +325,7 @@ def show_warped_vol(
                 color="r",
             )
 
-        axes[index, 1].imshow(f, origin="upper", cmap="gray")
+        axes[index, 1].imshow(f, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
         for k, c in zip(range(len(ctl_points)), colors):
             axes[p_index, 1].scatter(
                 tgt_points[k, i] * img_dim,
@@ -331,7 +335,7 @@ def show_warped_vol(
                 color="b",
             )
 
-        axes[index, 2].imshow(w, origin="upper", cmap="gray")
+        axes[index, 2].imshow(w, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
         for k, c in zip(range(len(ctl_points)), colors):
             axes[p_index, 2].scatter(
                 warped_points[k, i] * img_dim,
