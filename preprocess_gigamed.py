@@ -121,46 +121,51 @@ def _hdbet(src_img_dir, tgt_img_dir, need_skullstrip=True):
 
 def main():
     all_failed = []
-    base_dir = Path("/midtier/sablab/scratch/alw4013/nnUNet_raw_data_base")
+    base_dir = Path("/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base")
     torchio_dir = Path(
-        "/midtier/sablab/scratch/alw4013/nnUNet_1mmiso_256x256x256_preprocessed"
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_preprocessed"
     )
     reorient_dir = Path(
-        "/midtier/sablab/scratch/alw4013/nnUNet_1mmiso_256x256x256_MNI_preprocessed"
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed"
     )
     bet_dir = Path(
-        "/midtier/sablab/scratch/alw4013/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
     )
     dataset_names = [
-        # "Dataset5000_BraTS-GLI_2023",
-        # "Dataset5001_BraTS-SSA_2023",
-        # "Dataset5002_BraTS-MEN_2023",
-        # "Dataset5003_BraTS-MET_2023",
-        # "Dataset5004_BraTS-MET-NYU_2023",
-        # "Dataset5005_BraTS-PED_2023",
-        # "Dataset5006_BraTS-MET-UCSF_2023",
-        # "Dataset5007_UCSF-BMSR",
-        # "Dataset5010_ATLASR2",
-        # "Dataset5012_ShiftsBest",
-        # "Dataset5013_ShiftsLjubljana",
-        # "Dataset5038_BrainTumour",
-        # "Dataset5041_BRATS",
-        # "Dataset5042_BRATS2016",
-        # "Dataset5043_BrainDevelopment",
-        # "Dataset5044_EPISURG",
-        # "Dataset5046_FeTA",
-        # "Dataset5066_WMH",
-        # "Dataset5083_IXIT1",
+        "Dataset4999_IXIAllModalities",
+        "Dataset5000_BraTS-GLI_2023",
+        "Dataset5001_BraTS-SSA_2023",
+        "Dataset5002_BraTS-MEN_2023",
+        "Dataset5003_BraTS-MET_2023",
+        "Dataset5004_BraTS-MET-NYU_2023",
+        "Dataset5005_BraTS-PED_2023",
+        "Dataset5006_BraTS-MET-UCSF_2023",
+        "Dataset5007_UCSF-BMSR",
+        "Dataset5010_ATLASR2",
+        "Dataset5012_ShiftsBest",
+        "Dataset5013_ShiftsLjubljana",
+        "Dataset5038_BrainTumour",
+        "Dataset5041_BRATS",
+        "Dataset5042_BRATS2016",
+        "Dataset5043_BrainDevelopment",
+        "Dataset5044_EPISURG",
+        "Dataset5046_FeTA",
+        "Dataset5066_WMH",
+        "Dataset5083_IXIT1",
         "Dataset5084_IXIT2",
         "Dataset5085_IXIPD",
-        # "Dataset5090_ISLES2022",
-        # "Dataset5095_MSSEG",
-        # "Dataset5096_MSSEG2",
-        # "Dataset5111_UCSF-ALPTDG-time1",
-        # "Dataset5112_UCSF-ALPTDG-time2",
-        # "Dataset5113_StanfordMETShare",
+        "Dataset5090_ISLES2022",
+        "Dataset5095_MSSEG",
+        "Dataset5096_MSSEG2",
+        "Dataset5111_UCSF-ALPTDG-time1",
+        "Dataset5112_UCSF-ALPTDG-time2",
+        "Dataset5113_StanfordMETShare",
+        "Dataset6000_PPMI-T1-3T-PreProc"
+        "Dataset6001_ADNI-group-T1-3T-PreProc"
+        "Dataset6002_OASIS3",
     ]
     need_skullstrip = [
+        "Dataset4999_IXIAllModalities",
         "Dataset5010_ATLASR2",
         "Dataset5043_BrainDevelopment",
         "Dataset5044_EPISURG",
