@@ -228,7 +228,7 @@ def random_affine_augment(
     if points is not None:
         points = augmenter.deform_points(points, params)
         res += (points,)
-    return res
+    return res[0] if len(res) == 1 else res
 
 
 def affine_augment(img, fixed_params, seg=None, points=None):
@@ -261,7 +261,7 @@ def affine_augment(img, fixed_params, seg=None, points=None):
     if points is not None:
         points = augmenter.deform_points(points, params)
         res += (points,)
-    return res
+    return res[0] if len(res) == 1 else res
 
 
 def random_affine_augment_pair(
