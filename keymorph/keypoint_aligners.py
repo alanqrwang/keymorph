@@ -36,7 +36,7 @@ class ClosedFormRigid:
 
         assert torch.allclose(
             torch.linalg.det(R), torch.tensor(1.0)
-        ), "Rotation matrix of N-point registration not 1, see paper Arun et al."
+        ), f"Rotation matrix of N-point registration not 1, see paper Arun et al., det={torch.linalg.det(R)}"
 
         # Calculate translation matrix
         T = p2_c - torch.bmm(R, p1_c)
