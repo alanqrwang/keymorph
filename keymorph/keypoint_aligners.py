@@ -283,23 +283,23 @@ class TPS:
 
         if len(grid.shape) == 4:
             N, H, W, _ = grid.size()
-            diff = grid[..., 1:].unsqueeze(-2) - ctrl.unsqueeze(1).unsqueeze(1)
+            x = grid[..., 1:].unsqueeze(-2) - ctrl.unsqueeze(1).unsqueeze(1)
         else:
             N, D, H, W, _ = grid.size()
-            diff = grid[..., 1:].unsqueeze(-2) - ctrl.unsqueeze(1).unsqueeze(
+            x = grid[..., 1:].unsqueeze(-2) - ctrl.unsqueeze(1).unsqueeze(1).unsqueeze(
                 1
-            ).unsqueeze(1)
+            )
 
         T = ctrl.shape[1]
 
-        pair_dist = torch.sqrt((diff**2).sum(-1))
-        U = TPS.u(pair_dist)
+        x = torch.sqrt((x**2).sum(-1))
+        x = TPS.u(x)
 
         w, a = theta[:, : -(self.dim + 1), :], theta[:, -(self.dim + 1) :, :]
 
-        # U is NxHxWxT
+        # x is NxHxWxT
         # b contains dot product of each kernel weight and U(r)
-        b = torch.bmm(U.view(N, -1, T), w)
+        b = torch.bmm(x.view(N, -1, T), w)
         if len(grid.shape) == 4:
             b = b.view(N, H, W, self.dim)
         else:
