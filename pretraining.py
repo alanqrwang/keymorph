@@ -5,7 +5,6 @@ import torch
 import numpy as np
 import torchio as tio
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
 from argparse import ArgumentParser
 from pathlib import Path
 import wandb
@@ -147,7 +146,7 @@ def parse_args():
     return args
 
 
-def run_train(loaders, random_points, network, optimizer, epoch, args):
+def run_train(loader, random_points, network, optimizer, args):
     start_time = time.time()
 
     if args.use_amp:
@@ -157,11 +156,11 @@ def run_train(loaders, random_points, network, optimizer, epoch, args):
 
     res = []
 
-    iters = [iter(loader) for loader in loaders]
     random_points = random_points.to(args.device)
-    for _ in range(args.steps_per_epoch):
+    for step_idx, subject in enumerate(loader):
+        if step_idx == args.steps_per_epoch:
+            break
         # Choose modality at random
-        subject = next(random.choice(iters))
         x_fixed = subject["img"][tio.DATA].float().to(args.device)
 
         # Deform image and fixed points
@@ -205,7 +204,7 @@ def run_train(loaders, random_points, network, optimizer, epoch, args):
         metrics["epoch_time"] = end_time - start_time
         res.append(metrics)
 
-        if args.visualize:
+        if args.visualize and step_idx == 0:
             if args.dim == 2:
                 show_warped(
                     x_moving[0, 0].cpu().detach().numpy(),
@@ -216,16 +215,17 @@ def run_train(loaders, random_points, network, optimizer, epoch, args):
                     pred_points[0].cpu().detach().numpy(),
                 )
             else:
-                for bs in range(len(x_moving)):
-                    print("bs", bs)
-                    show_warped_vol(
-                        x_moving[bs, 0].cpu().detach().numpy(),
-                        x_fixed[bs, 0].cpu().detach().numpy(),
-                        x_fixed[bs, 0].cpu().detach().numpy(),
-                        tgt_points[bs].cpu().detach().numpy(),
-                        random_points[bs].cpu().detach().numpy(),
-                        pred_points[bs].cpu().detach().numpy(),
-                    )
+                show_warped_vol(
+                    x_moving[0, 0].cpu().detach().numpy(),
+                    x_fixed[0, 0].cpu().detach().numpy(),
+                    x_fixed[0, 0].cpu().detach().numpy(),
+                    tgt_points[0].cpu().detach().numpy(),
+                    random_points[0].cpu().detach().numpy(),
+                    pred_points[0].cpu().detach().numpy(),
+                    save_path=None
+                    if args.debug_mode
+                    else os.path.join(args.model_img_dir, f"img_{args.curr_epoch}.png"),
+                )
 
     return utils.aggregate_dicts(res)
 
@@ -249,6 +249,15 @@ def main():
     args.model_dir = Path(args.save_dir) / arguments
     if not os.path.exists(args.model_dir) and not args.debug_mode:
         os.makedirs(args.model_dir)
+    args.model_ckpt_dir = args.model_dir / "checkpoints"
+    if not os.path.exists(args.model_ckpt_dir) and not args.debug_mode:
+        os.makedirs(args.model_ckpt_dir)
+    args.model_result_dir = args.model_dir / "results"
+    if not os.path.exists(args.model_result_dir) and not args.debug_mode:
+        os.makedirs(args.model_result_dir)
+    args.model_img_dir = args.model_dir / "img"
+    if not os.path.exists(args.model_img_dir) and not args.debug_mode:
+        os.makedirs(args.model_img_dir)
 
     # Select GPU
     if torch.cuda.is_available():
@@ -267,95 +276,19 @@ def main():
 
     # Data
     if args.dataset == "ixi":
-        dataset_names = ["T1", "T2", "PD"]
-
-        transform = tio.Compose(
-            [
-                #                 RandomBiasField(),
-                #                 RandomNoise(),
-                tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
-                tio.Mask(masking_method="mask"),
-                tio.Resize(128),
-                tio.Lambda(ixi.one_hot, include=("seg")),
-            ]
-        )
-
-        train_datasets = {}
-        test_datasets = {}
-        for mod in dataset_names:
-            train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
-            train_datasets[mod] = tio.data.SubjectsDataset(
-                train_subjects, transform=transform
-            )
-            test_subjects = ixi.read_subjects_from_disk(
-                args.data_dir, (428, 428 + args.num_test_subjects), mod
-            )
-            test_datasets[mod] = tio.data.SubjectsDataset(
-                test_subjects, transform=transform
-            )
-        ref_subject = train_datasets[dataset_names[0]][0]
+        train_loader, _ = ixi.get_pretraining_loaders()
+        ref_subject = ixi.get_random_subject(train_loader)
     elif args.dataset == "gigamed":
-        dataset_names = [
-            "Dataset5000_BraTS-GLI_2023",
-            "Dataset5001_BraTS-SSA_2023",
-            "Dataset5002_BraTS-MEN_2023",
-            "Dataset5003_BraTS-MET_2023",
-            "Dataset5004_BraTS-MET-NYU_2023",
-            "Dataset5005_BraTS-PED_2023",
-            "Dataset5006_BraTS-MET-UCSF_2023",
-            "Dataset5007_UCSF-BMSR",
-            "Dataset5010_ATLASR2",
-            "Dataset5011_BONBID-HIE_2023",
-            "Dataset5012_ShiftsBest",
-            "Dataset5013_ShiftsLjubljana",
-            "Dataset5018_TopCoWMRAwholeBIN",
-            "Dataset5024_TopCoWcrownMRAwholeBIN",
-            "Dataset5038_BrainTumour",
-            "Dataset5044_EPISURG",
-            "Dataset5046_FeTA",
-            "Dataset5066_WMH",
-            # 'Dataset5085_IXIPD',
-        ]
-
-        transform = tio.Compose(
-            [
-                tio.ToCanonical(),
-                tio.Resample(1),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img")),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg")),
-                tio.Lambda(utils.rescale_intensity, include=("img")),
-                tio.OneHot(num_classes=15, include=("seg")),
-            ]
+        gmed = gigamed.GigaMed(
+            args.data_dir, args.batch_size, args.num_workers, load_seg=False
         )
-
-        train_datasets = {}
-        test_datasets = {}
-        for ds_name in dataset_names:
-            train_subject_dict = gigamed.read_subjects_from_disk(
-                args.data_dir, True, ds_name
-            )
-            for k, train_subject_list in train_subject_dict.items():
-                train_datasets[ds_name + k] = tio.data.SubjectsDataset(
-                    train_subject_list, transform=transform
-                )
-            # test_subjects = gigamed.read_subjects_from_disk(args.data_dir, False, ds_name)
-            # for k, train_subject_list in train_subject_dict.items():
-            #     test_datasets[ds_name+k] = tio.data.SubjectsDataset(train_subject_list, transform=transform)
-
-        # Reference subject
-        ref_subject = train_datasets[list(train_datasets.keys())[0]][0]
+        train_loader, _ = gmed.get_pretraining_loaders()
+        ref_subject = gmed.get_reference_subject()
     else:
         raise NotImplementedError
 
-    fixed_loaders = {
-        k: DataLoader(
-            v, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
-        )
-        for k, v in train_datasets.items()
-    }
-
     # Extract random keypoints from reference subject
-    ref_img = ref_subject["mask"][tio.DATA].float().unsqueeze(0)
+    ref_img = ref_subject["img"][tio.DATA].float().unsqueeze(0)
     print("sampling random keypoints...")
     random_points = utils.sample_valid_coordinates(
         ref_img, args.num_keypoints, args.dim
@@ -370,6 +303,7 @@ def main():
         random_points[0].cpu().detach().numpy(),
         random_points[0].cpu().detach().numpy(),
     )
+    del ref_subject
 
     # CNN, i.e. keypoint extractor
     if args.kp_extractor == "conv_fc":
@@ -384,10 +318,12 @@ def main():
             args.dim,
             1,
             args.num_keypoints,
-            norm_type=args.norm_type,
         )
     network = torch.nn.DataParallel(network)
     network.to(args.device)
+    if args.load_path:
+        state_dict = torch.load(args.load_path)["state_dict"]
+        network.load_state_dict(state_dict)
     utils.summary(network)
 
     # Optimizer
@@ -407,17 +343,17 @@ def main():
         network.load_state_dict(state["state_dict"])
         optimizer.load_state_dict(state["optimizer"])
         start_epoch = state["epoch"] + 1
+        random_points = state["random_points"]
     else:
         start_epoch = 1
 
     for epoch in range(start_epoch, args.epochs + 1):
         args.curr_epoch = epoch
         epoch_stats = run_train(
-            list(fixed_loaders.values()),
+            train_loader,
             random_points,
             network,
             optimizer,
-            epoch,
             args,
         )
 
@@ -443,7 +379,8 @@ def main():
             torch.save(
                 state,
                 os.path.join(
-                    args.model_dir, "pretrained_epoch{}_model.pth.tar".format(epoch)
+                    args.model_ckpt_dir,
+                    "pretrained_epoch{}_model.pth.tar".format(epoch),
                 ),
             )
         del state
