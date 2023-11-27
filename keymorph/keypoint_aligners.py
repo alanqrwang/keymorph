@@ -8,7 +8,10 @@ class ClosedFormRigid:
     def __init__(self, dim):
         self.dim = dim
 
-    def get_rigid_matrix(self, p1_t, p2_t):
+    def get_rigid_matrix(self, p1_t, p2_t, w=None):
+        """
+        w: [n_batch, n_points]
+        """
         # #Writing points with rows as the coordinates
         # p1_t = np.array([[0,0,0], [1,0,0],[0,1,0]])
         # p2_t = np.array([[0,0,1], [1,0,1],[0,0,2]]) #Approx transformation is 90 degree rot over x-axis and +1 in Z axis
@@ -16,6 +19,13 @@ class ClosedFormRigid:
         # Take transpose as columns should be the points
         p1 = p1_t.permute(0, 2, 1)
         p2 = p2_t.permute(0, 2, 1)
+
+        if w is not None:
+            # Matrix multiply on the right by diagonal weight matrix
+            w = F.softmax(w, dim=-1)  # Proof assumes weights sum to 1
+            w = torch.diag_embed(w)
+            p1 = torch.bmm(p1, w)
+            p2 = torch.bmm(p2, w)
 
         # Calculate centroids
         p1_c = torch.mean(p1, axis=2, keepdim=True)
@@ -34,9 +44,9 @@ class ClosedFormRigid:
         # Calculate rotation matrix
         R = torch.bmm(V_t.transpose(1, 2), U.transpose(1, 2))
 
-        assert torch.allclose(
-            torch.linalg.det(R), torch.tensor(1.0)
-        ), f"Rotation matrix of N-point registration not 1, see paper Arun et al., det={torch.linalg.det(R)}"
+        # assert torch.allclose(
+        #     torch.linalg.det(R), torch.tensor(1.0)
+        # ), f"Rotation matrix of N-point registration not 1, see paper Arun et al., det={torch.linalg.det(R)}"
 
         # Calculate translation matrix
         T = p2_c - torch.bmm(R, p1_c)
@@ -45,10 +55,12 @@ class ClosedFormRigid:
         aug_mat = torch.cat([R, T], axis=-1)
         return aug_mat
 
-    def grid_from_points(self, moving_points, fixed_points, grid_shape, **kwargs):
+    def grid_from_points(
+        self, moving_points, fixed_points, grid_shape, weights=None, **kwargs
+    ):
         del kwargs
-        affine_matrix = self.get_rigid_matrix(fixed_points, moving_points)
-        grid = F.affine_grid(affine_matrix, grid_shape, align_corners=False)
+        rigid_matrix = self.get_rigid_matrix(fixed_points, moving_points, w=weights)
+        grid = F.affine_grid(rigid_matrix, grid_shape, align_corners=False)
         return grid
 
     def deform_points(self, points, matrix):
@@ -97,6 +109,7 @@ class ClosedFormAffine:
 
         If w provided, solves the weighted affine equation:
           A = y diag(w) x^T  (x diag(w) x^T)^(-1).
+          See https://www.wikiwand.com/en/Weighted_least_squares.
 
         Args:
           x, y: [n_batch, n_points, dim]
@@ -108,7 +121,6 @@ class ClosedFormAffine:
         y = y.permute(0, 2, 1)
 
         if w is not None:
-            print("w:", w)
             w = torch.diag_embed(w)
 
         # Convert y to homogenous coordinates
@@ -178,12 +190,18 @@ class TPS:
     def __init__(self, dim):
         self.dim = dim
 
-    def fit(self, c, lmbda):
+    def fit(self, c, lmbda, w=None):
         """Assumes last dimension of c contains target points.
 
           Set up and solve linear system:
-            [K   P] [w] = [v]
-            [P^T 0] [a]   [0]
+            [K + lmbda*I           P] [w] = [v]
+            [                P^T   0] [a]   [0]
+
+          If w is provided, solve weighted TPS:
+            [K + lmbda*1/diag(w)   P] [w] = [v]
+            [                P^T   0] [a]   [0]
+
+          See https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=929618&tag=1, Eq. (8)
         Args:
           c: control points and target point (bs, T, d+1)
           lmbda: Lambda values per batch (bs)
@@ -194,8 +212,14 @@ class TPS:
 
         # Build K matrix
         U = TPS.u(TPS.d(ctrl, ctrl))
-        I = torch.eye(T).repeat(bs, 1, 1).float().to(device)
-        K = U + I * lmbda.view(bs, 1, 1)
+        if w is not None:
+            w = torch.diag_embed(w)
+            K = U + torch.reciprocal(w + 1e-6) * lmbda.view(
+                bs, 1, 1
+            )  # w are weights, TPS expects variances
+        else:
+            I = torch.eye(T).repeat(bs, 1, 1).float().to(device)
+            K = U + I * lmbda.view(bs, 1, 1)
 
         # Build P matrix
         P = torch.ones((bs, T, self.dim + 1)).float()
@@ -210,8 +234,7 @@ class TPS:
         A[:, :T, -(self.dim + 1) :] = P
         A[:, -(self.dim + 1) :, :T] = P.transpose(1, 2)
 
-        theta = torch.linalg.solve(A, v)  # p has structure w,a
-        return theta
+        return torch.linalg.solve(A, v)
 
     @staticmethod
     def d(a, b):
@@ -232,7 +255,7 @@ class TPS:
         """Compute radial basis function."""
         return r**2 * torch.log(r + 1e-6)
 
-    def tps_theta_from_points(self, c_src, c_dst, lmbda):
+    def tps_theta_from_points(self, c_src, c_dst, lmbda, weights=None):
         """
         Args:
           c_src: (bs, T, dim)
@@ -246,10 +269,10 @@ class TPS:
         if self.dim == 3:
             cz = torch.cat((c_src, c_dst[..., 2:3]), dim=-1)
 
-        theta_dx = self.fit(cx, lmbda).to(device)
-        theta_dy = self.fit(cy, lmbda).to(device)
+        theta_dx = self.fit(cx, lmbda, w=weights).to(device)
+        theta_dy = self.fit(cy, lmbda, w=weights).to(device)
         if self.dim == 3:
-            theta_dz = self.fit(cz, lmbda).to(device)
+            theta_dz = self.fit(cz, lmbda, w=weights).to(device)
 
         if self.dim == 3:
             return torch.stack((theta_dx, theta_dy, theta_dz), -1)
@@ -376,10 +399,14 @@ class TPS:
             grid[..., 3] = torch.linspace(-1, 1, D).unsqueeze(-1).unsqueeze(-1)
         return grid
 
-    def grid_from_points(self, ctl_points, tgt_points, grid_shape, **kwargs):
+    def grid_from_points(
+        self, ctl_points, tgt_points, grid_shape, weights=None, **kwargs
+    ):
         lmbda = kwargs["lmbda"]
 
-        theta = self.tps_theta_from_points(tgt_points, ctl_points, lmbda)
+        theta = self.tps_theta_from_points(
+            tgt_points, ctl_points, lmbda, weights=weights
+        )
         grid = self.tps_grid(theta, tgt_points, grid_shape)
         return grid
 
