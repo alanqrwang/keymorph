@@ -77,6 +77,33 @@ def initialize_wandb(config):
     wandb.config.update(config)
 
 
+def load_checkpoint(checkpoint_path, model, optimizer, scheduler=None, resume=False):
+    state = torch.load(checkpoint_path)
+    state_dict = state["state_dict"]
+    if "keypoint_extractor" in list(state_dict.keys())[-1]:
+        # Rename any keypoint_extractor keys to backbone
+        new_state_dict = {
+            k.replace("keypoint_extractor", "backbone"): v
+            for k, v in state_dict.items()
+        }
+        missing_keys, _ = model.load_state_dict(new_state_dict, strict=False)
+    elif "backbone" in list(state_dict.keys())[-1]:
+        missing_keys, _ = model.load_state_dict(state_dict, strict=False)
+    else:
+        missing_keys, _ = model.backbone.load_state_dict(state_dict, strict=True)
+    print("Missing keys when loading checkpoint: ", missing_keys)
+
+    if resume:
+        optimizer.load_state_dict(state["optimizer"])
+        if scheduler:
+            scheduler.load_state_dict(state["scheduler"])
+
+    if scheduler:
+        return state, model, optimizer, scheduler
+    else:
+        return state, model, optimizer
+
+
 # Taken from https://sumit-ghosh.com/articles/parsing-dictionary-key-value-pairs-kwargs-argparse-python/
 class ParseKwargs(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
