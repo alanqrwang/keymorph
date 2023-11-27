@@ -19,7 +19,8 @@ def shell_command(command):
 def _resample_pad_intensity_normalize(
     src_img_dir, src_seg_dir, tgt_img_dir, tgt_seg_dir, seg_available=True
 ):
-    """Resample to 1mm isotropic, crop/pad to 256^3, and intensity normalize to [0, 1]."""
+    # """Resample to 1mm isotropic, crop/pad to 256^3, and intensity normalize to [0, 1]."""
+    """Resample to 1mm isotropic and crop/pad to 256^3."""
     failed = []
 
     tio_transform = tio.Compose(
@@ -29,7 +30,7 @@ def _resample_pad_intensity_normalize(
             tio.Resample("img"),
             tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img")),
             tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg")),
-            tio.Lambda(utils.rescale_intensity, include=("img")),
+            # tio.Lambda(utils.rescale_intensity, include=("img")),
         ]
     )
 
@@ -123,13 +124,13 @@ def main():
     all_failed = []
     base_dir = Path("/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base")
     torchio_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_preprocessed"
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_preprocessed"
     )
     reorient_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed"
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_preprocessed"
     )
     bet_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
     )
     dataset_names = [
         "Dataset4999_IXIAllModalities",
@@ -160,8 +161,9 @@ def main():
         "Dataset5111_UCSF-ALPTDG-time1",
         "Dataset5112_UCSF-ALPTDG-time2",
         "Dataset5113_StanfordMETShare",
-        "Dataset6000_PPMI-T1-3T-PreProc"
-        "Dataset6001_ADNI-group-T1-3T-PreProc"
+        "Dataset5114_UCSF-ALPTDG",
+        "Dataset6000_PPMI-T1-3T-PreProc",
+        "Dataset6001_ADNI-group-T1-3T-PreProc",
         "Dataset6002_OASIS3",
     ]
     need_skullstrip = [
@@ -174,6 +176,7 @@ def main():
         "Dataset5084_IXIT2",
         "Dataset5085_IXIPD",
         "Dataset5096_MSSEG2",
+        "NYU_METS",
     ]
 
     for ds in dataset_names:
