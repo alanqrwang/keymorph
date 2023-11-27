@@ -2,19 +2,22 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from skimage import morphology
+
+from .keypoint_aligners import ClosedFormRigid, ClosedFormAffine, TPS
+from .layers import LinearRegressor2d, LinearRegressor3d, CenterOfMass2d, CenterOfMass3d
 
 
 class KeyMorph(nn.Module):
     def __init__(
         self,
-        keypoint_extractor,
-        keypoint_aligner,
+        backbone,
         num_keypoints,
         dim,
-        max_train_keypoints=256,
+        keypoint_extractor="com",
+        max_train_keypoints=None,
         use_amp=False,
+        weight_keypoints=False,
     ):
         """Forward pass for one mini-batch step.
 
@@ -22,17 +25,67 @@ class KeyMorph(nn.Module):
         :param kp_aligner: Affine or TPS keypoint alignment module
         :param num_keypoitns: Number of keypoints
         :param dim: Dimension
+        :param keypoint_extractor: Keypoint extractor
         :param max_train_keypoints: Maximum number of keypoints to use during training
         """
         super(KeyMorph, self).__init__()
-        self.keypoint_extractor = keypoint_extractor
-        self.keypoint_aligner = keypoint_aligner
+        self.backbone = backbone
         self.num_keypoints = num_keypoints
         self.dim = dim
+        if keypoint_extractor == "com":
+            if dim == 2:
+                self.keypoint_extractor = CenterOfMass2d()
+            else:
+                self.keypoint_extractor = CenterOfMass3d()
+        else:
+            if dim == 2:
+                self.keypoint_extractor = LinearRegressor2d()
+            else:
+                self.keypoint_extractor = LinearRegressor3d()
         self.max_train_keypoints = max_train_keypoints
         self.use_amp = use_amp
 
-    def forward(self, img_f, img_m, tps_lmbda, return_aligned_points=False):
+        # Keypoint alignment module
+        self.rigid_aligner = ClosedFormRigid(self.dim)
+        self.affine_aligner = ClosedFormAffine(self.dim)
+        self.tps_aligner = TPS(self.dim)
+
+        # Variance
+        self.weight_keypoints = weight_keypoints
+        if self.weight_keypoints:
+            self.scales = nn.Parameter(torch.randn(num_keypoints))
+            self.biases = nn.Parameter(torch.randn(num_keypoints))
+
+    def weight_by_variance(self, feat_f, feat_m):
+        feat_f = F.relu(feat_f)
+        feat_m = F.relu(feat_m)
+        if self.dim == 2:
+            var_f = torch.var(feat_f, dim=(2, 3))
+            var_m = torch.var(feat_m, dim=(2, 3))
+        else:
+            var_f = torch.var(feat_f, dim=(2, 3, 4))
+            var_m = torch.var(feat_m, dim=(2, 3, 4))
+
+        # Higher var -> lower weight
+        # Lower var -> higher weight
+        weights_f = 1 / (self.scales * var_f + self.biases)
+        weights_m = 1 / (self.scales * var_m + self.biases)
+
+        # Take average between variances of moving and fixed heatmaps
+        weights_avg = (weights_f + weights_m) / 2
+
+        # Relu to ensure weights are positive
+        return F.relu(weights_avg)
+
+    def forward(
+        self,
+        img_f,
+        img_m,
+        tps_lmbda,
+        align_type="affine",
+        return_aligned_points=False,
+        return_weights=False,
+    ):
         """Forward pass for one mini-batch step.
 
         :param img_f, img_m: Fixed and moving images
@@ -42,31 +95,50 @@ class KeyMorph(nn.Module):
             device_type="cuda", enabled=self.use_amp, dtype=torch.float16
         ):
             # Extract keypoints
-            points_f, points_m = self.extract_keypoints_step(img_f, img_m)
-            points_f = points_f.view(-1, self.num_keypoints, self.dim)
-            points_m = points_m.view(-1, self.num_keypoints, self.dim)
+            feat_f, feat_m = self.backbone(img_f), self.backbone(img_m)
+            points_f = self.keypoint_extractor(feat_f)
+            points_m = self.keypoint_extractor(feat_m)
 
-            if self.training and self.num_keypoints > self.max_train_keypoints:
+            if self.weight_keypoints:
+                point_weights = self.weight_by_variance(feat_f, feat_m)
+            else:
+                point_weights = None
+
+            if (
+                self.training
+                and align_type == "tps"
+                and self.max_train_keypoints
+                and self.num_keypoints > self.max_train_keypoints
+            ):
                 # Take mini-batch of keypoints
                 key_batch_idx = np.random.choice(
-                    self.num_keypoints, size=256, replace=False
+                    self.num_keypoints, size=self.max_train_keypoints, replace=False
                 )
                 points_f = points_f[:, key_batch_idx]
                 points_m = points_m[:, key_batch_idx]
+                if self.weight_keypoints is not None:
+                    point_weights = point_weights[:, key_batch_idx]
 
         # Align via keypoints
-        grid = self.keypoint_aligner.grid_from_points(
-            points_m, points_f, img_f.shape, lmbda=tps_lmbda
+        if align_type == "rigid":
+            keypoint_aligner = self.rigid_aligner
+        elif align_type == "affine":
+            keypoint_aligner = self.affine_aligner
+        elif align_type == "tps":
+            keypoint_aligner = self.tps_aligner
+
+        grid = keypoint_aligner.grid_from_points(
+            points_m, points_f, img_f.shape, lmbda=tps_lmbda, weights=point_weights
         )
+        res = grid, points_f, points_m
         if return_aligned_points:
-            points_a = self.keypoint_aligner.points_from_points(
+            points_a = keypoint_aligner.points_from_points(
                 points_m, points_f, points_m, lmbda=tps_lmbda
             )
-            return grid, points_f, points_m, points_a
-        return grid, points_f, points_m
-
-    def extract_keypoints_step(self, img1, img2):
-        return self.keypoint_extractor(img1), self.keypoint_extractor(img2)
+            res += (points_a,)
+        if return_weights:
+            res += (point_weights,)
+        return res
 
 
 class Simple_Unet(nn.Module):

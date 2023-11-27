@@ -12,9 +12,8 @@ import wandb
 import torchio as tio
 from scipy.stats import loguniform
 
-from keymorph.keypoint_aligners import ClosedFormRigid, ClosedFormAffine, TPS
 from keymorph import loss_ops
-from keymorph.net import ConvNetFC, ConvNetCoM, UNetCoM
+from keymorph.net import ConvNet, UNet
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import (
@@ -79,12 +78,17 @@ def parse_args():
     parser.add_argument(
         "--num_keypoints", type=int, required=True, help="Number of keypoints"
     )
-
+    parser.add_argument(
+        "--max_train_keypoints",
+        type=int,
+        default=64,
+        help="Number of keypoints to subsample TPS, to save memory",
+    )
     parser.add_argument(
         "--kp_extractor",
         type=str,
         default="conv_com",
-        choices=["conv_fc", "conv_com", "unet_com"],
+        choices=["conv", "unet"],
         help="Keypoint extractor module to use",
     )
 
@@ -217,7 +221,7 @@ def _get_tps_lmbda(num_samples, args, is_train=True):
     return lmbda
 
 
-def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args):
+def run_train(train_loader, registration_model, optimizer, args):
     """Train for one epoch.
 
     Args:
@@ -236,18 +240,35 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
 
     res = []
 
-    fixed_iters = [iter(loader) for loader in fixed_loaders]
-    moving_iters = [iter(loader) for loader in moving_loaders]
-    for step_idx in range(args.steps_per_epoch):
-        if args.mix_modalities:
-            fixed_iter = random.choice(fixed_iters)
-            moving_iter = random.choice(moving_iters)
+    for step_idx, (fixed, moving, task_type) in enumerate(train_loader):
+        task_type = task_type[0]
+        if step_idx == args.steps_per_epoch:
+            break
+
+        if task_type == "same_sub_same_mod":
+            if args.weighted_kp_align:
+                align_type = "rigid"
+            else:
+                align_type = "rigid"
+            args.loss_fn = "mse"
+            max_random_params = (0, 0.15, 3.1416, 0)
+        elif task_type == "same_sub_diff_mod":
+            if args.weighted_kp_align:
+                align_type = "rigid"
+            else:
+                align_type = "rigid"
+            args.loss_fn = "lc2"
+            max_random_params = (0, 0.15, 3.1416, 0)
+        elif task_type == "diff_sub_same_mod":
+            align_type = "tps"
+            args.loss_fn = "mse"
+            max_random_params = (0.2, 0.15, 3.1416, 0.1)
+        elif task_type == "diff_sub_diff_mod":
+            align_type = "tps"
+            args.loss_fn = "lc2"
+            max_random_params = (0.2, 0.15, 3.1416, 0.1)
         else:
-            mod_idx = np.random.randint(0, len(fixed_iters))
-            fixed_iter = fixed_iters[mod_idx]
-            moving_iter = moving_iters[mod_idx]
-        fixed = next(fixed_iter)
-        moving = next(moving_iter)
+            raise ValueError('Invalid task_type "{}"'.format(task_type))
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
@@ -271,16 +292,26 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
             scale_augment = 1
         if seg_available:
             img_m, seg_m = random_affine_augment(
-                img_m, seg=seg_m, scale_params=scale_augment
+                img_m,
+                seg=seg_m,
+                max_random_params=max_random_params,
+                scale_params=scale_augment,
             )
         else:
-            img_m = random_affine_augment(img_m, scale_params=scale_augment)
+            img_m = random_affine_augment(
+                img_m, max_random_params=max_random_params, scale_params=scale_augment
+            )
 
         lmbda = _get_tps_lmbda(len(img_f), args, is_train=True)
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
-            grid, points_f, points_m, points_a = registration_model(
-                img_f, img_m, lmbda, True
+            grid, points_f, points_m, points_a, point_weights = registration_model(
+                img_f,
+                img_m,
+                lmbda,
+                align_type=align_type,
+                return_aligned_points=True,
+                return_weights=True,
             )
             img_a = align_img(grid, img_m)
             if seg_available:
@@ -290,25 +321,20 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
             metrics = {}
             metrics["scale_augment"] = scale_augment
             metrics["mse"] = loss_ops.MSELoss()(img_f, img_a)
+            metrics["lc2"] = loss_ops.ImageLC2()(img_f, img_a)
             if seg_available:
                 metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
                 metrics["softdice"] = 1 - metrics["softdiceloss"]
-                # metrics["harddice"] = (
-                #     1 - loss_ops.DiceLoss(hard=True)(seg_a, seg_f, ign_first_ch=True)[0]
-                # )
-                # if args.dim == 3:  # TODO: Implement 2D metrics
-                #     metrics["hausd"] = loss_ops.hausdorff_distance(seg_a, seg_f)
-                #     grid = grid.permute(0, 4, 1, 2, 3)
-                #     metrics["jdstd"] = loss_ops.jdstd(grid)
-                #     metrics["jdlessthan0"] = loss_ops.jdlessthan0(
-                #         grid, as_percentage=True
-                #     )
 
             # Compute loss
             if args.loss_fn == "mse":
                 loss = metrics["mse"]
+            elif args.loss_fn == "lc2":
+                loss = metrics["lc2"]
             elif args.loss_fn == "dice":
                 loss = metrics["softdiceloss"]
+            else:
+                raise ValueError('Invalid loss function "{}"'.format(args.loss_fn))
             metrics["loss"] = loss
 
         # Perform backward pass
@@ -357,6 +383,20 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
         }
         res.append(metrics)
 
+        if args.debug_mode:
+            print("\nDebugging info:")
+            print(f"-> Task type: {task_type}")
+            print(f"-> Alignment: {align_type} ")
+            print(f"-> Max random params: {max_random_params} ")
+            print(f"-> TPS lambda: {lmbda} ")
+            print(f"-> Loss: {args.loss_fn}")
+            print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
+            print(f"-> Point shapes: {points_f.shape}, {points_m.shape}")
+            print(f"-> Point weights: {point_weights}")
+            print(f"-> Float16: {args.use_amp}")
+            if seg_available:
+                print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")
+
         if args.visualize and step_idx == 0:
             if args.dim == 2:
                 show_warped(
@@ -367,14 +407,15 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
                 )
-                show_warped(
-                    img_m[0, 0].cpu().detach().numpy(),
-                    img_f[0, 0].cpu().detach().numpy(),
-                    img_a[0, 0].cpu().detach().numpy(),
-                    points_m[0].cpu().detach().numpy(),
-                    points_f[0].cpu().detach().numpy(),
-                    points_a[0].cpu().detach().numpy(),
-                )
+                if seg_available:
+                    show_warped(
+                        seg_m[0, 0].cpu().detach().numpy(),
+                        seg_f[0, 0].cpu().detach().numpy(),
+                        seg_a[0, 0].cpu().detach().numpy(),
+                        points_m[0].cpu().detach().numpy(),
+                        points_f[0].cpu().detach().numpy(),
+                        points_a[0].cpu().detach().numpy(),
+                    )
             else:
                 show_warped_vol(
                     img_m[0, 0].cpu().detach().numpy(),
@@ -383,37 +424,26 @@ def run_train(fixed_loaders, moving_loaders, registration_model, optimizer, args
                     points_m[0].cpu().detach().numpy(),
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
-                    save_path=os.path.join(
-                        args.model_img_dir, f"img_{args.curr_epoch}.png"
-                    ),
+                    save_path=None
+                    if args.debug_mode
+                    else os.path.join(args.model_img_dir, f"img_{args.curr_epoch}.png"),
                 )
-                show_warped_vol(
-                    seg_m.argmax(1)[0].cpu().detach().numpy(),
-                    seg_f.argmax(1)[0].cpu().detach().numpy(),
-                    seg_a.argmax(1)[0].cpu().detach().numpy(),
-                    points_m[0].cpu().detach().numpy(),
-                    points_f[0].cpu().detach().numpy(),
-                    points_a[0].cpu().detach().numpy(),
-                    save_path=os.path.join(
-                        args.model_img_dir, f"seg_{args.curr_epoch}.png"
-                    ),
-                )
+                if seg_available:
+                    show_warped_vol(
+                        seg_m.argmax(1)[0].cpu().detach().numpy(),
+                        seg_f.argmax(1)[0].cpu().detach().numpy(),
+                        seg_a.argmax(1)[0].cpu().detach().numpy(),
+                        points_m[0].cpu().detach().numpy(),
+                        points_f[0].cpu().detach().numpy(),
+                        points_a[0].cpu().detach().numpy(),
+                        save_path=None
+                        if args.debug_mode
+                        else os.path.join(
+                            args.model_img_dir, f"seg_{args.curr_epoch}.png"
+                        ),
+                    )
 
     return utils.aggregate_dicts(res)
-
-
-def print_dataset_stats(datasets, prefix=""):
-    print(f"{prefix} dataset has {len(datasets)} modalities.")
-    for mod_name, mod_dataset in datasets.items():
-        print(
-            "-> Modality {} has {} subjects ({} images, {} masks and {} segmentations)".format(
-                mod_name,
-                len(mod_dataset),
-                sum("img" in s for s in mod_dataset.dry_iter()),
-                sum("mask" in s for s in mod_dataset.dry_iter()),
-                sum("seg" in s for s in mod_dataset.dry_iter()),
-            )
-        )
 
 
 def main():
@@ -456,8 +486,6 @@ def main():
     else:
         print("WARNING! No GPU available, using the CPU instead...")
         args.device = torch.device("cpu")
-    # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
     print("Number of GPUs: {}".format(torch.cuda.device_count()))
 
     # Set seed
@@ -467,119 +495,12 @@ def main():
 
     # Data
     if args.dataset == "ixi":
-        modalities = ["T1", "T2", "PD"]
+        train_loader, test_loaders = ixi.get_loaders()
 
-        transform = tio.Compose(
-            [
-                #                 RandomBiasField(),
-                #                 RandomNoise(),
-                tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
-                tio.Mask(masking_method="mask"),
-                tio.Resize(128),
-                tio.Lambda(ixi.one_hot, include=("seg")),
-            ]
-        )
-
-        fixed_datasets = {}
-        moving_datasets = {}
-        test_datasets = {}
-        for mod in modalities:
-            train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
-            fixed_datasets[mod] = tio.data.SubjectsDataset(
-                train_subjects, transform=transform
-            )
-            train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
-            moving_datasets[mod] = tio.data.SubjectsDataset(
-                train_subjects, transform=transform
-            )
-            test_subjects = ixi.read_subjects_from_disk(
-                args.data_dir, (428, 428 + args.num_test_subjects), mod
-            )
-            test_datasets[mod] = tio.data.SubjectsDataset(
-                test_subjects, transform=transform
-            )
     elif args.dataset == "gigamed":
-        dataset_names = [
-            "Dataset5000_BraTS-GLI_2023",
-            "Dataset5001_BraTS-SSA_2023",
-            "Dataset5002_BraTS-MEN_2023",
-            "Dataset5003_BraTS-MET_2023",
-            "Dataset5004_BraTS-MET-NYU_2023",
-            "Dataset5005_BraTS-PED_2023",
-            "Dataset5006_BraTS-MET-UCSF_2023",
-            "Dataset5007_UCSF-BMSR",
-            "Dataset5010_ATLASR2",
-            "Dataset5012_ShiftsBest",
-            "Dataset5013_ShiftsLjubljana",
-            "Dataset5038_BrainTumour",
-            "Dataset5041_BRATS",
-            "Dataset5042_BRATS2016",
-            "Dataset5043_BrainDevelopment",
-            "Dataset5044_EPISURG",
-            # "Dataset5046_FeTA",
-            "Dataset5066_WMH",
-            # "Dataset5083_IXIT1",
-            # "Dataset5084_IXIT2",
-            # "Dataset5085_IXIPD",
-            "Dataset5090_ISLES2022",
-            "Dataset5095_MSSEG",
-            "Dataset5096_MSSEG2",
-            "Dataset5111_UCSF-ALPTDG-time1",
-            "Dataset5112_UCSF-ALPTDG-time2",
-            "Dataset5113_StanfordMETShare",
-        ]
-
-        transform = tio.Compose(
-            [
-                tio.OneHot(num_classes=15, include=("seg")),
-            ]
-        )
-
-        fixed_datasets = {}
-        moving_datasets = {}
-        test_datasets = {}
-        for ds_name in dataset_names:
-            train_subject_dict = gigamed.read_subjects_from_disk(
-                args.data_dir, True, ds_name
-            )
-            for k, train_subject_list in train_subject_dict.items():
-                fixed_datasets[ds_name + k] = tio.data.SubjectsDataset(
-                    train_subject_list, transform=transform
-                )
-            train_subject_dict = gigamed.read_subjects_from_disk(
-                args.data_dir, True, ds_name
-            )
-            for k, train_subject_list in train_subject_dict.items():
-                moving_datasets[ds_name + k] = tio.data.SubjectsDataset(
-                    train_subject_list, transform=transform
-                )
-            # test_subjects = gigamed.read_subjects_from_disk(args.data_dir, False, ds_name)
-            # for k, train_subject_list in train_subject_dict.items():
-            #     test_datasets[ds_name+k] = tio.data.SubjectsDataset(train_subject_list, transform=transform)
-    else:
-        raise NotImplementedError
-
-    print_dataset_stats(fixed_datasets, "Fixed train")
-    print_dataset_stats(moving_datasets, "Moving train")
-    print_dataset_stats(test_datasets, "Test")
-
-    fixed_loaders = {
-        k: DataLoader(
-            v, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
-        )
-        for k, v in fixed_datasets.items()
-    }
-    moving_loaders = {
-        k: DataLoader(
-            v, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
-        )
-        for k, v in moving_datasets.items()
-    }
-
-    test_loaders = {
-        k: DataLoader(v, batch_size=args.batch_size, shuffle=False)
-        for k, v in test_datasets.items()
-    }
+        train_loader, test_loaders = gigamed.GigaMed(
+            args.data_dir, args.batch_size, args.num_workers, load_seg=False
+        ).get_loaders()
 
     if args.kpconsistency_coeff > 0:
         assert (
@@ -590,51 +511,43 @@ def main():
         ), "Must have same number of subjects for fixed and moving datasets"
 
     # CNN, i.e. keypoint extractor
-    if args.kp_extractor == "conv_fc":
-        network = ConvNetFC(
-            args.dim, 1, args.num_keypoints * args.dim, norm_type=args.norm_type
-        )
-    elif args.kp_extractor == "conv_com":
-        network = ConvNetCoM(
+    if args.kp_extractor == "conv":
+        network = ConvNet(
             args.dim,
             1,
             args.num_keypoints,
             norm_type=args.norm_type,
-            return_weights=args.weighted_kp_align,
         )
-    elif args.kp_extractor == "unet_com":
-        network = UNetCoM(
+    elif args.kp_extractor == "unet":
+        network = UNet(
             args.dim,
             1,
             args.num_keypoints,
         )
-    network = torch.nn.DataParallel(network)
-
-    # Keypoint alignment module
-    if args.kp_align_method == "rigid":
-        kp_aligner = ClosedFormRigid(args.dim)
-    elif args.kp_align_method == "affine":
-        kp_aligner = ClosedFormAffine(args.dim)
-    elif args.kp_align_method == "tps":
-        kp_aligner = TPS(args.dim)
     else:
-        raise NotImplementedError
+        raise ValueError('Invalid keypoint extractor "{}"'.format(args.kp_extractor))
+    network = torch.nn.DataParallel(network)
 
     # Keypoint model
     registration_model = KeyMorph(
-        network, kp_aligner, args.num_keypoints, args.dim, use_amp=args.use_amp
+        network,
+        args.num_keypoints,
+        args.dim,
+        use_amp=args.use_amp,
+        max_train_keypoints=args.max_train_keypoints,
+        weight_keypoints=args.weighted_kp_align,
     )
     registration_model.to(args.device)
     utils.summary(registration_model)
-    if args.load_path:
-        state_dict = torch.load(args.load_path)["state_dict"]
-        # try:
-        registration_model.load_state_dict(state_dict)
-        # except Exception as e:
-        #     registration_model.keypoint_extractor.load_state_dict(state_dict)
 
     # Optimizer
     optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
+
+    # Checkpoint loading
+    if args.load_path is not None:
+        ckpt_state, registration_model, optimizer = utils.load_checkpoint(
+            args.load_path, registration_model, optimizer, resume=args.resume
+        )
 
     if args.eval:
         assert args.batch_size == 1, ":("
@@ -702,17 +615,12 @@ def main():
                         lmbda = _get_tps_lmbda(len(img_f), args, is_train=False)
 
                         with torch.set_grad_enabled(False):
-                            grid, points_f, points_m = registration_model(
-                                img_f,
-                                img_m,
-                                lmbda,
+                            grid, points_f, points_m, points_a = registration_model(
+                                img_f, img_m, lmbda, return_aligned_points=True
                             )
                         img_a = align_img(grid, img_m)
                         if seg_available:
                             seg_a = align_img(grid, seg_m)
-                        points_a = kp_aligner.points_from_points(
-                            points_m, points_f, points_m, lmbda=lmbda
-                        )
 
                         # Compute metrics
                         metrics = {}
@@ -833,25 +741,21 @@ def main():
             initialize_wandb(args)
 
         if args.resume:
-            state = torch.load(args.load_path)
-            registration_model.load_state_dict(state["state_dict"])
-            optimizer.load_state_dict(state["optimizer"])
-            start_epoch = state["epoch"] + 1
+            start_epoch = ckpt_state["epoch"] + 1
         else:
             start_epoch = 1
 
         for epoch in range(start_epoch, args.epochs + 1):
             args.curr_epoch = epoch
             epoch_stats = run_train(
-                list(fixed_loaders.values()),
-                list(moving_loaders.values()),
+                train_loader,
                 registration_model,
                 optimizer,
                 args,
             )
             train_loss.append(epoch_stats["loss"])
 
-            print(f"Epoch {epoch}/{args.epochs}")
+            print(f"\nEpoch {epoch}/{args.epochs}")
             for name, metric in epoch_stats.items():
                 print(f"[Train Stat] {name}: {metric:.5f}")
 
@@ -862,7 +766,7 @@ def main():
             state = {
                 "epoch": epoch,
                 "args": args,
-                "state_dict": registration_model.state_dict(),
+                "state_dict": registration_model.keypoint_extractor.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
 
