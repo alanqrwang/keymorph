@@ -113,8 +113,10 @@ def parse_args():
 
     parser.add_argument(
         "--weighted_kp_align",
-        action="store_true",
-        help="Use weighted keypoint alignment",
+        type=str,
+        default=None,
+        choices=["variance", "power"],
+        help="Type of weighting to use for keypoints",
     )
 
     # Data
@@ -305,7 +307,13 @@ def run_train(train_loader, registration_model, optimizer, args):
         lmbda = _get_tps_lmbda(len(img_f), args, is_train=True)
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
-            grid, points_f, points_m, points_a, point_weights = registration_model(
+            (
+                grid,
+                points_f,
+                points_m,
+                points_a,
+                weights,
+            ) = registration_model(
                 img_f,
                 img_m,
                 lmbda,
@@ -392,7 +400,7 @@ def run_train(train_loader, registration_model, optimizer, args):
             print(f"-> Loss: {args.loss_fn}")
             print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
             print(f"-> Point shapes: {points_f.shape}, {points_m.shape}")
-            print(f"-> Point weights: {point_weights}")
+            print(f"-> Point weights: {weights}")
             print(f"-> Float16: {args.use_amp}")
             if seg_available:
                 print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")

@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from skimage import morphology
 
-from .keypoint_aligners import ClosedFormRigid, ClosedFormAffine, TPS
+from .keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
 from .layers import LinearRegressor2d, LinearRegressor3d, CenterOfMass2d, CenterOfMass3d
 
 
@@ -17,7 +17,7 @@ class KeyMorph(nn.Module):
         keypoint_extractor="com",
         max_train_keypoints=None,
         use_amp=False,
-        weight_keypoints=False,
+        weight_keypoints=None,
     ):
         """Forward pass for one mini-batch step.
 
@@ -46,36 +46,52 @@ class KeyMorph(nn.Module):
         self.use_amp = use_amp
 
         # Keypoint alignment module
-        self.rigid_aligner = ClosedFormRigid(self.dim)
-        self.affine_aligner = ClosedFormAffine(self.dim)
+        self.rigid_aligner = RigidKeypointAligner(self.dim)
+        self.affine_aligner = AffineKeypointAligner(self.dim)
         self.tps_aligner = TPS(self.dim)
 
-        # Variance
+        # Weight keypoints
+        assert weight_keypoints in [None, "variance", "power"]
         self.weight_keypoints = weight_keypoints
-        if self.weight_keypoints:
-            self.scales = nn.Parameter(torch.randn(num_keypoints))
-            self.biases = nn.Parameter(torch.randn(num_keypoints))
+        if self.weight_keypoints == "variance":
+            self.scales = nn.Parameter(torch.ones(num_keypoints))
+            self.biases = nn.Parameter(torch.zeros(num_keypoints))
 
-    def weight_by_variance(self, feat_f, feat_m):
-        feat_f = F.relu(feat_f)
-        feat_m = F.relu(feat_m)
+    def weight_by_variance(self, feat1, feat2):
+        feat1, feat2 = F.relu(feat1), F.relu(feat2)
         if self.dim == 2:
-            var_f = torch.var(feat_f, dim=(2, 3))
-            var_m = torch.var(feat_m, dim=(2, 3))
+            var1 = torch.var(feat1, dim=(2, 3))
+            var2 = torch.var(feat2, dim=(2, 3))
         else:
-            var_f = torch.var(feat_f, dim=(2, 3, 4))
-            var_m = torch.var(feat_m, dim=(2, 3, 4))
+            var1 = torch.var(feat1, dim=(2, 3, 4))
+            var2 = torch.var(feat2, dim=(2, 3, 4))
 
         # Higher var -> lower weight
         # Lower var -> higher weight
-        weights_f = 1 / (self.scales * var_f + self.biases)
-        weights_m = 1 / (self.scales * var_m + self.biases)
+        weights1 = 1 / (self.scales * var1 + self.biases)
+        weights2 = 1 / (self.scales * var2 + self.biases)
 
-        # Take average between variances of moving and fixed heatmaps
-        weights_avg = (weights_f + weights_m) / 2
+        # Aggregate variances of moving and fixed heatmaps
+        weights = weights1 * weights2
 
-        # Relu to ensure weights are positive
-        return F.relu(weights_avg)
+        # Return normalized weights
+        return weights / weights.sum(dim=1)
+
+    def weight_by_power(self, feat1, feat2):
+        feat1, feat2 = F.relu(feat1), F.relu(feat2)
+        bs, n_ch = feat1.shape[0], feat1.shape[1]
+        feat1 = feat1.reshape(bs, n_ch, -1)
+        feat2 = feat2.reshape(bs, n_ch, -1)
+
+        # Higher power -> higher weight
+        power1 = feat1.sum(dim=-1)
+        power2 = feat2.sum(dim=-1)
+
+        # Aggregate power of moving and fixed heatmaps
+        weights = power1 * power2
+
+        # Return normalized weights
+        return weights / weights.sum(dim=1)
 
     def forward(
         self,
@@ -99,10 +115,12 @@ class KeyMorph(nn.Module):
             points_f = self.keypoint_extractor(feat_f)
             points_m = self.keypoint_extractor(feat_m)
 
-            if self.weight_keypoints:
-                point_weights = self.weight_by_variance(feat_f, feat_m)
+            if self.weight_keypoints == "variance":
+                weights = self.weight_by_variance(feat_f, feat_m)
+            elif self.weight_keypoints == "power":
+                weights = self.weight_by_power(feat_f, feat_m)
             else:
-                point_weights = None
+                weights = None
 
             if (
                 self.training
@@ -117,7 +135,7 @@ class KeyMorph(nn.Module):
                 points_f = points_f[:, key_batch_idx]
                 points_m = points_m[:, key_batch_idx]
                 if self.weight_keypoints is not None:
-                    point_weights = point_weights[:, key_batch_idx]
+                    weights = weights[:, key_batch_idx]
 
         # Align via keypoints
         if align_type == "rigid":
@@ -128,16 +146,20 @@ class KeyMorph(nn.Module):
             keypoint_aligner = self.tps_aligner
 
         grid = keypoint_aligner.grid_from_points(
-            points_m, points_f, img_f.shape, lmbda=tps_lmbda, weights=point_weights
+            points_m,
+            points_f,
+            img_f.shape,
+            lmbda=tps_lmbda,
+            weights=weights,
         )
         res = grid, points_f, points_m
         if return_aligned_points:
             points_a = keypoint_aligner.points_from_points(
-                points_m, points_f, points_m, lmbda=tps_lmbda
+                points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
             )
             res += (points_a,)
         if return_weights:
-            res += (point_weights,)
+            res += (weights,)
         return res
 
 

@@ -2,65 +2,18 @@ import torch
 import torch.nn.functional as F
 
 
-class ClosedFormRigid:
-    """See https://ieeexplore.ieee.org/document/4767965"""
-
+class MatrixKeypointAligner:
     def __init__(self, dim):
         self.dim = dim
 
-    def get_rigid_matrix(self, p1_t, p2_t, w=None):
-        """
-        w: [n_batch, n_points]
-        """
-        # #Writing points with rows as the coordinates
-        # p1_t = np.array([[0,0,0], [1,0,0],[0,1,0]])
-        # p2_t = np.array([[0,0,1], [1,0,1],[0,0,2]]) #Approx transformation is 90 degree rot over x-axis and +1 in Z axis
+    def get_matrix(self, p1, p2, w=None):
+        pass
 
-        # Take transpose as columns should be the points
-        p1 = p1_t.permute(0, 2, 1)
-        p2 = p2_t.permute(0, 2, 1)
-
-        if w is not None:
-            # Matrix multiply on the right by diagonal weight matrix
-            w = F.softmax(w, dim=-1)  # Proof assumes weights sum to 1
-            w = torch.diag_embed(w)
-            p1 = torch.bmm(p1, w)
-            p2 = torch.bmm(p2, w)
-
-        # Calculate centroids
-        p1_c = torch.mean(p1, axis=2, keepdim=True)
-        p2_c = torch.mean(p2, axis=2, keepdim=True)
-
-        # Subtract centroids
-        q1 = p1 - p1_c
-        q2 = p2 - p2_c
-
-        # Calculate covariance matrix
-        H = torch.bmm(q1, q2.transpose(1, 2))
-
-        # Calculate singular value decomposition (SVD)
-        U, _, V_t = torch.linalg.svd(H)  # the SVD of linalg gives you Vt
-
-        # Calculate rotation matrix
-        R = torch.bmm(V_t.transpose(1, 2), U.transpose(1, 2))
-
-        # assert torch.allclose(
-        #     torch.linalg.det(R), torch.tensor(1.0)
-        # ), f"Rotation matrix of N-point registration not 1, see paper Arun et al., det={torch.linalg.det(R)}"
-
-        # Calculate translation matrix
-        T = p2_c - torch.bmm(R, p1_c)
-
-        # Create augmented affine matrix
-        aug_mat = torch.cat([R, T], axis=-1)
-        return aug_mat
-
-    def grid_from_points(
-        self, moving_points, fixed_points, grid_shape, weights=None, **kwargs
-    ):
+    def grid_from_points(self, points_m, points_f, grid_shape, weights=None, **kwargs):
         del kwargs
-        rigid_matrix = self.get_rigid_matrix(fixed_points, moving_points, w=weights)
-        grid = F.affine_grid(rigid_matrix, grid_shape, align_corners=False)
+        # Note we flip the order of the points here
+        matrix = self.get_matrix(points_f, points_m, w=weights)
+        grid = F.affine_grid(matrix, grid_shape, align_corners=False)
         return grid
 
     def deform_points(self, points, matrix):
@@ -79,8 +32,10 @@ class ClosedFormRigid:
         )
         return warp_points
 
-    def points_from_points(self, moving_points, fixed_points, points, **kwargs):
-        affine_matrix = self.get_rigid_matrix(moving_points, fixed_points)
+    def points_from_points(
+        self, moving_points, fixed_points, points, weights=None, **kwargs
+    ):
+        affine_matrix = self.get_matrix(moving_points, fixed_points, w=weights)
         square_mat = torch.zeros(len(points), self.dim + 1, self.dim + 1).to(
             moving_points.device
         )
@@ -98,14 +53,88 @@ class ClosedFormRigid:
         return warped_points
 
 
-class ClosedFormAffine:
+class RigidKeypointAligner(MatrixKeypointAligner):
+    def __init__(self, dim):
+        super().__init__(dim)
+
+    def get_matrix(self, p1, p2, w=None):
+        """
+        Find R and T which is the solution to argmin_{R, T} \sum_i ||p2_i - (R * p1_i + T)||_2
+        See https://ieeexplore.ieee.org/document/4767965
+
+
+        Args:
+          x, y: [n_batch, n_points, dim]
+          w: [n_batch, n_points]
+        Returns:
+          A: [n_batch, dim, dim+1]
+        """
+        # Take transpose as columns should be the points
+        p1 = p1.permute(0, 2, 1)
+        p2 = p2.permute(0, 2, 1)
+
+        if w is not None:
+            # normalize weights
+            assert w.sum(-1).allclose(
+                torch.ones_like(w.sum(-1))
+            ), "Weights not normalized"
+
+        # Calculate centroids
+        if w is not None:
+            # find weighed mean column wise
+            p1_c = torch.sum(p1 * w, axis=2, keepdims=True)
+            p2_c = torch.sum(p2 * w, axis=2, keepdims=True)
+        else:
+            p1_c = torch.mean(p1, axis=2, keepdim=True)
+            p2_c = torch.mean(p2, axis=2, keepdim=True)
+
+        # Subtract centroids
+        q1 = p1 - p1_c
+        q2 = p2 - p2_c
+
+        if w is not None:
+            q1 = q1 * w
+            q2 = q2 * w
+
+        # Calculate covariance matrix
+        H = torch.bmm(q1, q2.transpose(1, 2))
+
+        # Calculate singular value decomposition (SVD)
+        U, _, Vt = torch.linalg.svd(H)  # the SVD of linalg gives you Vt
+        Ut = U.transpose(1, 2)
+        V = Vt.transpose(1, 2)
+        R = torch.bmm(V, Ut)
+
+        # assert torch.allclose(
+        #     torch.linalg.det(R), torch.tensor(1.0)
+        # ), f"Rotation matrix of N-point registration not 1, see paper Arun et al., det={torch.linalg.det(R)}"
+
+        # special reflection case
+        dets = torch.det(R)
+        dets = torch.unsqueeze(dets, -1)
+        dets = torch.stack([torch.ones_like(dets), torch.ones_like(dets), dets], axis=1)
+        dets = torch.cat([dets, dets, dets], axis=2)
+        V = V * torch.sign(dets)
+
+        # Calculate rotation matrix
+        R = torch.bmm(V, Ut)
+
+        # Calculate translation matrix
+        T = p2_c - torch.bmm(R, p1_c)
+
+        # Create augmented matrix
+        aug_mat = torch.cat([R, T], axis=-1)
+        return aug_mat
+
+
+class AffineKeypointAligner(MatrixKeypointAligner):
     def __init__(self, dim):
         self.dim = dim
 
-    def get_affine_matrix(self, x, y, w=None):
+    def get_matrix(self, x, y, w=None):
         """
-        Solve the closed-form affine equation: A = y x^T (x x^T)^(-1).
-        A is the solution to argmin_A ||Ax - y||_F
+        Find A which is the solution to argmin_A \sum_i ||y_i - Ax_i||_2 = argmin_A ||Ax - y||_F
+        Computes the closed-form affine equation: A = y x^T (x x^T)^(-1).
 
         If w provided, solves the weighted affine equation:
           A = y diag(w) x^T  (x diag(w) x^T)^(-1).
@@ -115,8 +144,9 @@ class ClosedFormAffine:
           x, y: [n_batch, n_points, dim]
           w: [n_batch, n_points]
         Returns:
-          A: [n_batch, 3, 4]
+          A: [n_batch, dim, dim+1]
         """
+        # Take transpose as columns should be the points
         x = x.permute(0, 2, 1)
         y = y.permute(0, 2, 1)
 
@@ -141,48 +171,6 @@ class ClosedFormAffine:
         out = torch.bmm(y, out)
         return out
 
-    def grid_from_points(
-        self, moving_points, fixed_points, grid_shape, weights=None, **kwargs
-    ):
-        del kwargs
-        affine_matrix = self.get_affine_matrix(fixed_points, moving_points, w=weights)
-        grid = F.affine_grid(affine_matrix, grid_shape, align_corners=False)
-        return grid
-
-    def deform_points(self, points, matrix):
-        square_mat = torch.zeros(len(points), self.dim + 1, self.dim + 1).to(
-            points.device
-        )
-        square_mat[:, : self.dim, : self.dim + 1] = matrix
-        square_mat[:, -1, -1] = 1
-        batch_size, num_points, _ = points.shape
-
-        points = torch.cat(
-            (points, torch.ones(batch_size, num_points, 1).to(points.device)), dim=-1
-        )
-        warp_points = torch.bmm(square_mat[:, :3, :], points.permute(0, 2, 1)).permute(
-            0, 2, 1
-        )
-        return warp_points
-
-    def points_from_points(self, moving_points, fixed_points, points, **kwargs):
-        affine_matrix = self.get_affine_matrix(moving_points, fixed_points)
-        square_mat = torch.zeros(len(points), self.dim + 1, self.dim + 1).to(
-            moving_points.device
-        )
-        square_mat[:, : self.dim, : self.dim + 1] = affine_matrix
-        square_mat[:, -1, -1] = 1
-        batch_size, num_points, _ = points.shape
-
-        points = torch.cat(
-            (points, torch.ones(batch_size, num_points, 1).to(moving_points.device)),
-            dim=-1,
-        )
-        warped_points = torch.bmm(
-            square_mat[:, :3, :], points.permute(0, 2, 1)
-        ).permute(0, 2, 1)
-        return warped_points
-
 
 class TPS:
     """See https://github.com/cheind/py-thin-plate-spline/blob/master/thinplate/numpy.py"""
@@ -194,8 +182,8 @@ class TPS:
         """Assumes last dimension of c contains target points.
 
           Set up and solve linear system:
-            [K + lmbda*I           P] [w] = [v]
-            [                P^T   0] [a]   [0]
+            [K + lmbda*I   P] [w] = [v]
+            [        P^T   0] [a]   [0]
 
           If w is provided, solve weighted TPS:
             [K + lmbda*1/diag(w)   P] [w] = [v]
@@ -399,16 +387,12 @@ class TPS:
             grid[..., 3] = torch.linspace(-1, 1, D).unsqueeze(-1).unsqueeze(-1)
         return grid
 
-    def grid_from_points(
-        self, ctl_points, tgt_points, grid_shape, weights=None, **kwargs
-    ):
+    def grid_from_points(self, points_m, points_f, grid_shape, weights=None, **kwargs):
         lmbda = kwargs["lmbda"]
 
-        theta = self.tps_theta_from_points(
-            tgt_points, ctl_points, lmbda, weights=weights
-        )
-        grid = self.tps_grid(theta, tgt_points, grid_shape)
-        return grid
+        # Note we flip the order of the points here
+        theta = self.tps_theta_from_points(points_f, points_m, lmbda, weights=weights)
+        return self.tps_grid(theta, points_f, grid_shape)
 
     def deform_points(self, theta, ctrl, points):
         weights, affine = theta[:, : -(self.dim + 1), :], theta[:, -(self.dim + 1) :, :]
@@ -423,7 +407,11 @@ class TPS:
         z = torch.bmm(P.view(N, -1, self.dim + 1), affine)
         return z + b
 
-    def points_from_points(self, ctl_points, tgt_points, points, **kwargs):
+    def points_from_points(
+        self, ctl_points, tgt_points, points, weights=None, **kwargs
+    ):
         lmbda = kwargs["lmbda"]
-        theta = self.tps_theta_from_points(ctl_points, tgt_points, lmbda)
+        theta = self.tps_theta_from_points(
+            ctl_points, tgt_points, lmbda, weights=weights
+        )
         return self.deform_points(theta, ctl_points, points)
