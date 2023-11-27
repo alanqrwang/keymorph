@@ -251,3 +251,92 @@ class LC2(torch.nn.Module):
         sym = (var - dist) / var.clamp_min(beta)
 
         return sym.clamp(0, 1)
+
+
+class ImageLC2(torch.nn.Module):
+    def __init__(self, patch_size=51, radiuses=(5,), reduction="mean"):
+        super(ImageLC2, self).__init__()
+        self.patch_size = patch_size
+        self.radii = radiuses
+        assert reduction in ["mean", None]
+        self.reduction = reduction
+        self.f = torch.zeros(3, 1, 3, 3, 3)
+        self.f[0, 0, 1, 1, 0] = 1
+        self.f[0, 0, 1, 1, 2] = -1
+        self.f[1, 0, 1, 0, 1] = 1
+        self.f[1, 0, 1, 2, 1] = -1
+        self.f[2, 0, 0, 1, 1] = 1
+        self.f[2, 0, 2, 1, 1] = -1
+
+    @staticmethod
+    def patch2batch(x, size, stride):
+        """Converts image x into patches, then reshapes into batch of patches"""
+        nch = x.shape[1]
+        if len(x.shape) == 4:
+            patches = x.unfold(2, size, stride).unfold(3, size, stride)
+            return patches.reshape(-1, nch, size, size)
+        else:
+            patches = (
+                x.unfold(2, size, stride)
+                .unfold(3, size, stride)
+                .unfold(4, size, stride)
+            )
+            return patches.reshape(-1, nch, size, size, size)
+
+    def forward(self, us, mr):
+        assert (
+            us.shape == mr.shape
+        ), f"Input and target have different shapes, {us.shape} vs {mr.shape}"
+        assert (
+            us.shape[-1] == us.shape[-2] == us.shape[-3]
+        ), f"Dimensions must be equal, currently {us.shape}"
+        assert us.shape[1] % 2 == 1, f"Input must be odd size, currently {us.shape}"
+
+        # Convert to batch of patches
+        r = self.radii[0]
+        us_patch = self.patch2batch(us, self.patch_size, self.patch_size)
+        mr_patch = self.patch2batch(mr, self.patch_size, self.patch_size)
+        s = self.run(us_patch, mr_patch, r)
+        for r in self.radii[1:]:
+            us_patch = self.patch2batch(us, self.patch_size, self.patch_size)
+            mr_patch = self.patch2batch(mr, self.patch_size, self.patch_size)
+            s += self.run(us_patch, mr_patch, r)
+
+        s = s / len(self.radii)
+        if self.reduction == "mean":
+            return s.mean()
+        else:
+            return s
+
+    def run(self, us, mr, radius=9, alpha=1e-3, beta=1e-2):
+        us = us.squeeze(1)
+        mr = mr.squeeze(1)
+
+        bs = mr.size(0)
+        pad = (mr.size(1) - (2 * radius + 1)) // 2
+        count = (2 * radius + 1) ** 3
+
+        self.f = self.f.to(mr.device)
+
+        grad = torch.norm(F.conv3d(mr.unsqueeze(1), self.f, padding=1), dim=1)
+
+        A = torch.ones(bs, 3, count, device=mr.device)
+        A[:, 0] = mr[:, pad:-pad, pad:-pad, pad:-pad].reshape(bs, -1)
+        A[:, 1] = grad[:, pad:-pad, pad:-pad, pad:-pad].reshape(bs, -1)
+        b = us[:, pad:-pad, pad:-pad, pad:-pad].reshape(bs, -1)
+
+        C = (
+            torch.einsum("bip,bjp->bij", A, A) / count
+            + torch.eye(3, device=mr.device).unsqueeze(0) * alpha
+        )
+        Atb = torch.einsum("bip,bp->bi", A, b) / count
+        coeff = torch.linalg.solve(C, Atb)
+        var = torch.mean(b**2, dim=1) - torch.mean(b, dim=1) ** 2
+        dist = (
+            torch.mean(b**2, dim=1)
+            + torch.einsum("bi,bj,bij->b", coeff, coeff, C)
+            - 2 * torch.einsum("bi,bi->b", coeff, Atb)
+        )
+        sym = (var - dist) / var.clamp_min(beta)
+
+        return sym.clamp(0, 1)
