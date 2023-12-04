@@ -16,7 +16,8 @@ def align_img(grid, x):
 
 
 def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
-    array = array.float()
+    if isinstance(array, torch.Tensor):
+        array = array.float()
 
     if percentiles != (0, 100):
         cutoff = np.percentile(array, percentiles)
@@ -34,7 +35,10 @@ def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
 
 
 def parse_test_metric(mod, aug):
-    mod1, mod2 = mod.split("_")
+    if isinstance(mod, str):
+        mod1, mod2 = mod.split("_")
+    else:
+        mod1, mod2 = mod
     if "rot" in aug:
         if aug == "rot0":
             rot_aug = [0, 0, 0]

@@ -1,9 +1,7 @@
 import os
 from pprint import pprint
 import torch
-import torch.nn.functional as F
 import time
-from torch.utils.data import DataLoader
 import numpy as np
 import random
 from argparse import ArgumentParser
@@ -11,6 +9,7 @@ from pathlib import Path
 import wandb
 import torchio as tio
 from scipy.stats import loguniform
+import matplotlib.pyplot as plt
 
 from keymorph import loss_ops
 from keymorph.net import ConvNet, UNet
@@ -464,8 +463,9 @@ def main():
 
     # Path to save outputs
     arguments = (
-        args.job_name
-        + "_[training]keypoints"
+        "__training__"
+        + args.job_name
+        + "_keypoints"
         + str(args.num_keypoints)
         + "_batch"
         + str(args.batch_size)
@@ -563,18 +563,25 @@ def main():
 
         list_of_test_metrics = [
             "mse:test",
-            "dice_total:test",
-            "dice_roi:test",
+            # "dice_total:test",
+            # "dice_roi:test",
         ]
-        list_of_test_mods = [
-            "T1_T1",
-            "T2_T2",
-            "PD_PD",
-            #
-            "T1_T2",
-            "T1_PD",
-            "T2_PD",
-        ]
+        if args.dataset == "ixi":
+            list_of_test_mods = [
+                "T1_T1",
+                "T2_T2",
+                "PD_PD",
+                #
+                "T1_T2",
+                "T1_PD",
+                "T2_PD",
+            ]
+        elif args.dataset == "gigamed":
+            list_of_test_mods = [
+                ("Dataset5083_IXIT1", "Dataset5083_IXIT1"),
+            ]
+        else:
+            raise ValueError('Invalid dataset "{}"'.format(args.dataset))
         list_of_test_augs = [
             "rot0",
             "rot45",
@@ -607,6 +614,9 @@ def main():
                             )
                         else:
                             seg_available = False
+                            assert not any(
+                                "dice" in m for m in list_of_test_metrics
+                            ), "Can't compute Dice if no segmentations available"
 
                         # Move to device
                         img_f = img_f.float().to(args.device)
@@ -623,12 +633,81 @@ def main():
                         lmbda = _get_tps_lmbda(len(img_f), args, is_train=False)
 
                         with torch.set_grad_enabled(False):
-                            grid, points_f, points_m, points_a = registration_model(
-                                img_f, img_m, lmbda, return_aligned_points=True
+                            (
+                                grid,
+                                points_f,
+                                points_m,
+                                points_a,
+                                weights,
+                            ) = registration_model(
+                                img_f,
+                                img_m,
+                                lmbda,
+                                return_aligned_points=True,
+                                return_weights=True,
                             )
+
+                        if args.debug_mode:
+                            weights_viz = weights.squeeze().detach().cpu().numpy()
+                            plt.bar(np.arange(len(weights_viz)), weights_viz)
+                            plt.show()
+
                         img_a = align_img(grid, img_m)
                         if seg_available:
                             seg_a = align_img(grid, seg_m)
+
+                        if args.visualize:
+                            if args.dim == 2:
+                                show_warped(
+                                    img_m[0, 0].cpu().detach().numpy(),
+                                    img_f[0, 0].cpu().detach().numpy(),
+                                    img_a[0, 0].cpu().detach().numpy(),
+                                    points_m[0].cpu().detach().numpy(),
+                                    points_f[0].cpu().detach().numpy(),
+                                    points_a[0].cpu().detach().numpy(),
+                                    weights=weights[0].cpu().detach().numpy(),
+                                )
+                                if seg_available:
+                                    show_warped(
+                                        seg_m[0, 0].cpu().detach().numpy(),
+                                        seg_f[0, 0].cpu().detach().numpy(),
+                                        seg_a[0, 0].cpu().detach().numpy(),
+                                        points_m[0].cpu().detach().numpy(),
+                                        points_f[0].cpu().detach().numpy(),
+                                        points_a[0].cpu().detach().numpy(),
+                                        weights=weights[0].cpu().detach().numpy(),
+                                    )
+                            else:
+                                show_warped_vol(
+                                    img_m[0, 0].cpu().detach().numpy(),
+                                    img_f[0, 0].cpu().detach().numpy(),
+                                    img_a[0, 0].cpu().detach().numpy(),
+                                    points_m[0].cpu().detach().numpy(),
+                                    points_f[0].cpu().detach().numpy(),
+                                    points_a[0].cpu().detach().numpy(),
+                                    weights=weights[0].cpu().detach().numpy(),
+                                    save_path=None
+                                    if args.debug_mode
+                                    else os.path.join(
+                                        args.model_img_dir, f"img_{args.curr_epoch}.png"
+                                    ),
+                                )
+                                if seg_available:
+                                    show_warped_vol(
+                                        seg_m.argmax(1)[0].cpu().detach().numpy(),
+                                        seg_f.argmax(1)[0].cpu().detach().numpy(),
+                                        seg_a.argmax(1)[0].cpu().detach().numpy(),
+                                        points_m[0].cpu().detach().numpy(),
+                                        points_f[0].cpu().detach().numpy(),
+                                        points_a[0].cpu().detach().numpy(),
+                                        weights=weights[0].cpu().detach().numpy(),
+                                        save_path=None
+                                        if args.debug_mode
+                                        else os.path.join(
+                                            args.model_img_dir,
+                                            f"seg_{args.curr_epoch}.png",
+                                        ),
+                                    )
 
                         # Compute metrics
                         metrics = {}
@@ -737,9 +816,10 @@ def main():
                         for name, metric in metrics.items():
                             if not isinstance(metric, list):
                                 print(f"[Eval Stat] {name}: {metric:.5f}")
-                        save_summary_json(
-                            test_metrics, args.model_result_dir / "summary.json"
-                        )
+                        if not args.debug_mode:
+                            save_summary_json(
+                                test_metrics, args.model_result_dir / "summary.json"
+                            )
 
     else:
         registration_model.train()

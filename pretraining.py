@@ -235,8 +235,9 @@ def main():
 
     # Path to save outputs
     arguments = (
-        args.job_name
-        + "[pretraining]keypoints"
+        "__pretraining__"
+        + args.job_name
+        + "_keypoints"
         + str(args.num_keypoints)
         + "_batch"
         + str(args.batch_size)

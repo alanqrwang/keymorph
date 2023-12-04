@@ -37,6 +37,12 @@ datasets_with_one_modality = [
     "Dataset5044_EPISURG",
     "Dataset5066_WMH",
 ]
+
+list_of_test_datasets = [
+    "Dataset5083_IXIT1",
+    # "Dataset5084_IXIT2",
+    # "Dataset5085_IXIPD",
+]
 # unused_datasets = [
 # "Dataset5046_FeTA",
 # "Dataset5083_IXIT1",
@@ -285,9 +291,14 @@ class GigaMed:
         self.num_workers = num_workers
         self.load_seg = load_seg
         self.sample_same_mod_only = sample_same_mod_only
+        self.transform = tio.Compose(
+            [
+                tio.OneHot(num_classes=15, include=("seg")),
+            ]
+        )
 
-    def get_loaders(self):
-        # TODO: Code currently does not sample across datasets
+    def get_train_loader(self):
+        """Code currently does not sample across datasets"""
         # Longitudinal
         sssm_dataset_names = datasets_with_longitudinal
         # Single subject, different modality (SSDM) must have multiple modalities for a single subject
@@ -299,19 +310,13 @@ class GigaMed:
         # Different subject, different modality (DSDM) must have multiple modalities for a single subject
         dsdm_dataset_names = datasets_with_multiple_modalities
 
-        transform = tio.Compose(
-            [
-                tio.OneHot(num_classes=15, include=("seg")),
-            ]
-        )
-
         sssm_datasets = []
         for ds_name in sssm_dataset_names:
             sssm_datasets.append(
                 SameSubjectSameModalityDataset(
                     os.path.join(self.root_dir, ds_name),
                     True,
-                    transform,
+                    self.transform,
                     load_seg=self.load_seg,
                 )
             )
@@ -321,7 +326,7 @@ class GigaMed:
                 SameSubjectDiffModalityDataset(
                     os.path.join(self.root_dir, ds_name),
                     True,
-                    transform,
+                    self.transform,
                     load_seg=self.load_seg,
                 )
             )
@@ -331,7 +336,7 @@ class GigaMed:
                 DiffSubjectSameModalityDataset(
                     os.path.join(self.root_dir, ds_name),
                     True,
-                    transform,
+                    self.transform,
                     load_seg=self.load_seg,
                 )
             )
@@ -341,7 +346,7 @@ class GigaMed:
                 DiffSubjectDiffModalityDataset(
                     os.path.join(self.root_dir, ds_name),
                     True,
-                    transform,
+                    self.transform,
                     load_seg=self.load_seg,
                 )
             )
@@ -350,7 +355,6 @@ class GigaMed:
         self.print_dataset_stats(ssdm_datasets, "SSDM")
         self.print_dataset_stats(dssm_datasets, "DSSM")
         self.print_dataset_stats(dsdm_datasets, "DSDM")
-        # self.print_dataset_stats(all_test_datasets, "test")
 
         if self.sample_same_mod_only:
             final_dataset = ConcatDataset(sssm_datasets, dssm_datasets)
@@ -367,8 +371,33 @@ class GigaMed:
             shuffle=True,
             num_workers=self.num_workers,
         )
+        return train_loader
 
-        return train_loader, None
+    def get_test_loader(self):
+        test_datasets = []
+        for ds_name in list_of_test_datasets:
+            test_datasets.append(
+                SingleSubjectDataset(
+                    os.path.join(self.root_dir, ds_name),
+                    False,
+                    self.transform,
+                    load_seg=self.load_seg,
+                )
+            )
+        self.print_dataset_stats(test_datasets, "test")
+
+        test_loaders = {}
+        for ds_name, ds in zip(list_of_test_datasets, test_datasets):
+            test_loaders[ds_name] = DataLoader(
+                ds,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return test_loaders
+
+    def get_loaders(self):
+        return self.get_train_loader(), self.get_test_loader()
 
     def get_pretraining_loaders(self):
         dataset_names = set(
@@ -377,19 +406,13 @@ class GigaMed:
             + datasets_with_one_modality
         )
 
-        transform = tio.Compose(
-            [
-                tio.OneHot(num_classes=15, include=("seg")),
-            ]
-        )
-
         datasets = []
         for ds_name in dataset_names:
             datasets.append(
                 SingleSubjectDataset(
                     os.path.join(self.root_dir, ds_name),
                     True,
-                    transform,
+                    self.transform,
                     load_seg=self.load_seg,
                 )
             )
