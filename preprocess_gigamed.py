@@ -5,10 +5,24 @@ import torchio as tio
 from keymorph import utils
 import numpy as np
 from pprint import pprint
+from argparse import ArgumentParser
 
 # WARNING!!!!
 # On AI cluster, load FSL and bc modules.
 # Activate conda environment alw4013-hdbet.
+
+need_skullstrip = [
+    "Dataset4999_IXIAllModalities",
+    "Dataset5010_ATLASR2",
+    "Dataset5043_BrainDevelopment",
+    "Dataset5044_EPISURG",
+    "Dataset5066_WMH",
+    "Dataset5083_IXIT1",
+    "Dataset5084_IXIT2",
+    "Dataset5085_IXIPD",
+    "Dataset5096_MSSEG2",
+    "NYU_METS",
+]
 
 
 def shell_command(command):
@@ -17,22 +31,28 @@ def shell_command(command):
 
 
 def _resample_pad_intensity_normalize(
-    src_img_dir, src_seg_dir, tgt_img_dir, tgt_seg_dir, seg_available=True
+    src_img_dir,
+    src_seg_dir,
+    tgt_img_dir,
+    tgt_seg_dir,
+    seg_available=True,
+    min_max_norm=True,
 ):
-    # """Resample to 1mm isotropic, crop/pad to 256^3, and intensity normalize to [0, 1]."""
-    """Resample to 1mm isotropic and crop/pad to 256^3."""
+    """Resample to 1mm isotropic and crop/pad to 256^3.
+    If specified, also intensity normalize to [0, 1]."""
     failed = []
 
-    tio_transform = tio.Compose(
-        [
-            tio.ToCanonical(),
-            tio.Resample(1),
-            tio.Resample("img"),
-            tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img")),
-            tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg")),
-            # tio.Lambda(utils.rescale_intensity, include=("img")),
-        ]
-    )
+    transforms = [
+        tio.ToCanonical(),
+        tio.Resample(1),
+        tio.Resample("img"),
+        tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img")),
+        tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg")),
+    ]
+    if min_max_norm:
+        transforms.append(tio.Lambda(utils.rescale_intensity, include=("img")))
+
+    tio_transform = tio.Compose(transforms)
 
     img_data_paths = [
         os.path.join(src_img_dir, f) for f in os.listdir(src_img_dir) if "mask" not in f
@@ -121,17 +141,49 @@ def _hdbet(src_img_dir, tgt_img_dir, need_skullstrip=True):
 
 
 def main():
+    parser = ArgumentParser()
+    parser.add_argument(
+        "--min_max_norm",
+        action="store_true",
+        help="If added, min-max normalize to [0, 1].",
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="If added, preprocess on test data. Else, train data.",
+    )
+    args = parser.parse_args()
+
+    if args.test:
+        print("Preprocessing test data.")
+        image_dir, label_dir = "imagesTs", "labelsTs"
+    else:
+        print("Preprocessing train data.")
+        image_dir, label_dir = "imagesTr", "labelsTr"
+
     all_failed = []
     base_dir = Path("/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base")
-    torchio_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_preprocessed"
-    )
-    reorient_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_preprocessed"
-    )
-    bet_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
-    )
+
+    if args.min_max_norm:
+        torchio_dir = Path(
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_preprocessed"
+        )
+        reorient_dir = Path(
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed"
+        )
+        bet_dir = Path(
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+        )
+    else:
+        torchio_dir = Path(
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_preprocessed"
+        )
+        reorient_dir = Path(
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_preprocessed"
+        )
+        bet_dir = Path(
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
+        )
     dataset_names = [
         "Dataset4999_IXIAllModalities",
         "Dataset5000_BraTS-GLI_2023",
@@ -152,9 +204,9 @@ def main():
         "Dataset5044_EPISURG",
         "Dataset5046_FeTA",
         "Dataset5066_WMH",
-        "Dataset5083_IXIT1",
-        "Dataset5084_IXIT2",
-        "Dataset5085_IXIPD",
+        # "Dataset5083_IXIT1",
+        # "Dataset5084_IXIT2",
+        # "Dataset5085_IXIPD",
         "Dataset5090_ISLES2022",
         "Dataset5095_MSSEG",
         "Dataset5096_MSSEG2",
@@ -166,30 +218,21 @@ def main():
         "Dataset6001_ADNI-group-T1-3T-PreProc",
         "Dataset6002_OASIS3",
     ]
-    need_skullstrip = [
-        "Dataset4999_IXIAllModalities",
-        "Dataset5010_ATLASR2",
-        "Dataset5043_BrainDevelopment",
-        "Dataset5044_EPISURG",
-        "Dataset5066_WMH",
-        "Dataset5083_IXIT1",
-        "Dataset5084_IXIT2",
-        "Dataset5085_IXIPD",
-        "Dataset5096_MSSEG2",
-        "NYU_METS",
-    ]
 
     for ds in dataset_names:
         # TorchIO
-        # Train
-        ds_src_img_dir = base_dir / ds / "imagesTr"
-        ds_src_seg_dir = base_dir / ds / "labelsTr"
-        ds_tgt_img_dir = torchio_dir / ds / "imagesTr"
-        ds_tgt_seg_dir = torchio_dir / ds / "labelsTr"
+        ds_src_img_dir = base_dir / ds / image_dir
+        ds_src_seg_dir = base_dir / ds / label_dir
+        ds_tgt_img_dir = torchio_dir / ds / image_dir
+        ds_tgt_seg_dir = torchio_dir / ds / label_dir
         if os.path.exists(ds_src_seg_dir):
             seg_available = True
         else:
             seg_available = False
+
+        # If image directory doesn't exist, skip
+        if not os.path.exists(ds_src_img_dir):
+            continue
 
         if not os.path.exists(ds_tgt_img_dir):
             os.makedirs(ds_tgt_img_dir)
@@ -201,15 +244,15 @@ def main():
             ds_tgt_img_dir,
             ds_tgt_seg_dir,
             seg_available=seg_available,
+            min_max_norm=args.min_max_norm,
         )
         all_failed += failed
 
         # fslreorient2std
-        # Train
-        ds_src_img_dir = torchio_dir / ds / "imagesTr"
-        ds_src_seg_dir = torchio_dir / ds / "labelsTr"
-        ds_tgt_img_dir = reorient_dir / ds / "imagesTr"
-        ds_tgt_seg_dir = reorient_dir / ds / "labelsTr"
+        ds_src_img_dir = torchio_dir / ds / image_dir
+        ds_src_seg_dir = torchio_dir / ds / label_dir
+        ds_tgt_img_dir = reorient_dir / ds / image_dir
+        ds_tgt_seg_dir = reorient_dir / ds / label_dir
 
         if not os.path.exists(ds_tgt_img_dir):
             os.makedirs(ds_tgt_img_dir)
@@ -236,10 +279,10 @@ def main():
             all_failed += failed
 
         # HD-BET
-        ds_src_img_dir = reorient_dir / ds / "imagesTr"
-        ds_src_seg_dir = reorient_dir / ds / "labelsTr"
-        ds_tgt_img_dir = bet_dir / ds / "imagesTr"
-        ds_tgt_seg_dir = bet_dir / ds / "labelsTr"
+        ds_src_img_dir = reorient_dir / ds / image_dir
+        ds_src_seg_dir = reorient_dir / ds / label_dir
+        ds_tgt_img_dir = bet_dir / ds / image_dir
+        ds_tgt_seg_dir = bet_dir / ds / label_dir
 
         if not os.path.exists(ds_tgt_img_dir):
             os.makedirs(ds_tgt_img_dir)
