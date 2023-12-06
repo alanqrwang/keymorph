@@ -73,12 +73,6 @@ class RigidKeypointAligner(MatrixKeypointAligner):
         p1 = p1.permute(0, 2, 1)
         p2 = p2.permute(0, 2, 1)
 
-        if w is not None:
-            # normalize weights
-            assert w.sum(-1).allclose(
-                torch.ones_like(w.sum(-1))
-            ), "Weights not normalized"
-
         # Calculate centroids
         if w is not None:
             # find weighed mean column wise
@@ -175,8 +169,9 @@ class AffineKeypointAligner(MatrixKeypointAligner):
 class TPS:
     """See https://github.com/cheind/py-thin-plate-spline/blob/master/thinplate/numpy.py"""
 
-    def __init__(self, dim):
+    def __init__(self, dim, num_subgrids=4):
         self.dim = dim
+        self.num_subgrids = num_subgrids
 
     def fit(self, c, lmbda, w=None):
         """Assumes last dimension of c contains target points.
@@ -318,29 +313,31 @@ class TPS:
 
         # b is NxHxWxd
         # z contains dot product of each affine term and polynomial terms.
-        z = torch.bmm(grid.view(N, -1, self.dim + 1), a)
+        z = torch.bmm(grid.reshape(N, -1, self.dim + 1), a)
         if len(grid.shape) == 4:
             z = z.view(N, H, W, self.dim) + b
         else:
             z = z.view(N, D, H, W, self.dim) + b
         return z
 
-    def tps_grid(self, theta, ctrl, size):
+    def tps_grid(self, theta, ctrl, size, compute_on_subgrids=False):
         """Compute a thin-plate-spline grid from parameters for sampling.
 
         Params
         ------
-        theta: Nx(T+3)x2 tensor
+        theta: Nx(T+3)xd tensor
           Batch size N, T+3 model parameters for T control points in dx and dy.
-        ctrl: NxTx2 tensor, or Tx2 tensor
+        ctrl: NxTxd tensor, or Txdim tensor
           T control points in normalized image coordinates [0..1]
         size: tuple
           Output grid size as NxCxHxW. C unused. This defines the output image
           size when sampling.
+        compute_on_subgrids: If true, compute the TPS grid on several subgrids
+            for memory efficiency. This is useful when the grid is large.
 
         Returns
         -------
-        grid : NxHxWx2 tensor
+        grid : NxHxWxd tensor
           Grid suitable for sampling in pytorch containing source image
           locations for each output pixel.
         """
@@ -353,7 +350,38 @@ class TPS:
             grid_shape = (N, D, H, W, self.dim + 1)
         grid = self.uniform_grid(grid_shape).to(device)
 
-        z = self.tps(theta, ctrl, grid)
+        if compute_on_subgrids:
+            output_shape = list(grid.shape)
+            output_shape[-1] -= 1
+            z = torch.zeros(output_shape).to(device)
+            size_x, size_y, size_z = grid.shape[1:-1]
+            assert size_x % self.num_subgrids == 0
+            assert size_y % self.num_subgrids == 0
+            assert size_z % self.num_subgrids == 0
+            subsize_x, subsize_y, subsize_z = (
+                size_x // self.num_subgrids,
+                size_y // self.num_subgrids,
+                size_z // self.num_subgrids,
+            )
+            for i in range(self.num_subgrids):
+                for j in range(self.num_subgrids):
+                    for k in range(self.num_subgrids):
+                        subgrid = grid[
+                            :,
+                            i * subsize_x : (i + 1) * subsize_x,
+                            j * subsize_y : (j + 1) * subsize_y,
+                            k * subsize_z : (k + 1) * subsize_z,
+                            :,
+                        ]
+                        z[
+                            :,
+                            i * subsize_x : (i + 1) * subsize_x,
+                            j * subsize_y : (j + 1) * subsize_y,
+                            k * subsize_z : (k + 1) * subsize_z,
+                            :,
+                        ] = self.tps(theta, ctrl, subgrid)
+        else:
+            z = self.tps(theta, ctrl, grid)
         return z
 
     def uniform_grid(self, shape):
@@ -387,12 +415,22 @@ class TPS:
             grid[..., 3] = torch.linspace(-1, 1, D).unsqueeze(-1).unsqueeze(-1)
         return grid
 
-    def grid_from_points(self, points_m, points_f, grid_shape, weights=None, **kwargs):
+    def grid_from_points(
+        self,
+        points_m,
+        points_f,
+        grid_shape,
+        weights=None,
+        compute_on_subgrids=False,
+        **kwargs,
+    ):
         lmbda = kwargs["lmbda"]
 
         # Note we flip the order of the points here
         theta = self.tps_theta_from_points(points_f, points_m, lmbda, weights=weights)
-        return self.tps_grid(theta, points_f, grid_shape)
+        return self.tps_grid(
+            theta, points_f, grid_shape, compute_on_subgrids=compute_on_subgrids
+        )
 
     def deform_points(self, theta, ctrl, points):
         weights, affine = theta[:, : -(self.dim + 1), :], theta[:, -(self.dim + 1) :, :]
