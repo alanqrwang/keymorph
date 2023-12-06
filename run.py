@@ -553,6 +553,11 @@ def main():
         assert args.batch_size == 1, ":("
         registration_model.eval()
 
+        if args.save_preds:
+            args.model_eval_dir = args.model_dir / "eval"
+            if not os.path.exists(args.model_eval_dir) and not args.debug_mode:
+                os.makedirs(args.model_eval_dir)
+
         list_of_test_metrics = [
             "mse:test",
             # "dice_total:test",
@@ -688,178 +693,198 @@ def main():
                                     weights=weights,
                                 )
 
-                            if args.debug_mode:
-                                weights_viz = weights.squeeze().detach().cpu().numpy()
-                                plt.bar(np.arange(len(weights_viz)), weights_viz)
-                                plt.show()
+                                img_a = align_img(grid, img_m)
+                                if seg_available:
+                                    seg_a = align_img(grid, seg_m)
 
-                            img_a = align_img(grid, img_m)
-                            if seg_available:
-                                seg_a = align_img(grid, seg_m)
-
-                            if args.visualize:
-                                if args.dim == 2:
-                                    show_warped(
-                                        img_m[0, 0].cpu().detach().numpy(),
-                                        img_f[0, 0].cpu().detach().numpy(),
-                                        img_a[0, 0].cpu().detach().numpy(),
-                                        points_m[0].cpu().detach().numpy(),
-                                        points_f[0].cpu().detach().numpy(),
-                                        points_a[0].cpu().detach().numpy(),
-                                        weights=weights[0].cpu().detach().numpy(),
-                                    )
-                                    if seg_available:
+                                if args.visualize:
+                                    if args.dim == 2:
                                         show_warped(
-                                            seg_m[0, 0].cpu().detach().numpy(),
-                                            seg_f[0, 0].cpu().detach().numpy(),
-                                            seg_a[0, 0].cpu().detach().numpy(),
+                                            img_m[0, 0].cpu().detach().numpy(),
+                                            img_f[0, 0].cpu().detach().numpy(),
+                                            img_a[0, 0].cpu().detach().numpy(),
                                             points_m[0].cpu().detach().numpy(),
                                             points_f[0].cpu().detach().numpy(),
                                             points_a[0].cpu().detach().numpy(),
                                             weights=weights[0].cpu().detach().numpy(),
                                         )
-                                else:
-                                    show_warped_vol(
-                                        img_m[0, 0].cpu().detach().numpy(),
-                                        img_f[0, 0].cpu().detach().numpy(),
-                                        img_a[0, 0].cpu().detach().numpy(),
-                                        points_m[0].cpu().detach().numpy(),
-                                        points_f[0].cpu().detach().numpy(),
-                                        points_a[0].cpu().detach().numpy(),
-                                        weights=weights[0].cpu().detach().numpy(),
-                                        save_path=None,
-                                    )
-                                    if seg_available:
+                                        if seg_available:
+                                            show_warped(
+                                                seg_m[0, 0].cpu().detach().numpy(),
+                                                seg_f[0, 0].cpu().detach().numpy(),
+                                                seg_a[0, 0].cpu().detach().numpy(),
+                                                points_m[0].cpu().detach().numpy(),
+                                                points_f[0].cpu().detach().numpy(),
+                                                points_a[0].cpu().detach().numpy(),
+                                                weights=weights[0]
+                                                .cpu()
+                                                .detach()
+                                                .numpy(),
+                                            )
+                                    else:
                                         show_warped_vol(
-                                            seg_m.argmax(1)[0].cpu().detach().numpy(),
-                                            seg_f.argmax(1)[0].cpu().detach().numpy(),
-                                            seg_a.argmax(1)[0].cpu().detach().numpy(),
+                                            img_m[0, 0].cpu().detach().numpy(),
+                                            img_f[0, 0].cpu().detach().numpy(),
+                                            img_a[0, 0].cpu().detach().numpy(),
                                             points_m[0].cpu().detach().numpy(),
                                             points_f[0].cpu().detach().numpy(),
                                             points_a[0].cpu().detach().numpy(),
                                             weights=weights[0].cpu().detach().numpy(),
                                             save_path=None,
                                         )
+                                        if seg_available:
+                                            show_warped_vol(
+                                                seg_m.argmax(1)[0]
+                                                .cpu()
+                                                .detach()
+                                                .numpy(),
+                                                seg_f.argmax(1)[0]
+                                                .cpu()
+                                                .detach()
+                                                .numpy(),
+                                                seg_a.argmax(1)[0]
+                                                .cpu()
+                                                .detach()
+                                                .numpy(),
+                                                points_m[0].cpu().detach().numpy(),
+                                                points_f[0].cpu().detach().numpy(),
+                                                points_a[0].cpu().detach().numpy(),
+                                                weights=weights[0]
+                                                .cpu()
+                                                .detach()
+                                                .numpy(),
+                                                save_path=None,
+                                            )
 
-                            # Compute metrics
-                            metrics = {}
-                            metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
-                            if seg_available:
-                                metrics["softdiceloss"] = loss_ops.DiceLoss()(
-                                    seg_a, seg_f
-                                )
-                                metrics["softdice"] = 1 - metrics["softdiceloss"]
-                                dice = loss_ops.DiceLoss(hard=True)(
-                                    seg_a, seg_f, ign_first_ch=True
-                                )
-                                dice_total = 1 - dice[0].item()
-                                dice_roi = (1 - dice[1].cpu().detach().numpy()).tolist()
-                                metrics["harddice"] = dice_total
-                                metrics["harddice_roi"] = dice_roi
-                                if args.dim == 3:  # TODO: Implement 2D metrics
-                                    metrics["hausd"] = loss_ops.hausdorff_distance(
+                                # Compute metrics
+                                metrics = {}
+                                metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
+                                if seg_available:
+                                    metrics["softdiceloss"] = loss_ops.DiceLoss()(
                                         seg_a, seg_f
                                     )
-                                    grid = grid.permute(0, 4, 1, 2, 3)
-                                    metrics["jdstd"] = loss_ops.jdstd(grid)
-                                    metrics["jdlessthan0"] = loss_ops.jdlessthan0(
-                                        grid, as_percentage=True
+                                    metrics["softdice"] = 1 - metrics["softdiceloss"]
+                                    dice = loss_ops.DiceLoss(hard=True)(
+                                        seg_a, seg_f, ign_first_ch=True
                                     )
+                                    dice_total = 1 - dice[0].item()
+                                    dice_roi = (
+                                        1 - dice[1].cpu().detach().numpy()
+                                    ).tolist()
+                                    metrics["harddice"] = dice_total
+                                    metrics["harddice_roi"] = dice_roi
+                                    if args.dim == 3:  # TODO: Implement 2D metrics
+                                        metrics["hausd"] = loss_ops.hausdorff_distance(
+                                            seg_a, seg_f
+                                        )
+                                        grid = grid.permute(0, 4, 1, 2, 3)
+                                        metrics["jdstd"] = loss_ops.jdstd(grid)
+                                        metrics["jdlessthan0"] = loss_ops.jdlessthan0(
+                                            grid, as_percentage=True
+                                        )
 
-                            for m in list_of_test_metrics:
-                                if m == "mse:test":
-                                    test_metrics[
-                                        f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
-                                    ].append(metrics["mse"])
-                                elif m == "dice_total:test":
-                                    test_metrics[
-                                        f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
-                                    ].append(dice_total)
-                                elif m == "dice_roi:test":
-                                    test_metrics[
-                                        f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
-                                    ].append(dice_roi)
+                                for m in list_of_test_metrics:
+                                    if m == "mse:test":
+                                        test_metrics[
+                                            f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                                        ].append(metrics["mse"])
+                                    elif m == "dice_total:test":
+                                        test_metrics[
+                                            f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                                        ].append(dice_total)
+                                    elif m == "dice_roi:test":
+                                        test_metrics[
+                                            f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                                        ].append(dice_roi)
 
-                            if args.save_preds and not args.debug_mode:
-                                assert args.batch_size == 1  # TODO: fix this
-                                img_f_path = (
-                                    args.model_dir / "data" / f"img_f_{i}-{mod1}.npy"
-                                )
-                                seg_f_path = (
-                                    args.model_dir / "data" / f"seg_f_{i}-{mod1}.npy"
-                                )
-                                points_f_path = (
-                                    args.model_dir / "data" / f"points_f_{i}-{mod1}.npy"
-                                )
-                                img_m_path = (
-                                    args.model_dir
-                                    / "data"
-                                    / f"img_m_{j}-{mod2}-{aug}.npy"
-                                )
-                                seg_m_path = (
-                                    args.model_dir
-                                    / "data"
-                                    / f"seg_m_{j}-{mod2}-{aug}.npy"
-                                )
-                                points_m_path = (
-                                    args.model_dir
-                                    / "data"
-                                    / f"points_m_{j}-{mod2}-{aug}.npy"
-                                )
-                                img_a_path = (
-                                    args.model_dir
-                                    / "data"
-                                    / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                                )
-                                seg_a_path = (
-                                    args.model_dir
-                                    / "data"
-                                    / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                                )
-                                points_a_path = (
-                                    args.model_dir
-                                    / "data"
-                                    / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                                )
-                                grid_path = (
-                                    args.model_dir
-                                    / "data"
-                                    / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                                )
-                                print(
-                                    "Saving:\n{}\n{}\n{}\n{}\n".format(
-                                        img_f_path, img_m_path, img_a_path, grid_path
+                                if args.save_preds and not args.debug_mode:
+                                    assert args.batch_size == 1  # TODO: fix this
+                                    img_f_path = (
+                                        args.model_eval_dir / f"img_f_{i}-{mod1}.npy"
                                     )
-                                )
-                                np.save(img_f_path, img_f[0].cpu().detach().numpy())
-                                np.save(img_m_path, img_m[0].cpu().detach().numpy())
-                                np.save(img_a_path, img_a[0].cpu().detach().numpy())
-                                np.save(
-                                    seg_f_path,
-                                    np.argmax(seg_f.cpu().detach().numpy(), axis=1),
-                                )
-                                np.save(
-                                    seg_m_path,
-                                    np.argmax(seg_m.cpu().detach().numpy(), axis=1),
-                                )
-                                np.save(
-                                    seg_a_path,
-                                    np.argmax(seg_a.cpu().detach().numpy(), axis=1),
-                                )
-                                np.save(
-                                    points_f_path, points_f[0].cpu().detach().numpy()
-                                )
-                                np.save(
-                                    points_m_path, points_m[0].cpu().detach().numpy()
-                                )
-                                np.save(
-                                    points_a_path, points_a[0].cpu().detach().numpy()
-                                )
-                                np.save(grid_path, grid[0].cpu().detach().numpy())
+                                    img_m_path = (
+                                        args.model_eval_dir
+                                        / f"img_m_{j}-{mod2}-{aug}.npy"
+                                    )
+                                    img_a_path = (
+                                        args.model_eval_dir
+                                        / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                                    )
+                                    points_f_path = (
+                                        args.model_eval_dir / f"points_f_{i}-{mod1}.npy"
+                                    )
+                                    points_m_path = (
+                                        args.model_eval_dir
+                                        / f"points_m_{j}-{mod2}-{aug}.npy"
+                                    )
+                                    points_a_path = (
+                                        args.model_eval_dir
+                                        / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                                    )
+                                    grid_path = (
+                                        args.model_eval_dir
+                                        / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                                    )
+                                    print(
+                                        "Saving:\n{}\n{}\n{}\n{}\n".format(
+                                            img_f_path,
+                                            img_m_path,
+                                            img_a_path,
+                                            grid_path,
+                                        )
+                                    )
+                                    np.save(img_f_path, img_f[0].cpu().detach().numpy())
+                                    np.save(img_m_path, img_m[0].cpu().detach().numpy())
+                                    np.save(img_a_path, img_a[0].cpu().detach().numpy())
+                                    np.save(
+                                        points_f_path,
+                                        points_f[0].cpu().detach().numpy(),
+                                    )
+                                    np.save(
+                                        points_m_path,
+                                        points_m[0].cpu().detach().numpy(),
+                                    )
+                                    np.save(
+                                        points_a_path,
+                                        points_a[0].cpu().detach().numpy(),
+                                    )
+                                    np.save(grid_path, grid[0].cpu().detach().numpy())
 
-                            for name, metric in metrics.items():
-                                if not isinstance(metric, list):
-                                    print(f"[Eval Stat] {name}: {metric:.5f}")
+                                    if seg_available:
+                                        seg_f_path = (
+                                            args.model_eval_dir
+                                            / f"seg_f_{i}-{mod1}.npy"
+                                        )
+                                        seg_m_path = (
+                                            args.model_eval_dir
+                                            / f"seg_m_{j}-{mod2}-{aug}.npy"
+                                        )
+                                        seg_a_path = (
+                                            args.model_eval_dir
+                                            / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                                        )
+                                        np.save(
+                                            seg_f_path,
+                                            np.argmax(
+                                                seg_f.cpu().detach().numpy(), axis=1
+                                            ),
+                                        )
+                                        np.save(
+                                            seg_m_path,
+                                            np.argmax(
+                                                seg_m.cpu().detach().numpy(), axis=1
+                                            ),
+                                        )
+                                        np.save(
+                                            seg_a_path,
+                                            np.argmax(
+                                                seg_a.cpu().detach().numpy(), axis=1
+                                            ),
+                                        )
+
+                                for name, metric in metrics.items():
+                                    if not isinstance(metric, list):
+                                        print(f"[Eval Stat] {name}: {metric:.5f}")
                             if not args.debug_mode:
                                 save_summary_json(
                                     test_metrics, args.model_result_dir / "summary.json"
