@@ -29,6 +29,7 @@ from keymorph.augmentation import (
     random_affine_augment_pair,
 )
 from keymorph.cm_plotter import show_warped, show_warped_vol
+from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
 
 
 def parse_args():
@@ -92,14 +93,6 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--kp_align_method",
-        type=str,
-        default="affine",
-        choices=["rigid", "affine", "tps"],
-        help="Keypoint alignment module to use",
-    )
-
-    parser.add_argument(
         "--tps_lmbda", type=str_or_float, default=None, help="TPS lambda value"
     )
 
@@ -125,10 +118,6 @@ def parse_args():
         "--mix_modalities",
         action="store_true",
         help="Whether or not to mix modalities amongst image pairs",
-    )
-
-    parser.add_argument(
-        "--num_test_subjects", type=int, default=100, help="Number of test subjects"
     )
 
     parser.add_argument("--num_workers", type=int, default=1, help="Num workers")
@@ -179,6 +168,13 @@ def parse_args():
 
     parser.add_argument("--use_amp", action="store_true", help="Use AMP")
 
+    parser.add_argument(
+        "--early_stop_eval_subjects",
+        type=int,
+        default=None,
+        help="Early stop number of test subjects for fast eval",
+    )
+
     # Weights & Biases
     parser.add_argument("--use_wandb", action="store_true", help="Use Wandb")
 
@@ -200,25 +196,16 @@ def parse_args():
     return args
 
 
-def _get_tps_lmbda(num_samples, args, is_train=True):
-    if not is_train and args.tps_lmbda in ["uniform", "lognormal", "loguniform"]:
-        choices = [0, 0.01, 0.1, 1.0, 10]
-        lmbda = torch.tensor(np.random.choice(choices, size=num_samples)).to(
-            args.device
-        )
-
-    if args.tps_lmbda is None:
-        assert args.kp_align_method != "tps", "Need to implement this"
-        lmbda = None
-    elif args.tps_lmbda == "uniform":
-        lmbda = torch.rand(num_samples).to(args.device) * 10
-    elif args.tps_lmbda == "lognormal":
-        lmbda = torch.tensor(np.random.lognormal(size=num_samples)).to(args.device)
-    elif args.tps_lmbda == "loguniform":
+def _get_tps_lmbda(num_samples, tps_lmbda):
+    if tps_lmbda == "uniform":
+        lmbda = torch.rand(num_samples) * 10
+    elif tps_lmbda == "lognormal":
+        lmbda = torch.tensor(np.random.lognormal(size=num_samples))
+    elif tps_lmbda == "loguniform":
         a, b = 1e-6, 10
-        lmbda = torch.tensor(loguniform.rvs(a, b, size=num_samples)).to(args.device)
+        lmbda = torch.tensor(loguniform.rvs(a, b, size=num_samples))
     else:
-        lmbda = torch.tensor(args.tps_lmbda).repeat(num_samples).to(args.device)
+        lmbda = torch.tensor(tps_lmbda).repeat(num_samples)
     return lmbda
 
 
@@ -303,7 +290,7 @@ def run_train(train_loader, registration_model, optimizer, args):
                 img_m, max_random_params=max_random_params, scale_params=scale_augment
             )
 
-        lmbda = _get_tps_lmbda(len(img_f), args, is_train=True)
+        lmbda = _get_tps_lmbda(len(img_f), args.tps_lmbda)
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
             (
@@ -462,8 +449,12 @@ def main():
     pprint(vars(args))
 
     # Path to save outputs
+    if args.eval:
+        prefix = "__eval__"
+    else:
+        prefix = "__training__"
     arguments = (
-        "__training__"
+        prefix
         + args.job_name
         + "_keypoints"
         + str(args.num_keypoints)
@@ -477,6 +468,7 @@ def main():
 
     args.model_dir = Path(args.save_dir) / arguments
     if not os.path.exists(args.model_dir) and not args.debug_mode:
+        print("Creating directory: {}".format(args.model_dir))
         os.makedirs(args.model_dir)
     args.model_ckpt_dir = args.model_dir / "checkpoints"
     if not os.path.exists(args.model_ckpt_dir) and not args.debug_mode:
@@ -568,13 +560,12 @@ def main():
         ]
         if args.dataset == "ixi":
             list_of_test_mods = [
-                "T1_T1",
-                "T2_T2",
-                "PD_PD",
-                #
-                "T1_T2",
-                "T1_PD",
-                "T2_PD",
+                ("T1", "T1"),
+                ("T2", "T2"),
+                ("PD", "PD"),
+                ("T1", "T2"),
+                ("T1", "PD"),
+                ("T2", "PD"),
             ]
         elif args.dataset == "gigamed":
             list_of_test_mods = [
@@ -589,11 +580,19 @@ def main():
             "rot135",
             "rot180",
         ]
+
+        list_of_test_kp_aligns = [
+            "rigid",
+            "affine",
+            "tps_0",
+        ]
         list_of_all_test = []
         for s1 in list_of_test_metrics:
             for s2 in list_of_test_mods:
+                mod1, mod2 = s2
                 for s3 in list_of_test_augs:
-                    list_of_all_test.append("{}:{}:{}".format(s1, s2, s3))
+                    for s4 in list_of_test_kp_aligns:
+                        list_of_all_test.append(f"{s1}:{mod1}:{mod2}:{s3}:{s4}")
         test_metrics = {}
         test_metrics.update({key: [] for key in list_of_all_test})
 
@@ -601,7 +600,17 @@ def main():
             for mod in list_of_test_mods:
                 mod1, mod2, param = utils.parse_test_metric(mod, aug)
                 for i, fixed in enumerate(test_loaders[mod1]):
+                    if (
+                        args.early_stop_eval_subjects
+                        and i > args.early_stop_eval_subjects
+                    ):
+                        break
                     for j, moving in enumerate(test_loaders[mod2]):
+                        if (
+                            args.early_stop_eval_subjects
+                            and j > args.early_stop_eval_subjects
+                        ):
+                            break
                         print(
                             f"Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}"
                         )
@@ -630,196 +639,231 @@ def main():
                             img_m, seg_m = affine_augment(img_m, param, seg=seg_m)
                         else:
                             img_m = affine_augment(img_m, param)
-                        lmbda = _get_tps_lmbda(len(img_f), args, is_train=False)
 
                         with torch.set_grad_enabled(False):
-                            (
-                                grid,
-                                points_f,
-                                points_m,
-                                points_a,
-                                weights,
-                            ) = registration_model(
-                                img_f,
-                                img_m,
-                                lmbda,
-                                return_aligned_points=True,
-                                return_weights=True,
-                            )
+                            feat_f = registration_model.backbone(img_f)
+                            feat_m = registration_model.backbone(img_m)
+                            points_f = registration_model.keypoint_extractor(feat_f)
+                            points_m = registration_model.keypoint_extractor(feat_m)
 
-                        if args.debug_mode:
-                            weights_viz = weights.squeeze().detach().cpu().numpy()
-                            plt.bar(np.arange(len(weights_viz)), weights_viz)
-                            plt.show()
-
-                        img_a = align_img(grid, img_m)
-                        if seg_available:
-                            seg_a = align_img(grid, seg_m)
-
-                        if args.visualize:
-                            if args.dim == 2:
-                                show_warped(
-                                    img_m[0, 0].cpu().detach().numpy(),
-                                    img_f[0, 0].cpu().detach().numpy(),
-                                    img_a[0, 0].cpu().detach().numpy(),
-                                    points_m[0].cpu().detach().numpy(),
-                                    points_f[0].cpu().detach().numpy(),
-                                    points_a[0].cpu().detach().numpy(),
-                                    weights=weights[0].cpu().detach().numpy(),
+                            if args.weighted_kp_align == "variance":
+                                weights = registration_model.weight_by_variance(
+                                    feat_f, feat_m
                                 )
-                                if seg_available:
-                                    show_warped(
-                                        seg_m[0, 0].cpu().detach().numpy(),
-                                        seg_f[0, 0].cpu().detach().numpy(),
-                                        seg_a[0, 0].cpu().detach().numpy(),
-                                        points_m[0].cpu().detach().numpy(),
-                                        points_f[0].cpu().detach().numpy(),
-                                        points_a[0].cpu().detach().numpy(),
-                                        weights=weights[0].cpu().detach().numpy(),
-                                    )
+                            elif args.weighted_kp_align == "power":
+                                weights = registration_model.weight_by_power(
+                                    feat_f, feat_m
+                                )
                             else:
-                                show_warped_vol(
-                                    img_m[0, 0].cpu().detach().numpy(),
-                                    img_f[0, 0].cpu().detach().numpy(),
-                                    img_a[0, 0].cpu().detach().numpy(),
-                                    points_m[0].cpu().detach().numpy(),
-                                    points_f[0].cpu().detach().numpy(),
-                                    points_a[0].cpu().detach().numpy(),
-                                    weights=weights[0].cpu().detach().numpy(),
-                                    save_path=None
-                                    if args.debug_mode
-                                    else os.path.join(
-                                        args.model_img_dir, f"img_{args.curr_epoch}.png"
-                                    ),
+                                weights = None
+
+                            for _, align_type_str in enumerate(list_of_test_kp_aligns):
+                                # Align via keypoints
+                                if align_type_str == "rigid":
+                                    keypoint_aligner = RigidKeypointAligner(args.dim)
+                                    lmbda = None
+                                elif align_type_str == "affine":
+                                    keypoint_aligner = AffineKeypointAligner(args.dim)
+                                    lmbda = None
+                                elif "tps" in align_type_str:
+                                    _, tps_lmbda = align_type_str.split("_")
+                                    keypoint_aligner = TPS(args.dim)
+                                    lmbda = _get_tps_lmbda(
+                                        len(img_f), float(tps_lmbda)
+                                    ).to(args.device)
+
+                                grid = keypoint_aligner.grid_from_points(
+                                    points_m,
+                                    points_f,
+                                    img_f.shape,
+                                    lmbda=lmbda,
+                                    weights=weights,
+                                    compute_on_subgrids=True,
                                 )
-                                if seg_available:
-                                    show_warped_vol(
-                                        seg_m.argmax(1)[0].cpu().detach().numpy(),
-                                        seg_f.argmax(1)[0].cpu().detach().numpy(),
-                                        seg_a.argmax(1)[0].cpu().detach().numpy(),
+                                points_a = keypoint_aligner.points_from_points(
+                                    points_m,
+                                    points_f,
+                                    points_m,
+                                    lmbda=lmbda,
+                                    weights=weights,
+                                )
+
+                            if args.debug_mode:
+                                weights_viz = weights.squeeze().detach().cpu().numpy()
+                                plt.bar(np.arange(len(weights_viz)), weights_viz)
+                                plt.show()
+
+                            img_a = align_img(grid, img_m)
+                            if seg_available:
+                                seg_a = align_img(grid, seg_m)
+
+                            if args.visualize:
+                                if args.dim == 2:
+                                    show_warped(
+                                        img_m[0, 0].cpu().detach().numpy(),
+                                        img_f[0, 0].cpu().detach().numpy(),
+                                        img_a[0, 0].cpu().detach().numpy(),
                                         points_m[0].cpu().detach().numpy(),
                                         points_f[0].cpu().detach().numpy(),
                                         points_a[0].cpu().detach().numpy(),
                                         weights=weights[0].cpu().detach().numpy(),
-                                        save_path=None
-                                        if args.debug_mode
-                                        else os.path.join(
-                                            args.model_img_dir,
-                                            f"seg_{args.curr_epoch}.png",
-                                        ),
                                     )
+                                    if seg_available:
+                                        show_warped(
+                                            seg_m[0, 0].cpu().detach().numpy(),
+                                            seg_f[0, 0].cpu().detach().numpy(),
+                                            seg_a[0, 0].cpu().detach().numpy(),
+                                            points_m[0].cpu().detach().numpy(),
+                                            points_f[0].cpu().detach().numpy(),
+                                            points_a[0].cpu().detach().numpy(),
+                                            weights=weights[0].cpu().detach().numpy(),
+                                        )
+                                else:
+                                    show_warped_vol(
+                                        img_m[0, 0].cpu().detach().numpy(),
+                                        img_f[0, 0].cpu().detach().numpy(),
+                                        img_a[0, 0].cpu().detach().numpy(),
+                                        points_m[0].cpu().detach().numpy(),
+                                        points_f[0].cpu().detach().numpy(),
+                                        points_a[0].cpu().detach().numpy(),
+                                        weights=weights[0].cpu().detach().numpy(),
+                                        save_path=None,
+                                    )
+                                    if seg_available:
+                                        show_warped_vol(
+                                            seg_m.argmax(1)[0].cpu().detach().numpy(),
+                                            seg_f.argmax(1)[0].cpu().detach().numpy(),
+                                            seg_a.argmax(1)[0].cpu().detach().numpy(),
+                                            points_m[0].cpu().detach().numpy(),
+                                            points_f[0].cpu().detach().numpy(),
+                                            points_a[0].cpu().detach().numpy(),
+                                            weights=weights[0].cpu().detach().numpy(),
+                                            save_path=None,
+                                        )
 
-                        # Compute metrics
-                        metrics = {}
-                        metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
-                        if seg_available:
-                            metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
-                            metrics["softdice"] = 1 - metrics["softdiceloss"]
-                            dice = loss_ops.DiceLoss(hard=True)(
-                                seg_a, seg_f, ign_first_ch=True
-                            )
-                            dice_total = 1 - dice[0].item()
-                            dice_roi = (1 - dice[1].cpu().detach().numpy()).tolist()
-                            metrics["harddice"] = dice_total
-                            metrics["harddice_roi"] = dice_roi
-                            if args.dim == 3:  # TODO: Implement 2D metrics
-                                metrics["hausd"] = loss_ops.hausdorff_distance(
+                            # Compute metrics
+                            metrics = {}
+                            metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
+                            if seg_available:
+                                metrics["softdiceloss"] = loss_ops.DiceLoss()(
                                     seg_a, seg_f
                                 )
-                                grid = grid.permute(0, 4, 1, 2, 3)
-                                metrics["jdstd"] = loss_ops.jdstd(grid)
-                                metrics["jdlessthan0"] = loss_ops.jdlessthan0(
-                                    grid, as_percentage=True
+                                metrics["softdice"] = 1 - metrics["softdiceloss"]
+                                dice = loss_ops.DiceLoss(hard=True)(
+                                    seg_a, seg_f, ign_first_ch=True
                                 )
+                                dice_total = 1 - dice[0].item()
+                                dice_roi = (1 - dice[1].cpu().detach().numpy()).tolist()
+                                metrics["harddice"] = dice_total
+                                metrics["harddice_roi"] = dice_roi
+                                if args.dim == 3:  # TODO: Implement 2D metrics
+                                    metrics["hausd"] = loss_ops.hausdorff_distance(
+                                        seg_a, seg_f
+                                    )
+                                    grid = grid.permute(0, 4, 1, 2, 3)
+                                    metrics["jdstd"] = loss_ops.jdstd(grid)
+                                    metrics["jdlessthan0"] = loss_ops.jdlessthan0(
+                                        grid, as_percentage=True
+                                    )
 
-                        for m in list_of_test_metrics:
-                            if m == "mse:test":
-                                test_metrics["{}:{}:{}".format(m, mod, aug)].append(
-                                    metrics["mse"]
-                                )
-                            elif m == "dice_total:test":
-                                test_metrics["{}:{}:{}".format(m, mod, aug)].append(
-                                    dice_total
-                                )
-                            elif m == "dice_roi:test":
-                                test_metrics["{}:{}:{}".format(m, mod, aug)].append(
-                                    dice_roi
-                                )
+                            for m in list_of_test_metrics:
+                                if m == "mse:test":
+                                    test_metrics[
+                                        f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                                    ].append(metrics["mse"])
+                                elif m == "dice_total:test":
+                                    test_metrics[
+                                        f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                                    ].append(dice_total)
+                                elif m == "dice_roi:test":
+                                    test_metrics[
+                                        f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                                    ].append(dice_roi)
 
-                        if args.save_preds and not args.debug_mode:
-                            assert args.batch_size == 1  # TODO: fix this
-                            img_f_path = (
-                                args.model_dir / "data" / f"img_f_{i}-{mod1}.npy"
-                            )
-                            seg_f_path = (
-                                args.model_dir / "data" / f"seg_f_{i}-{mod1}.npy"
-                            )
-                            points_f_path = (
-                                args.model_dir / "data" / f"points_f_{i}-{mod1}.npy"
-                            )
-                            img_m_path = (
-                                args.model_dir / "data" / f"img_m_{j}-{mod2}-{aug}.npy"
-                            )
-                            seg_m_path = (
-                                args.model_dir / "data" / f"seg_m_{j}-{mod2}-{aug}.npy"
-                            )
-                            points_m_path = (
-                                args.model_dir
-                                / "data"
-                                / f"points_m_{j}-{mod2}-{aug}.npy"
-                            )
-                            img_a_path = (
-                                args.model_dir
-                                / "data"
-                                / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                            )
-                            seg_a_path = (
-                                args.model_dir
-                                / "data"
-                                / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                            )
-                            points_a_path = (
-                                args.model_dir
-                                / "data"
-                                / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                            )
-                            grid_path = (
-                                args.model_dir
-                                / "data"
-                                / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
-                            )
-                            print(
-                                "Saving:\n{}\n{}\n{}\n{}\n".format(
-                                    img_f_path, img_m_path, img_a_path, grid_path
+                            if args.save_preds and not args.debug_mode:
+                                assert args.batch_size == 1  # TODO: fix this
+                                img_f_path = (
+                                    args.model_dir / "data" / f"img_f_{i}-{mod1}.npy"
                                 )
-                            )
-                            np.save(img_f_path, img_f[0].cpu().detach().numpy())
-                            np.save(img_m_path, img_m[0].cpu().detach().numpy())
-                            np.save(img_a_path, img_a[0].cpu().detach().numpy())
-                            np.save(
-                                seg_f_path,
-                                np.argmax(seg_f.cpu().detach().numpy(), axis=1),
-                            )
-                            np.save(
-                                seg_m_path,
-                                np.argmax(seg_m.cpu().detach().numpy(), axis=1),
-                            )
-                            np.save(
-                                seg_a_path,
-                                np.argmax(seg_a.cpu().detach().numpy(), axis=1),
-                            )
-                            np.save(points_f_path, points_f[0].cpu().detach().numpy())
-                            np.save(points_m_path, points_m[0].cpu().detach().numpy())
-                            np.save(points_a_path, points_a[0].cpu().detach().numpy())
-                            np.save(grid_path, grid[0].cpu().detach().numpy())
+                                seg_f_path = (
+                                    args.model_dir / "data" / f"seg_f_{i}-{mod1}.npy"
+                                )
+                                points_f_path = (
+                                    args.model_dir / "data" / f"points_f_{i}-{mod1}.npy"
+                                )
+                                img_m_path = (
+                                    args.model_dir
+                                    / "data"
+                                    / f"img_m_{j}-{mod2}-{aug}.npy"
+                                )
+                                seg_m_path = (
+                                    args.model_dir
+                                    / "data"
+                                    / f"seg_m_{j}-{mod2}-{aug}.npy"
+                                )
+                                points_m_path = (
+                                    args.model_dir
+                                    / "data"
+                                    / f"points_m_{j}-{mod2}-{aug}.npy"
+                                )
+                                img_a_path = (
+                                    args.model_dir
+                                    / "data"
+                                    / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
+                                )
+                                seg_a_path = (
+                                    args.model_dir
+                                    / "data"
+                                    / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
+                                )
+                                points_a_path = (
+                                    args.model_dir
+                                    / "data"
+                                    / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
+                                )
+                                grid_path = (
+                                    args.model_dir
+                                    / "data"
+                                    / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}.npy"
+                                )
+                                print(
+                                    "Saving:\n{}\n{}\n{}\n{}\n".format(
+                                        img_f_path, img_m_path, img_a_path, grid_path
+                                    )
+                                )
+                                np.save(img_f_path, img_f[0].cpu().detach().numpy())
+                                np.save(img_m_path, img_m[0].cpu().detach().numpy())
+                                np.save(img_a_path, img_a[0].cpu().detach().numpy())
+                                np.save(
+                                    seg_f_path,
+                                    np.argmax(seg_f.cpu().detach().numpy(), axis=1),
+                                )
+                                np.save(
+                                    seg_m_path,
+                                    np.argmax(seg_m.cpu().detach().numpy(), axis=1),
+                                )
+                                np.save(
+                                    seg_a_path,
+                                    np.argmax(seg_a.cpu().detach().numpy(), axis=1),
+                                )
+                                np.save(
+                                    points_f_path, points_f[0].cpu().detach().numpy()
+                                )
+                                np.save(
+                                    points_m_path, points_m[0].cpu().detach().numpy()
+                                )
+                                np.save(
+                                    points_a_path, points_a[0].cpu().detach().numpy()
+                                )
+                                np.save(grid_path, grid[0].cpu().detach().numpy())
 
-                        for name, metric in metrics.items():
-                            if not isinstance(metric, list):
-                                print(f"[Eval Stat] {name}: {metric:.5f}")
-                        if not args.debug_mode:
-                            save_summary_json(
-                                test_metrics, args.model_result_dir / "summary.json"
-                            )
+                            for name, metric in metrics.items():
+                                if not isinstance(metric, list):
+                                    print(f"[Eval Stat] {name}: {metric:.5f}")
+                            if not args.debug_mode:
+                                save_summary_json(
+                                    test_metrics, args.model_result_dir / "summary.json"
+                                )
 
     else:
         registration_model.train()
@@ -854,7 +898,7 @@ def main():
             state = {
                 "epoch": epoch,
                 "args": args,
-                "state_dict": registration_model.keypoint_extractor.state_dict(),
+                "state_dict": registration_model.backbone.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
 

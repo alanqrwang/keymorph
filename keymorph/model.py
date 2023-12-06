@@ -93,6 +93,10 @@ class KeyMorph(nn.Module):
         # Return normalized weights
         return weights / weights.sum(dim=1)
 
+    def get_keypoints(self, img):
+        """Convenience method to get keypoints from an image"""
+        return self.keypoint_extractor(self.backbone(img))
+
     def forward(
         self,
         img_f,
