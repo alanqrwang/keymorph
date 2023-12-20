@@ -9,12 +9,20 @@ from argparse import ArgumentParser
 from pathlib import Path
 import wandb
 
-from keymorph.net import ConvNetFC, ConvNetCoM, UNetCoM
+from keymorph.net import ConvNet, UNet, RXFM_Net
 from keymorph.cm_plotter import show_warped, show_warped_vol
 from keymorph.data import ixi, gigamed
 from keymorph import utils
 from keymorph.utils import ParseKwargs, initialize_wandb
 from keymorph.augmentation import random_affine_augment
+from keymorph.layers import (
+    LinearRegressor2d,
+    LinearRegressor3d,
+    CenterOfMass2d,
+    CenterOfMass3d,
+)
+
+from keymorph.se3_3Dcnn import SE3CNN
 
 
 def parse_args():
@@ -67,11 +75,18 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--kp_extractor",
+        "--backbone",
         type=str,
         default="conv_com",
-        choices=["conv_fc", "conv_com", "unet_com"],
+        choices=["conv", "unet", "se3cnn", "se3cnn2"],
         help="Keypoint extractor module to use",
+    )
+    parser.add_argument(
+        "--kp_layer",
+        type=str,
+        default="com",
+        choices=["com", "linear"],
+        help="Keypoint layer module to use",
     )
 
     # Data
@@ -110,7 +125,7 @@ def parse_args():
     parser.add_argument(
         "--affine_slope",
         type=int,
-        default=100,
+        default=1,
         help="Constant to control how slow to increase augmentation",
     )
 
@@ -146,7 +161,7 @@ def parse_args():
     return args
 
 
-def run_train(loader, random_points, network, optimizer, args):
+def run_train(loader, random_points, network, keypoint_extractor, optimizer, args):
     start_time = time.time()
 
     if args.use_amp:
@@ -167,7 +182,7 @@ def run_train(loader, random_points, network, optimizer, args):
         if args.affine_slope >= 0:
             scale_augment = np.clip(args.curr_epoch / args.affine_slope, None, 1)
         else:
-            scale_augment = None
+            scale_augment = 1
         x_moving, tgt_points = random_affine_augment(
             x_fixed, points=random_points, scale_params=scale_augment
         )
@@ -177,7 +192,8 @@ def run_train(loader, random_points, network, optimizer, args):
             with torch.amp.autocast(
                 device_type="cuda", enabled=args.use_amp, dtype=torch.float16
             ):
-                pred_points = network(x_moving)
+                pred_feats = network(x_moving)
+                pred_points = keypoint_extractor(pred_feats)
                 pred_points = pred_points.view(-1, args.num_keypoints, args.dim)
 
                 loss = F.mse_loss(tgt_points, pred_points)
@@ -307,25 +323,42 @@ def main():
     del ref_subject
 
     # CNN, i.e. keypoint extractor
-    if args.kp_extractor == "conv_fc":
-        network = ConvNetFC(
-            args.dim, 1, args.num_keypoints * args.dim, norm_type=args.norm_type
+    if args.backbone == "conv":
+        network = ConvNet(
+            args.dim,
+            1,
+            args.num_keypoints,
+            norm_type=args.norm_type,
         )
-        network = torch.nn.DataParallel(network)
-    elif args.kp_extractor == "conv_com":
-        network = ConvNetCoM(args.dim, 1, args.num_keypoints, norm_type=args.norm_type)
-    elif args.kp_extractor == "unet_com":
-        network = UNetCoM(
+    elif args.backbone == "unet":
+        network = UNet(
             args.dim,
             1,
             args.num_keypoints,
         )
+    elif args.backbone == "se3cnn":
+        network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
+    elif args.backbone == "se3cnn2":
+        network = SE3CNN()
+    else:
+        raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
     network = torch.nn.DataParallel(network)
     network.to(args.device)
     if args.load_path:
         state_dict = torch.load(args.load_path)["state_dict"]
         network.load_state_dict(state_dict)
     utils.summary(network)
+
+    if args.kp_layer == "com":
+        if args.dim == 2:
+            keypoint_layer = CenterOfMass2d()
+        else:
+            keypoint_layer = CenterOfMass3d()
+    else:
+        if args.dim == 2:
+            keypoint_layer = LinearRegressor2d()
+        else:
+            keypoint_layer = LinearRegressor3d()
 
     # Optimizer
     params = list(network.parameters())
@@ -354,6 +387,7 @@ def main():
             train_loader,
             random_points,
             network,
+            keypoint_layer,
             optimizer,
             args,
         )
