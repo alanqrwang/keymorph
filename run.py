@@ -12,7 +12,7 @@ from scipy.stats import loguniform
 import matplotlib.pyplot as plt
 
 from keymorph import loss_ops
-from keymorph.net import ConvNet, UNet
+from keymorph.net import ConvNet, UNet, RXFM_Net
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import (
@@ -30,6 +30,8 @@ from keymorph.augmentation import (
 )
 from keymorph.cm_plotter import show_warped, show_warped_vol
 from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
+
+from keymorph.se3_3Dcnn import SE3CNN
 
 
 def parse_args():
@@ -85,11 +87,19 @@ def parse_args():
         help="Number of keypoints to subsample TPS, to save memory",
     )
     parser.add_argument(
-        "--kp_extractor",
+        "--backbone",
         type=str,
         default="conv_com",
-        choices=["conv", "unet"],
+        choices=["conv", "unet", "se3cnn", "se3cnn2"],
         help="Keypoint extractor module to use",
+    )
+
+    parser.add_argument(
+        "--kp_layer",
+        type=str,
+        default="com",
+        choices=["com", "linear"],
+        help="Keypoint layer module to use",
     )
 
     parser.add_argument(
@@ -109,6 +119,19 @@ def parse_args():
         default=None,
         choices=["variance", "power"],
         help="Type of weighting to use for keypoints",
+    )
+
+    parser.add_argument(
+        "--compute_subgrids_for_tps",
+        action="store_true",
+        help="Use subgrids for computing TPS",
+    )
+
+    parser.add_argument(
+        "--num_subgrids",
+        type=int,
+        default=4,
+        help="Number of subgrids for computing TPS",
     )
 
     # Data
@@ -153,7 +176,7 @@ def parse_args():
     parser.add_argument(
         "--affine_slope",
         type=int,
-        default=-1,
+        default=1,
         help="Constant to control how slow to increase augmentation. If negative, disabled.",
     )
 
@@ -290,7 +313,7 @@ def run_train(train_loader, registration_model, optimizer, args):
                 img_m, max_random_params=max_random_params, scale_params=scale_augment
             )
 
-        lmbda = _get_tps_lmbda(len(img_f), args.tps_lmbda)
+        lmbda = _get_tps_lmbda(len(img_f), args.tps_lmbda).to(args.device)
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
             (
@@ -440,6 +463,251 @@ def run_train(train_loader, registration_model, optimizer, args):
     return utils.aggregate_dicts(res)
 
 
+def run_eval(
+    loaders,
+    registration_model,
+    mod1,
+    mod2,
+    param,
+    aug,
+    test_metrics,
+    list_of_test_metrics,
+    list_of_test_kp_aligns,
+    args,
+):
+    for i, fixed in enumerate(loaders[mod1]):
+        if args.early_stop_eval_subjects and i > args.early_stop_eval_subjects:
+            break
+        for j, moving in enumerate(loaders[mod2]):
+            if args.early_stop_eval_subjects and j > args.early_stop_eval_subjects:
+                break
+            print(f"Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}")
+            img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
+            if "seg" in fixed and "seg" in moving:
+                seg_available = True
+                seg_f, seg_m = (
+                    fixed["seg"][tio.DATA],
+                    moving["seg"][tio.DATA],
+                )
+            else:
+                seg_available = False
+                assert not any(
+                    "dice" in m for m in list_of_test_metrics
+                ), "Can't compute Dice if no segmentations available"
+
+            # Move to device
+            img_f = img_f.float().to(args.device)
+            img_m = img_m.float().to(args.device)
+            if seg_available:
+                seg_f = seg_f.float().to(args.device)
+                seg_m = seg_m.float().to(args.device)
+
+            # Explicitly augment moving image
+            if seg_available:
+                img_m, seg_m = affine_augment(img_m, param, seg=seg_m)
+            else:
+                img_m = affine_augment(img_m, param)
+
+            with torch.set_grad_enabled(False):
+                feat_f = registration_model.backbone(img_f)
+                feat_m = registration_model.backbone(img_m)
+                points_f = registration_model.keypoint_layer(feat_f)
+                points_m = registration_model.keypoint_layer(feat_m)
+
+                if args.weighted_kp_align == "variance":
+                    weights = registration_model.weight_by_variance(feat_f, feat_m)
+                elif args.weighted_kp_align == "power":
+                    weights = registration_model.weight_by_power(feat_f, feat_m)
+                else:
+                    weights = None
+
+                for _, align_type_str in enumerate(list_of_test_kp_aligns):
+                    # Align via keypoints
+                    if align_type_str == "rigid":
+                        keypoint_aligner = RigidKeypointAligner(args.dim)
+                        lmbda = None
+                    elif align_type_str == "affine":
+                        keypoint_aligner = AffineKeypointAligner(args.dim)
+                        lmbda = None
+                    elif "tps" in align_type_str:
+                        _, tps_lmbda = align_type_str.split("_")
+                        keypoint_aligner = TPS(args.dim, num_subgrids=args.num_subgrids)
+                        lmbda = _get_tps_lmbda(len(img_f), float(tps_lmbda)).to(
+                            args.device
+                        )
+
+                    grid = keypoint_aligner.grid_from_points(
+                        points_m,
+                        points_f,
+                        img_f.shape,
+                        lmbda=lmbda,
+                        weights=weights,
+                        compute_on_subgrids=True,
+                    )
+                    points_a = keypoint_aligner.points_from_points(
+                        points_m,
+                        points_f,
+                        points_m,
+                        lmbda=lmbda,
+                        weights=weights,
+                    )
+
+                    img_a = align_img(grid, img_m)
+                    if seg_available:
+                        seg_a = align_img(grid, seg_m)
+
+                    if args.visualize:
+                        if args.dim == 2:
+                            show_warped(
+                                img_m[0, 0].cpu().detach().numpy(),
+                                img_f[0, 0].cpu().detach().numpy(),
+                                img_a[0, 0].cpu().detach().numpy(),
+                                points_m[0].cpu().detach().numpy(),
+                                points_f[0].cpu().detach().numpy(),
+                                points_a[0].cpu().detach().numpy(),
+                                weights=weights[0].cpu().detach().numpy(),
+                            )
+                            if seg_available:
+                                show_warped(
+                                    seg_m[0, 0].cpu().detach().numpy(),
+                                    seg_f[0, 0].cpu().detach().numpy(),
+                                    seg_a[0, 0].cpu().detach().numpy(),
+                                    points_m[0].cpu().detach().numpy(),
+                                    points_f[0].cpu().detach().numpy(),
+                                    points_a[0].cpu().detach().numpy(),
+                                    weights=weights[0].cpu().detach().numpy(),
+                                )
+                        else:
+                            show_warped_vol(
+                                img_m[0, 0].cpu().detach().numpy(),
+                                img_f[0, 0].cpu().detach().numpy(),
+                                img_a[0, 0].cpu().detach().numpy(),
+                                points_m[0].cpu().detach().numpy(),
+                                points_f[0].cpu().detach().numpy(),
+                                points_a[0].cpu().detach().numpy(),
+                                weights=weights[0].cpu().detach().numpy(),
+                                save_path=None,
+                            )
+                            if seg_available:
+                                show_warped_vol(
+                                    seg_m.argmax(1)[0].cpu().detach().numpy(),
+                                    seg_f.argmax(1)[0].cpu().detach().numpy(),
+                                    seg_a.argmax(1)[0].cpu().detach().numpy(),
+                                    points_m[0].cpu().detach().numpy(),
+                                    points_f[0].cpu().detach().numpy(),
+                                    points_a[0].cpu().detach().numpy(),
+                                    weights=weights[0].cpu().detach().numpy(),
+                                    save_path=None,
+                                )
+
+                    # Compute metrics
+                    metrics = {}
+                    metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
+                    if seg_available:
+                        metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
+                        metrics["softdice"] = 1 - metrics["softdiceloss"]
+                        dice = loss_ops.DiceLoss(hard=True)(
+                            seg_a, seg_f, ign_first_ch=True
+                        )
+                        dice_total = 1 - dice[0].item()
+                        dice_roi = (1 - dice[1].cpu().detach().numpy()).tolist()
+                        metrics["harddice"] = dice_total
+                        metrics["harddice_roi"] = dice_roi
+                        if args.dim == 3:  # TODO: Implement 2D metrics
+                            metrics["hausd"] = loss_ops.hausdorff_distance(seg_a, seg_f)
+                            grid = grid.permute(0, 4, 1, 2, 3)
+                            metrics["jdstd"] = loss_ops.jdstd(grid)
+                            metrics["jdlessthan0"] = loss_ops.jdlessthan0(
+                                grid, as_percentage=True
+                            )
+
+                    for m in list_of_test_metrics:
+                        if m == "mse:test":
+                            test_metrics[
+                                f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                            ].append(metrics["mse"])
+                        elif m == "dice_total:test":
+                            test_metrics[
+                                f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                            ].append(dice_total)
+                        elif m == "dice_roi:test":
+                            test_metrics[
+                                f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
+                            ].append(dice_roi)
+
+                    if args.save_preds and not args.debug_mode:
+                        assert args.batch_size == 1  # TODO: fix this
+                        img_f_path = args.model_eval_dir / f"img_f_{i}-{mod1}.npy"
+                        img_m_path = args.model_eval_dir / f"img_m_{j}-{mod2}-{aug}.npy"
+                        img_a_path = (
+                            args.model_eval_dir
+                            / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                        )
+                        points_f_path = args.model_eval_dir / f"points_f_{i}-{mod1}.npy"
+                        points_m_path = (
+                            args.model_eval_dir / f"points_m_{j}-{mod2}-{aug}.npy"
+                        )
+                        points_a_path = (
+                            args.model_eval_dir
+                            / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                        )
+                        grid_path = (
+                            args.model_eval_dir
+                            / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                        )
+                        print(
+                            "Saving:\n{}\n{}\n{}\n{}\n".format(
+                                img_f_path,
+                                img_m_path,
+                                img_a_path,
+                                grid_path,
+                            )
+                        )
+                        np.save(img_f_path, img_f[0].cpu().detach().numpy())
+                        np.save(img_m_path, img_m[0].cpu().detach().numpy())
+                        np.save(img_a_path, img_a[0].cpu().detach().numpy())
+                        np.save(
+                            points_f_path,
+                            points_f[0].cpu().detach().numpy(),
+                        )
+                        np.save(
+                            points_m_path,
+                            points_m[0].cpu().detach().numpy(),
+                        )
+                        np.save(
+                            points_a_path,
+                            points_a[0].cpu().detach().numpy(),
+                        )
+                        np.save(grid_path, grid[0].cpu().detach().numpy())
+
+                        if seg_available:
+                            seg_f_path = args.model_eval_dir / f"seg_f_{i}-{mod1}.npy"
+                            seg_m_path = (
+                                args.model_eval_dir / f"seg_m_{j}-{mod2}-{aug}.npy"
+                            )
+                            seg_a_path = (
+                                args.model_eval_dir
+                                / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+                            )
+                            np.save(
+                                seg_f_path,
+                                np.argmax(seg_f.cpu().detach().numpy(), axis=1),
+                            )
+                            np.save(
+                                seg_m_path,
+                                np.argmax(seg_m.cpu().detach().numpy(), axis=1),
+                            )
+                            np.save(
+                                seg_a_path,
+                                np.argmax(seg_a.cpu().detach().numpy(), axis=1),
+                            )
+
+                    for name, metric in metrics.items():
+                        if not isinstance(metric, list):
+                            print(f"[Eval Stat] {name}: {metric:.5f}")
+    return test_metrics
+
+
 def main():
     args = parse_args()
     if args.loss_fn == "mse":
@@ -511,21 +779,25 @@ def main():
         ), "Must have same number of subjects for fixed and moving datasets"
 
     # CNN, i.e. keypoint extractor
-    if args.kp_extractor == "conv":
+    if args.backbone == "conv":
         network = ConvNet(
             args.dim,
             1,
             args.num_keypoints,
             norm_type=args.norm_type,
         )
-    elif args.kp_extractor == "unet":
+    elif args.backbone == "unet":
         network = UNet(
             args.dim,
             1,
             args.num_keypoints,
         )
+    elif args.backbone == "se3cnn":
+        network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
+    elif args.backbone == "se3cnn2":
+        network = SE3CNN()
     else:
-        raise ValueError('Invalid keypoint extractor "{}"'.format(args.kp_extractor))
+        raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
     network = torch.nn.DataParallel(network)
 
     # Keypoint model
@@ -564,7 +836,7 @@ def main():
             # "dice_roi:test",
         ]
         if args.dataset == "ixi":
-            list_of_test_mods = [
+            list_of_id_test_mods = [
                 ("T1", "T1"),
                 ("T2", "T2"),
                 ("PD", "PD"),
@@ -572,9 +844,15 @@ def main():
                 ("T1", "PD"),
                 ("T2", "PD"),
             ]
+            list_of_ood_test_mods = None
         elif args.dataset == "gigamed":
-            list_of_test_mods = [
+            list_of_id_test_mods = [
                 ("Dataset5083_IXIT1", "Dataset5083_IXIT1"),
+                ("Dataset5084_IXIT2", "Dataset5084_IXIT2"),
+                ("Dataset5085_IXIPD", "Dataset5085_IXIPD"),
+            ]
+            list_of_ood_test_mods = [
+                ("Dataset6003_AIBL", "Dataset6003_AIBL"),
             ]
         else:
             raise ValueError('Invalid dataset "{}"'.format(args.dataset))
@@ -593,7 +871,7 @@ def main():
         ]
         list_of_all_test = []
         for s1 in list_of_test_metrics:
-            for s2 in list_of_test_mods:
+            for s2 in list_of_id_test_mods:
                 mod1, mod2 = s2
                 for s3 in list_of_test_augs:
                     for s4 in list_of_test_kp_aligns:
@@ -601,295 +879,58 @@ def main():
         test_metrics = {}
         test_metrics.update({key: [] for key in list_of_all_test})
 
-        for aug in list_of_test_augs:
-            for mod in list_of_test_mods:
+        # ID
+        for mod in list_of_id_test_mods:
+            for aug in list_of_test_augs:
                 mod1, mod2, param = utils.parse_test_metric(mod, aug)
-                for i, fixed in enumerate(test_loaders[mod1]):
-                    if (
-                        args.early_stop_eval_subjects
-                        and i > args.early_stop_eval_subjects
-                    ):
-                        break
-                    for j, moving in enumerate(test_loaders[mod2]):
-                        if (
-                            args.early_stop_eval_subjects
-                            and j > args.early_stop_eval_subjects
-                        ):
-                            break
-                        print(
-                            f"Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}"
-                        )
-                        img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
-                        if "seg" in fixed and "seg" in moving:
-                            seg_available = True
-                            seg_f, seg_m = (
-                                fixed["seg"][tio.DATA],
-                                moving["seg"][tio.DATA],
-                            )
-                        else:
-                            seg_available = False
-                            assert not any(
-                                "dice" in m for m in list_of_test_metrics
-                            ), "Can't compute Dice if no segmentations available"
+                print(test_metrics)
+                test_metrics = run_eval(
+                    test_loaders,
+                    registration_model,
+                    mod1,
+                    mod2,
+                    param,
+                    aug,
+                    test_metrics,
+                    list_of_test_metrics,
+                    list_of_test_kp_aligns,
+                    args,
+                )
 
-                        # Move to device
-                        img_f = img_f.float().to(args.device)
-                        img_m = img_m.float().to(args.device)
-                        if seg_available:
-                            seg_f = seg_f.float().to(args.device)
-                            seg_m = seg_m.float().to(args.device)
+        if not args.debug_mode:
+            save_summary_json(test_metrics, args.model_result_dir / "summary.json")
 
-                        # Explicitly augment moving image
-                        if seg_available:
-                            img_m, seg_m = affine_augment(img_m, param, seg=seg_m)
-                        else:
-                            img_m = affine_augment(img_m, param)
+        # OOD
+        if list_of_ood_test_mods is not None:
+            list_of_all_test = []
+            for s1 in list_of_test_metrics:
+                for s2 in list_of_ood_test_mods:
+                    mod1, mod2 = s2
+                    for s3 in list_of_test_augs:
+                        for s4 in list_of_test_kp_aligns:
+                            list_of_all_test.append(f"{s1}:{mod1}:{mod2}:{s3}:{s4}")
+            test_metrics = {}
+            test_metrics.update({key: [] for key in list_of_all_test})
+            for mod in list_of_ood_test_mods:
+                for aug in list_of_test_augs:
+                    mod1, mod2, param = utils.parse_test_metric(mod, aug)
+                    test_metrics = run_eval(
+                        test_loaders,
+                        registration_model,
+                        mod1,
+                        mod2,
+                        param,
+                        aug,
+                        test_metrics,
+                        list_of_test_metrics,
+                        list_of_test_kp_aligns,
+                        args,
+                    )
 
-                        with torch.set_grad_enabled(False):
-                            feat_f = registration_model.backbone(img_f)
-                            feat_m = registration_model.backbone(img_m)
-                            points_f = registration_model.keypoint_extractor(feat_f)
-                            points_m = registration_model.keypoint_extractor(feat_m)
-
-                            if args.weighted_kp_align == "variance":
-                                weights = registration_model.weight_by_variance(
-                                    feat_f, feat_m
-                                )
-                            elif args.weighted_kp_align == "power":
-                                weights = registration_model.weight_by_power(
-                                    feat_f, feat_m
-                                )
-                            else:
-                                weights = None
-
-                            for _, align_type_str in enumerate(list_of_test_kp_aligns):
-                                # Align via keypoints
-                                if align_type_str == "rigid":
-                                    keypoint_aligner = RigidKeypointAligner(args.dim)
-                                    lmbda = None
-                                elif align_type_str == "affine":
-                                    keypoint_aligner = AffineKeypointAligner(args.dim)
-                                    lmbda = None
-                                elif "tps" in align_type_str:
-                                    _, tps_lmbda = align_type_str.split("_")
-                                    keypoint_aligner = TPS(args.dim)
-                                    lmbda = _get_tps_lmbda(
-                                        len(img_f), float(tps_lmbda)
-                                    ).to(args.device)
-
-                                grid = keypoint_aligner.grid_from_points(
-                                    points_m,
-                                    points_f,
-                                    img_f.shape,
-                                    lmbda=lmbda,
-                                    weights=weights,
-                                    compute_on_subgrids=True,
-                                )
-                                points_a = keypoint_aligner.points_from_points(
-                                    points_m,
-                                    points_f,
-                                    points_m,
-                                    lmbda=lmbda,
-                                    weights=weights,
-                                )
-
-                                img_a = align_img(grid, img_m)
-                                if seg_available:
-                                    seg_a = align_img(grid, seg_m)
-
-                                if args.visualize:
-                                    if args.dim == 2:
-                                        show_warped(
-                                            img_m[0, 0].cpu().detach().numpy(),
-                                            img_f[0, 0].cpu().detach().numpy(),
-                                            img_a[0, 0].cpu().detach().numpy(),
-                                            points_m[0].cpu().detach().numpy(),
-                                            points_f[0].cpu().detach().numpy(),
-                                            points_a[0].cpu().detach().numpy(),
-                                            weights=weights[0].cpu().detach().numpy(),
-                                        )
-                                        if seg_available:
-                                            show_warped(
-                                                seg_m[0, 0].cpu().detach().numpy(),
-                                                seg_f[0, 0].cpu().detach().numpy(),
-                                                seg_a[0, 0].cpu().detach().numpy(),
-                                                points_m[0].cpu().detach().numpy(),
-                                                points_f[0].cpu().detach().numpy(),
-                                                points_a[0].cpu().detach().numpy(),
-                                                weights=weights[0]
-                                                .cpu()
-                                                .detach()
-                                                .numpy(),
-                                            )
-                                    else:
-                                        show_warped_vol(
-                                            img_m[0, 0].cpu().detach().numpy(),
-                                            img_f[0, 0].cpu().detach().numpy(),
-                                            img_a[0, 0].cpu().detach().numpy(),
-                                            points_m[0].cpu().detach().numpy(),
-                                            points_f[0].cpu().detach().numpy(),
-                                            points_a[0].cpu().detach().numpy(),
-                                            weights=weights[0].cpu().detach().numpy(),
-                                            save_path=None,
-                                        )
-                                        if seg_available:
-                                            show_warped_vol(
-                                                seg_m.argmax(1)[0]
-                                                .cpu()
-                                                .detach()
-                                                .numpy(),
-                                                seg_f.argmax(1)[0]
-                                                .cpu()
-                                                .detach()
-                                                .numpy(),
-                                                seg_a.argmax(1)[0]
-                                                .cpu()
-                                                .detach()
-                                                .numpy(),
-                                                points_m[0].cpu().detach().numpy(),
-                                                points_f[0].cpu().detach().numpy(),
-                                                points_a[0].cpu().detach().numpy(),
-                                                weights=weights[0]
-                                                .cpu()
-                                                .detach()
-                                                .numpy(),
-                                                save_path=None,
-                                            )
-
-                                # Compute metrics
-                                metrics = {}
-                                metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
-                                if seg_available:
-                                    metrics["softdiceloss"] = loss_ops.DiceLoss()(
-                                        seg_a, seg_f
-                                    )
-                                    metrics["softdice"] = 1 - metrics["softdiceloss"]
-                                    dice = loss_ops.DiceLoss(hard=True)(
-                                        seg_a, seg_f, ign_first_ch=True
-                                    )
-                                    dice_total = 1 - dice[0].item()
-                                    dice_roi = (
-                                        1 - dice[1].cpu().detach().numpy()
-                                    ).tolist()
-                                    metrics["harddice"] = dice_total
-                                    metrics["harddice_roi"] = dice_roi
-                                    if args.dim == 3:  # TODO: Implement 2D metrics
-                                        metrics["hausd"] = loss_ops.hausdorff_distance(
-                                            seg_a, seg_f
-                                        )
-                                        grid = grid.permute(0, 4, 1, 2, 3)
-                                        metrics["jdstd"] = loss_ops.jdstd(grid)
-                                        metrics["jdlessthan0"] = loss_ops.jdlessthan0(
-                                            grid, as_percentage=True
-                                        )
-
-                                for m in list_of_test_metrics:
-                                    if m == "mse:test":
-                                        test_metrics[
-                                            f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
-                                        ].append(metrics["mse"])
-                                    elif m == "dice_total:test":
-                                        test_metrics[
-                                            f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
-                                        ].append(dice_total)
-                                    elif m == "dice_roi:test":
-                                        test_metrics[
-                                            f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
-                                        ].append(dice_roi)
-
-                                if args.save_preds and not args.debug_mode:
-                                    assert args.batch_size == 1  # TODO: fix this
-                                    img_f_path = (
-                                        args.model_eval_dir / f"img_f_{i}-{mod1}.npy"
-                                    )
-                                    img_m_path = (
-                                        args.model_eval_dir
-                                        / f"img_m_{j}-{mod2}-{aug}.npy"
-                                    )
-                                    img_a_path = (
-                                        args.model_eval_dir
-                                        / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
-                                    )
-                                    points_f_path = (
-                                        args.model_eval_dir / f"points_f_{i}-{mod1}.npy"
-                                    )
-                                    points_m_path = (
-                                        args.model_eval_dir
-                                        / f"points_m_{j}-{mod2}-{aug}.npy"
-                                    )
-                                    points_a_path = (
-                                        args.model_eval_dir
-                                        / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
-                                    )
-                                    grid_path = (
-                                        args.model_eval_dir
-                                        / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
-                                    )
-                                    print(
-                                        "Saving:\n{}\n{}\n{}\n{}\n".format(
-                                            img_f_path,
-                                            img_m_path,
-                                            img_a_path,
-                                            grid_path,
-                                        )
-                                    )
-                                    np.save(img_f_path, img_f[0].cpu().detach().numpy())
-                                    np.save(img_m_path, img_m[0].cpu().detach().numpy())
-                                    np.save(img_a_path, img_a[0].cpu().detach().numpy())
-                                    np.save(
-                                        points_f_path,
-                                        points_f[0].cpu().detach().numpy(),
-                                    )
-                                    np.save(
-                                        points_m_path,
-                                        points_m[0].cpu().detach().numpy(),
-                                    )
-                                    np.save(
-                                        points_a_path,
-                                        points_a[0].cpu().detach().numpy(),
-                                    )
-                                    np.save(grid_path, grid[0].cpu().detach().numpy())
-
-                                    if seg_available:
-                                        seg_f_path = (
-                                            args.model_eval_dir
-                                            / f"seg_f_{i}-{mod1}.npy"
-                                        )
-                                        seg_m_path = (
-                                            args.model_eval_dir
-                                            / f"seg_m_{j}-{mod2}-{aug}.npy"
-                                        )
-                                        seg_a_path = (
-                                            args.model_eval_dir
-                                            / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
-                                        )
-                                        np.save(
-                                            seg_f_path,
-                                            np.argmax(
-                                                seg_f.cpu().detach().numpy(), axis=1
-                                            ),
-                                        )
-                                        np.save(
-                                            seg_m_path,
-                                            np.argmax(
-                                                seg_m.cpu().detach().numpy(), axis=1
-                                            ),
-                                        )
-                                        np.save(
-                                            seg_a_path,
-                                            np.argmax(
-                                                seg_a.cpu().detach().numpy(), axis=1
-                                            ),
-                                        )
-
-                                for name, metric in metrics.items():
-                                    if not isinstance(metric, list):
-                                        print(f"[Eval Stat] {name}: {metric:.5f}")
-                            if not args.debug_mode:
-                                save_summary_json(
-                                    test_metrics, args.model_result_dir / "summary.json"
-                                )
-
+            if not args.debug_mode:
+                save_summary_json(
+                    test_metrics, args.model_result_dir / "summary_ood.json"
+                )
     else:
         registration_model.train()
         train_loss = []
