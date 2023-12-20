@@ -190,7 +190,7 @@ def random_affine_augment(
     seg=None,
     points=None,
     max_random_params=(0.2, 0.2, 3.1416, 0.1),
-    scale_params=None,
+    scale_params=1,
 ):
     """Randomly augment moving image. Optionally augments corresponding segmentation and keypoints.
 
@@ -199,12 +199,10 @@ def random_affine_augment(
     :param scale_params: If set, scales parameters by this value. Use for ramping up degree of augmnetation.
     """
     s, o, a, z = max_random_params
-    if scale_params:
-        assert scale_params >= 0 and scale_params <= 1
-        s *= scale_params
-        o *= scale_params
-        a *= scale_params
-        z *= scale_params
+    s *= scale_params
+    o *= scale_params
+    a *= scale_params
+    z *= scale_params
     if len(img.shape) == 4:
         scale = torch.FloatTensor(1, 2).uniform_(1 - s, 1 + s)
         offset = torch.FloatTensor(1, 2).uniform_(-o, o)
@@ -265,15 +263,13 @@ def affine_augment(img, fixed_params, seg=None, points=None):
 
 
 def random_affine_augment_pair(
-    img1, img2, max_random_params=(0.2, 0.2, 3.1416, 0.1), scale_params=None
+    img1, img2, max_random_params=(0.2, 0.2, 3.1416, 0.1), scale_params=1
 ):
     s, o, a, z = max_random_params
-    if scale_params:
-        assert scale_params >= 0 and scale_params <= 1
-        s *= scale_params
-        o *= scale_params
-        a *= scale_params
-        z *= scale_params
+    s *= scale_params
+    o *= scale_params
+    a *= scale_params
+    z *= scale_params
     if len(img1.shape) == 4:
         scale = torch.FloatTensor(1, 2).uniform_(1 - s, 1 + s)
         offset = torch.FloatTensor(1, 2).uniform_(-o, o)
