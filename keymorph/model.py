@@ -14,16 +14,15 @@ class KeyMorph(nn.Module):
         backbone,
         num_keypoints,
         dim,
-        keypoint_extractor="com",
+        keypoint_layer="com",
         max_train_keypoints=None,
         use_amp=False,
         weight_keypoints=None,
     ):
         """Forward pass for one mini-batch step.
 
-        :param keypoint_extractor: Keypoint extractor network
-        :param kp_aligner: Affine or TPS keypoint alignment module
-        :param num_keypoitns: Number of keypoints
+        :param backbone: Backbone network
+        :param num_keypoints: Number of keypoints
         :param dim: Dimension
         :param keypoint_extractor: Keypoint extractor
         :param max_train_keypoints: Maximum number of keypoints to use during training
@@ -32,16 +31,16 @@ class KeyMorph(nn.Module):
         self.backbone = backbone
         self.num_keypoints = num_keypoints
         self.dim = dim
-        if keypoint_extractor == "com":
+        if keypoint_layer == "com":
             if dim == 2:
-                self.keypoint_extractor = CenterOfMass2d()
+                self.keypoint_layer = CenterOfMass2d()
             else:
-                self.keypoint_extractor = CenterOfMass3d()
+                self.keypoint_layer = CenterOfMass3d()
         else:
             if dim == 2:
-                self.keypoint_extractor = LinearRegressor2d()
+                self.keypoint_layer = LinearRegressor2d()
             else:
-                self.keypoint_extractor = LinearRegressor3d()
+                self.keypoint_layer = LinearRegressor3d()
         self.max_train_keypoints = max_train_keypoints
         self.use_amp = use_amp
 
@@ -95,7 +94,7 @@ class KeyMorph(nn.Module):
 
     def get_keypoints(self, img):
         """Convenience method to get keypoints from an image"""
-        return self.keypoint_extractor(self.backbone(img))
+        return self.keypoint_layer(self.backbone(img))
 
     def forward(
         self,
@@ -116,8 +115,8 @@ class KeyMorph(nn.Module):
         ):
             # Extract keypoints
             feat_f, feat_m = self.backbone(img_f), self.backbone(img_m)
-            points_f = self.keypoint_extractor(feat_f)
-            points_m = self.keypoint_extractor(feat_m)
+            points_f = self.keypoint_layer(feat_f)
+            points_m = self.keypoint_layer(feat_m)
 
             if self.weight_keypoints == "variance":
                 weights = self.weight_by_variance(feat_f, feat_m)
@@ -155,6 +154,7 @@ class KeyMorph(nn.Module):
             img_f.shape,
             lmbda=tps_lmbda,
             weights=weights,
+            compute_on_subgrids=False,
         )
         res = grid, points_f, points_m
         if return_aligned_points:

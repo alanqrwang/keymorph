@@ -333,7 +333,9 @@ class TPS:
           Output grid size as NxCxHxW. C unused. This defines the output image
           size when sampling.
         compute_on_subgrids: If true, compute the TPS grid on several subgrids
-            for memory efficiency. This is useful when the grid is large.
+            for memory efficiency. This is useful when the grid is large, but only
+            works for inference time. At training, gradients need to be persisted
+            for the entire grid, so computing on subgrids makes no difference.
 
         Returns
         -------
