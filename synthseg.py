@@ -34,23 +34,26 @@ def _synthseg(src_img_dir, tgt_dir):
             fp.write("%s\n" % item)
 
     synthseg_cmd = f"python /home/alw4013/SynthSeg/scripts/commands/SynthSeg_predict.py --i {in_path_txt} --o {out_path_txt}"
+    try:
+        shell_command(synthseg_cmd)
+    except Exception as e:
+        print("Error synthseging:", src_img_dir)
+        print(e)
+        failed.append(src_img_dir)
+
+    # Clean up after ourselves
     os.remove(in_path_txt)
     os.remove(out_path_txt)
-    try:
-        shell_command(synthseg_cmd, conda_env="alw4013-synthseg")
-    except Exception as e:
-        print("Error synthseging:", img_path)
-        print(e)
-        failed.append(img_path)
     return failed
 
 
 def main():
     all_failed = []
     root_dir = Path(
-        "/midtier/sablab/scratch/alw4013/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
     )
     dataset_names = [
+        "Dataset4999_IXIAllModalities",
         "Dataset5000_BraTS-GLI_2023",
         "Dataset5001_BraTS-SSA_2023",
         "Dataset5002_BraTS-MEN_2023",
@@ -62,8 +65,6 @@ def main():
         "Dataset5010_ATLASR2",
         "Dataset5012_ShiftsBest",
         "Dataset5013_ShiftsLjubljana",
-        "Dataset5018_TopCoWMRAwholeBIN",
-        "Dataset5024_TopCoWcrownMRAwholeBIN",
         "Dataset5038_BrainTumour",
         "Dataset5041_BRATS",
         "Dataset5042_BRATS2016",
@@ -71,40 +72,48 @@ def main():
         "Dataset5044_EPISURG",
         "Dataset5046_FeTA",
         "Dataset5066_WMH",
+        "Dataset5083_IXIT1",
+        "Dataset5084_IXIT2",
+        "Dataset5085_IXIPD",
         "Dataset5090_ISLES2022",
-        "Dataset5094_crossmoda2022",
         "Dataset5095_MSSEG",
         "Dataset5096_MSSEG2",
         "Dataset5111_UCSF-ALPTDG-time1",
         "Dataset5112_UCSF-ALPTDG-time2",
         "Dataset5113_StanfordMETShare",
-        # "Dataset5083_IXIT1",
-        # "Dataset5084_IXIT2",
-        # "Dataset5085_IXIPD",
-    ]
-    need_skullstrip = [
-        "Dataset5010_ATLASR2",
-        "Dataset5018_TopCoWMRAwholeBIN",
-        "Dataset5024_TopCoWcrownMRAwholeBIN",
-        "Dataset5043_BrainDevelopment",
-        "Dataset5044_EPISURG",
-        "Dataset5066_WMH",
-        "Dataset5094_crossmoda2022",
-        "Dataset5096_MSSEG2",
+        "Dataset5114_UCSF-ALPTDG",
+        "Dataset6000_PPMI-T1-3T-PreProc",
+        "Dataset6001_ADNI-group-T1-3T-PreProc",
+        "Dataset6002_OASIS3",
+        "Dataset6003_AIBL",
     ]
 
     for ds in dataset_names:
-        # SynthSeg
+        # SynthSeg on train if it exists
         ds_src_img_dir = root_dir / ds / "imagesTr"
-        ds_tgt_dir = root_dir / ds / "synthSeglabelsTr"
+        if os.path.exists(ds_src_img_dir):
+            ds_tgt_dir = root_dir / ds / "synthSeglabelsTr"
 
-        if not os.path.exists(ds_tgt_dir):
-            os.makedirs(ds_tgt_dir)
-        failed = _synthseg(
-            ds_src_img_dir,
-            ds_tgt_dir,
-        )
-        all_failed += failed
+            if not os.path.exists(ds_tgt_dir):
+                os.makedirs(ds_tgt_dir)
+            failed = _synthseg(
+                ds_src_img_dir,
+                ds_tgt_dir,
+            )
+            all_failed += failed
+
+        # SynthSeg on test if it exists
+        ds_src_img_dir = root_dir / ds / "imagesTs"
+        if os.path.exists(ds_src_img_dir):
+            ds_tgt_dir = root_dir / ds / "synthSeglabelsTs"
+
+            if not os.path.exists(ds_tgt_dir):
+                os.makedirs(ds_tgt_dir)
+            failed = _synthseg(
+                ds_src_img_dir,
+                ds_tgt_dir,
+            )
+            all_failed += failed
 
     if len(all_failed) == 0:
         print("All successful!")
