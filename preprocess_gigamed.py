@@ -204,9 +204,9 @@ def main():
         "Dataset5044_EPISURG",
         "Dataset5046_FeTA",
         "Dataset5066_WMH",
-        # "Dataset5083_IXIT1",
-        # "Dataset5084_IXIT2",
-        # "Dataset5085_IXIPD",
+        "Dataset5083_IXIT1",
+        "Dataset5084_IXIT2",
+        "Dataset5085_IXIPD",
         "Dataset5090_ISLES2022",
         "Dataset5095_MSSEG",
         "Dataset5096_MSSEG2",
@@ -217,6 +217,7 @@ def main():
         "Dataset6000_PPMI-T1-3T-PreProc",
         "Dataset6001_ADNI-group-T1-3T-PreProc",
         "Dataset6002_OASIS3",
+        "Dataset6003_AIBL",
     ]
 
     for ds in dataset_names:
