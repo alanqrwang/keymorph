@@ -38,16 +38,19 @@ datasets_with_one_modality = [
     "Dataset5066_WMH",
 ]
 
-list_of_test_datasets = [
+list_of_id_test_datasets = [
     "Dataset5083_IXIT1",
-    # "Dataset5084_IXIT2",
-    # "Dataset5085_IXIPD",
+    "Dataset5084_IXIT2",
+    "Dataset5085_IXIPD",
 ]
+
+list_of_ood_test_datasets = [
+    "Dataset6003_AIBL",
+]
+
+list_of_test_datasets = list_of_id_test_datasets + list_of_ood_test_datasets
 # unused_datasets = [
 # "Dataset5046_FeTA",
-# "Dataset5083_IXIT1",
-# "Dataset5084_IXIT2",
-# "Dataset5085_IXIPD",
 # ]
 
 
@@ -384,17 +387,17 @@ class GigaMed:
                     load_seg=self.load_seg,
                 )
             )
-        self.print_dataset_stats(test_datasets, "test")
+        self.print_dataset_stats(test_datasets, "Test")
 
-        test_loaders = {}
+        loaders = {}
         for ds_name, ds in zip(list_of_test_datasets, test_datasets):
-            test_loaders[ds_name] = DataLoader(
+            loaders[ds_name] = DataLoader(
                 ds,
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers,
             )
-        return test_loaders
+        return loaders
 
     def get_loaders(self):
         return self.get_train_loader(), self.get_test_loader()
