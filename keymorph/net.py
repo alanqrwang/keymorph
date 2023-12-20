@@ -1,6 +1,10 @@
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from .unet3d.model import UNet2D, UNet3D
 from . import layers
+
+from se3cnn.image.gated_block import GatedBlock
 
 h_dims = [32, 64, 64, 128, 128, 256, 256, 512]
 
@@ -68,3 +72,43 @@ class UNet(nn.Module):
 
     def forward(self, x):
         return self.backbone(x)
+
+
+class RXFM_Net(nn.Module):
+    def __init__(self, n_in, output_chans, norm_type):
+        super(RXFM_Net, self).__init__()
+
+        chan_config = [[16, 16, 4], [16, 16, 4], [16, 16, 4], [16, 16, 4]]
+        features = [[n_in]] + chan_config + [[output_chans]]
+
+        common_block_params = {
+            "size": 5,
+            "stride": 2,
+            "padding": 2,
+            "normalization": norm_type,
+            "capsule_dropout_p": None,
+            "smooth_stride": False,
+        }
+
+        block_params = [{"activation": F.relu}] * (len(features) - 2) + [
+            {"activation": F.relu}
+        ]
+
+        assert len(block_params) + 1 == len(features)
+
+        blocks = [
+            GatedBlock(
+                features[i],
+                features[i + 1],
+                **common_block_params,
+                **block_params[i],
+                dyn_iso=True
+            )
+            for i in range(len(block_params))
+        ]
+
+        self.sequence = torch.nn.Sequential(*blocks)
+
+    def forward(self, x):
+        x = self.sequence(x)
+        return x
