@@ -150,7 +150,6 @@ output/*
 pretraining_output/*
 register_output/*
 
-*.sh
 job_out/*
 job_err/*
 
