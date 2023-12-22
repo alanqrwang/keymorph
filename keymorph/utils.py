@@ -34,11 +34,15 @@ def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
     return array
 
 
-def parse_test_metric(mod, aug):
+def parse_test_mod(mod):
     if isinstance(mod, str):
         mod1, mod2 = mod.split("_")
     else:
         mod1, mod2 = mod
+    return mod1, mod2
+
+
+def parse_test_aug(aug):
     if "rot" in aug:
         if aug == "rot0":
             rot_aug = [0, 0, 0]
@@ -54,7 +58,7 @@ def parse_test_metric(mod, aug):
     else:
         raise NotImplementedError()
 
-    return mod1, mod2, aug_param
+    return aug_param
 
 
 def str_or_float(x):

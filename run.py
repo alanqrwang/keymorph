@@ -22,7 +22,7 @@ from keymorph.utils import (
     align_img,
     save_summary_json,
 )
-from keymorph.data import ixi, gigamed
+from keymorph.data import ixi, gigamed, synthbrain
 from keymorph.augmentation import (
     affine_augment,
     random_affine_augment,
@@ -49,13 +49,6 @@ def parse_args():
         type=str,
         default="./output/",
         help="Path to the folder where outputs are saved",
-    )
-
-    parser.add_argument(
-        "--data_dir",
-        type=str,
-        default="./data/centered_IXI/",
-        help="Path to the training data",
     )
 
     parser.add_argument(
@@ -135,7 +128,10 @@ def parse_args():
     )
 
     # Data
-    parser.add_argument("--dataset", type=str, default="ixi", help="Dataset")
+    parser.add_argument(
+        "--train_datasets", nargs="+", help="<Required> Train datasets", required=True
+    )
+    parser.add_argument("--test_dataset", type=str, required=True, help="Test Dataset")
 
     parser.add_argument(
         "--mix_modalities",
@@ -257,26 +253,20 @@ def run_train(train_loader, registration_model, optimizer, args):
             break
 
         if task_type == "same_sub_same_mod":
-            if args.weighted_kp_align:
-                align_type = "rigid"
-            else:
-                align_type = "rigid"
+            align_type = "rigid"
             args.loss_fn = "mse"
             max_random_params = (0, 0.15, 3.1416, 0)
         elif task_type == "same_sub_diff_mod":
-            if args.weighted_kp_align:
-                align_type = "rigid"
-            else:
-                align_type = "rigid"
-            args.loss_fn = "lc2"
-            max_random_params = (0, 0.15, 3.1416, 0)
+            raise NotImplementedError()
         elif task_type == "diff_sub_same_mod":
             align_type = "tps"
             args.loss_fn = "mse"
             max_random_params = (0.2, 0.15, 3.1416, 0.1)
         elif task_type == "diff_sub_diff_mod":
+            raise NotImplementedError()
+        elif task_type == "synthbrain":
             align_type = "tps"
-            args.loss_fn = "lc2"
+            args.loss_fn = "dice"
             max_random_params = (0.2, 0.15, 3.1416, 0.1)
         else:
             raise ValueError('Invalid task_type "{}"'.format(task_type))
@@ -708,6 +698,251 @@ def run_eval(
     return test_metrics
 
 
+def groupwise_register(
+    group_points,
+    keypoint_aligner,
+    lmbda,
+    grid_shape,
+    weights=None,
+):
+    """Perform groupwise registration.
+
+    Args:
+        group_points: list of tensors of shape (num_subjects, num_points, dim)
+        keypoint_aligner: Keypoint aligner object
+        lmbda: Lambda value for TPS
+        grid_shape: Grid on which to resample
+
+    Returns:
+        grids: All grids for each subject in the group
+        points: All transformed points for each subject in the group
+    """
+
+    # Compute mean of points, to be used as fixed points
+    mean_points = torch.mean(group_points, dim=0, keepdim=True)
+
+    # Register each point to the mean
+    grids = []
+    new_points = []
+    for i in range(len(group_points)):
+        points_m = group_points[i : i + 1]
+        grid = keypoint_aligner.grid_from_points(
+            points_m,
+            mean_points,
+            grid_shape,
+            lmbda=lmbda,
+            weights=weights,
+            compute_on_subgrids=True,
+        )
+        points_a = keypoint_aligner.points_from_points(
+            points_m,
+            mean_points,
+            points_m,
+            lmbda=lmbda,
+            weights=weights,
+        )
+        grids.append(grid)
+        new_points.append(points_a)
+
+    new_points = torch.cat(new_points, dim=0)
+    return grids, new_points
+
+
+def run_groupwise_eval(
+    group_loader,
+    registration_model,
+    mod,
+    param,
+    aug,
+    test_metrics,
+    list_of_test_metrics,
+    list_of_test_kp_aligns,
+    args,
+):
+    for i, group in enumerate(group_loader[mod]):
+        if args.early_stop_eval_subjects and i > args.early_stop_eval_subjects:
+            break
+        print(f"Running groupwise test: group id {i}, mod {mod}, aug {aug}")
+
+        group_points = []
+        for subject in group:
+            img = subject["img"][tio.DATA]
+            if "seg" in subject:
+                seg_available = True
+                seg = subject["seg"][tio.DATA]
+            else:
+                seg_available = False
+                assert not any(
+                    "dice" in m for m in list_of_test_metrics
+                ), "Can't compute Dice if no segmentations available"
+
+            # Move to device
+            img = img.float().to(args.device)
+            if seg_available:
+                seg = seg.float().to(args.device)
+
+            # Explicitly augment moving image
+            # if seg_available:
+            #     img_m, seg_m = affine_augment(img_m, param, seg=seg_m)
+            # else:
+            #     img_m = affine_augment(img_m, param)
+
+            with torch.set_grad_enabled(False):
+                feat = registration_model.backbone(img)
+                points = registration_model.keypoint_layer(feat)
+
+                # if args.weighted_kp_align == "variance":
+                #     weights = registration_model.weight_by_variance(feat_f, feat_m)
+                # elif args.weighted_kp_align == "power":
+                #     weights = registration_model.weight_by_power(feat_f, feat_m)
+                # else:
+                #     weights = None
+                weights = None  # TODO: support weighted groupwise registration??
+                group_points.append(points)
+
+        group_points = torch.cat(group_points, dim=0)
+        for _, align_type_str in enumerate(list_of_test_kp_aligns):
+            # Align via keypoints
+            if align_type_str == "rigid":
+                keypoint_aligner = RigidKeypointAligner(args.dim)
+                lmbda = None
+                num_iters = 1
+            elif align_type_str == "affine":
+                keypoint_aligner = AffineKeypointAligner(args.dim)
+                lmbda = None
+                num_iters = 1
+            elif "tps" in align_type_str:
+                _, tps_lmbda = align_type_str.split("_")
+                keypoint_aligner = TPS(args.dim, num_subgrids=args.num_subgrids)
+                lmbda = _get_tps_lmbda(len(img), float(tps_lmbda)).to(args.device)
+                num_iters = 5
+
+            curr_points = group_points.clone()
+            for iternum in range(5):
+                grids, points_a = groupwise_register(
+                    curr_points,
+                    keypoint_aligner,
+                    lmbda,
+                    img.shape,
+                    weights=weights,
+                )
+
+                tot = 0
+                num = 0
+                aligned_imgs = []
+                for subject, grid in zip(group, grids):
+                    img = subject["img"][tio.DATA].to(args.device)
+                    img_a = align_img(grid, img)
+                    aligned_imgs.append(img_a)
+                for i, img1 in enumerate(aligned_imgs):
+                    for j, img2 in enumerate(aligned_imgs):
+                        if i != j:
+                            tot += loss_ops.MSELoss()(img1, img2).item()
+                            num += 1
+
+                curr_points = points_a.clone()
+
+                print(align_type_str, iternum, tot / num)
+            # Compute metrics
+            # metrics = {}
+            # metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
+            # if seg_available:
+            #     metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
+            #     metrics["softdice"] = 1 - metrics["softdiceloss"]
+            #     dice = loss_ops.DiceLoss(hard=True)(seg_a, seg_f, ign_first_ch=True)
+            #     dice_total = 1 - dice[0].item()
+            #     dice_roi = (1 - dice[1].cpu().detach().numpy()).tolist()
+            #     metrics["harddice"] = dice_total
+            #     metrics["harddice_roi"] = dice_roi
+            #     if args.dim == 3:  # TODO: Implement 2D metrics
+            #         metrics["hausd"] = loss_ops.hausdorff_distance(seg_a, seg_f)
+            #         grid = grid.permute(0, 4, 1, 2, 3)
+            #         metrics["jdstd"] = loss_ops.jdstd(grid)
+            #         metrics["jdlessthan0"] = loss_ops.jdlessthan0(grid, as_percentage=True)
+
+        # for m in list_of_test_metrics:
+        #     if m == "mse:test":
+        #         test_metrics[f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"].append(
+        #             metrics["mse"]
+        #         )
+        #     elif m == "dice_total:test":
+        #         test_metrics[f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"].append(
+        #             dice_total
+        #         )
+        #     elif m == "dice_roi:test":
+        #         test_metrics[f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"].append(
+        #             dice_roi
+        #         )
+
+        # if args.save_preds and not args.debug_mode:
+        #     assert args.batch_size == 1  # TODO: fix this
+        #     img_f_path = args.model_eval_dir / f"img_f_{i}-{mod1}.npy"
+        #     img_m_path = args.model_eval_dir / f"img_m_{j}-{mod2}-{aug}.npy"
+        #     img_a_path = (
+        #         args.model_eval_dir
+        #         / f"img_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+        #     )
+        #     points_f_path = args.model_eval_dir / f"points_f_{i}-{mod1}.npy"
+        #     points_m_path = args.model_eval_dir / f"points_m_{j}-{mod2}-{aug}.npy"
+        #     points_a_path = (
+        #         args.model_eval_dir
+        #         / f"points_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+        #     )
+        #     grid_path = (
+        #         args.model_eval_dir
+        #         / f"grid_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+        #     )
+        #     print(
+        #         "Saving:\n{}\n{}\n{}\n{}\n".format(
+        #             img_f_path,
+        #             img_m_path,
+        #             img_a_path,
+        #             grid_path,
+        #         )
+        #     )
+        #     np.save(img_f_path, img_f[0].cpu().detach().numpy())
+        #     np.save(img_m_path, img_m[0].cpu().detach().numpy())
+        #     np.save(img_a_path, img_a[0].cpu().detach().numpy())
+        #     np.save(
+        #         points_f_path,
+        #         points_f[0].cpu().detach().numpy(),
+        #     )
+        #     np.save(
+        #         points_m_path,
+        #         points_m[0].cpu().detach().numpy(),
+        #     )
+        #     np.save(
+        #         points_a_path,
+        #         points_a[0].cpu().detach().numpy(),
+        #     )
+        #     np.save(grid_path, grid[0].cpu().detach().numpy())
+
+        #     if seg_available:
+        #         seg_f_path = args.model_eval_dir / f"seg_f_{i}-{mod1}.npy"
+        #         seg_m_path = args.model_eval_dir / f"seg_m_{j}-{mod2}-{aug}.npy"
+        #         seg_a_path = (
+        #             args.model_eval_dir
+        #             / f"seg_a_{i}-{mod1}_{j}-{mod2}-{aug}-{align_type_str}.npy"
+        #         )
+        #         np.save(
+        #             seg_f_path,
+        #             np.argmax(seg_f.cpu().detach().numpy(), axis=1),
+        #         )
+        #         np.save(
+        #             seg_m_path,
+        #             np.argmax(seg_m.cpu().detach().numpy(), axis=1),
+        #         )
+        #         np.save(
+        #             seg_a_path,
+        #             np.argmax(seg_a.cpu().detach().numpy(), axis=1),
+        #         )
+
+        # for name, metric in metrics.items():
+        #     if not isinstance(metric, list):
+        #         print(f"[Eval Stat] {name}: {metric:.5f}")
+    return test_metrics
+
+
 def main():
     args = parse_args()
     if args.loss_fn == "mse":
@@ -762,13 +997,32 @@ def main():
     torch.manual_seed(args.seed)
 
     # Data
-    if args.dataset == "ixi":
-        train_loader, test_loaders = ixi.get_loaders()
+    list_of_train_loaders = []
+    for dataset_name in args.train_datasets:
+        if dataset_name == "ixi":
+            train_loader, _ = ixi.get_loaders()
+        elif dataset_name == "gigamed":
+            gigamed_dataset = gigamed.GigaMed(
+                args.batch_size, args.num_workers, load_seg=False
+            )
+            train_loader = gigamed_dataset.get_train_loader()
+        elif dataset_name == "synthbrain":
+            synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
+            train_loader = synth_dataset.get_train_loader()
+        list_of_train_loaders.append(train_loader)
+    if len(list_of_train_loaders) == 0:
+        raise ValueError('Invalid train datasets "{}"'.format(args.train_datasets))
 
-    elif args.dataset == "gigamed":
-        train_loader, test_loaders = gigamed.GigaMed(
-            args.data_dir, args.batch_size, args.num_workers, load_seg=False
-        ).get_loaders()
+    if args.test_dataset == "ixi":
+        _, test_loaders = ixi.get_loaders()
+    elif args.test_dataset == "gigamed":
+        gigamed_dataset = gigamed.GigaMed(
+            args.batch_size, args.num_workers, load_seg=False
+        )
+        test_loaders = gigamed_dataset.get_test_loaders()
+        group_loaders = gigamed_dataset.get_group_loaders()
+    else:
+        raise ValueError('Invalid test dataset "{}"'.format(args.test_dataset))
 
     if args.kpconsistency_coeff > 0:
         assert (
@@ -854,19 +1108,24 @@ def main():
             list_of_ood_test_mods = [
                 ("Dataset6003_AIBL", "Dataset6003_AIBL"),
             ]
+            list_of_group_test_mods = [
+                "Dataset6003_AIBL",
+            ]
         else:
             raise ValueError('Invalid dataset "{}"'.format(args.dataset))
         list_of_test_augs = [
             "rot0",
-            "rot45",
-            "rot90",
-            "rot135",
-            "rot180",
+            # "rot45",
+            # "rot90",
+            # "rot135",
+            # "rot180",
         ]
 
         list_of_test_kp_aligns = [
-            "rigid",
-            "affine",
+            # "rigid",
+            # "affine",
+            # "tps_10",
+            # "tps_1",
             "tps_0",
         ]
         list_of_all_test = []
@@ -883,7 +1142,6 @@ def main():
         for mod in list_of_id_test_mods:
             for aug in list_of_test_augs:
                 mod1, mod2, param = utils.parse_test_metric(mod, aug)
-                print(test_metrics)
                 test_metrics = run_eval(
                     test_loaders,
                     registration_model,
@@ -931,6 +1189,36 @@ def main():
                 save_summary_json(
                     test_metrics, args.model_result_dir / "summary_ood.json"
                 )
+
+        # Group
+        if list_of_group_test_mods is not None:
+            list_of_all_test = []
+            for s1 in list_of_test_metrics:
+                for s2 in list_of_group_test_mods:
+                    for s3 in list_of_test_augs:
+                        for s4 in list_of_test_kp_aligns:
+                            list_of_all_test.append(f"{s1}:{s2}:{s3}:{s4}")
+            test_metrics = {}
+            test_metrics.update({key: [] for key in list_of_all_test})
+            for mod in list_of_group_test_mods:
+                for aug in list_of_test_augs:
+                    param = utils.parse_test_aug(aug)
+                    test_metrics = run_groupwise_eval(
+                        group_loaders,
+                        registration_model,
+                        mod,
+                        param,
+                        aug,
+                        test_metrics,
+                        list_of_test_metrics,
+                        list_of_test_kp_aligns,
+                        args,
+                    )
+
+            if not args.debug_mode:
+                save_summary_json(
+                    test_metrics, args.model_result_dir / "summary_group.json"
+                )
     else:
         registration_model.train()
         train_loss = []
@@ -945,6 +1233,7 @@ def main():
 
         for epoch in range(start_epoch, args.epochs + 1):
             args.curr_epoch = epoch
+            train_loader = random.sample(list_of_train_loaders, 1)[0]
             epoch_stats = run_train(
                 train_loader,
                 registration_model,

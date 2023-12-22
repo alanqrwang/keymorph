@@ -3,6 +3,8 @@ import torchio as tio
 from torch.utils.data import Dataset, DataLoader
 import random
 
+data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+
 datasets_with_longitudinal = [
     "Dataset5114_UCSF-ALPTDG",
     "Dataset6000_PPMI-T1-3T-PreProc",
@@ -39,9 +41,10 @@ datasets_with_one_modality = [
 ]
 
 list_of_id_test_datasets = [
-    "Dataset5083_IXIT1",
-    "Dataset5084_IXIT2",
-    "Dataset5085_IXIPD",
+    "Dataset4999_IXIAllModalities",
+    # "Dataset5083_IXIT1",
+    # "Dataset5084_IXIT2",
+    # "Dataset5085_IXIPD",
 ]
 
 list_of_ood_test_datasets = [
@@ -70,7 +73,7 @@ def read_subjects_from_disk(root_dir: str, train: bool, load_seg=True):
         [
             os.path.join(img_data_folder, name)
             for name in os.listdir(img_data_folder)
-            if "mask" not in name
+            if ("mask" not in name and name.endswith(".nii.gz"))
         ]
     )
 
@@ -125,7 +128,7 @@ def read_longitudinal_subjects_from_disk(root_dir: str, train: bool, load_seg=Tr
         [
             os.path.join(img_data_folder, name)
             for name in os.listdir(img_data_folder)
-            if "mask" not in name
+            if ("mask" not in name and name.endswith(".nii.gz"))
         ]
     )
 
@@ -172,6 +175,17 @@ class SingleSubjectDataset(Dataset):
         if self.transform:
             sub1 = self.transform(sub1)
         return sub1
+
+
+class GroupDataset(SingleSubjectDataset):
+    def __init__(self, root_dir, train, transform=None, load_seg=True, group_size=3):
+        super().__init__(root_dir, train, transform, load_seg)
+        self.group_size = group_size
+
+    def __getitem__(self, x):
+        return [
+            super(GroupDataset, self).__getitem__(x) for _ in range(self.group_size)
+        ]
 
 
 class SameSubjectSameModalityDataset(Dataset):
@@ -283,13 +297,11 @@ class ConcatDataset(Dataset):
 class GigaMed:
     def __init__(
         self,
-        root_dir,
         batch_size,
         num_workers,
         load_seg=True,
         sample_same_mod_only=True,
     ):
-        self.root_dir = root_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.load_seg = load_seg
@@ -317,7 +329,7 @@ class GigaMed:
         for ds_name in sssm_dataset_names:
             sssm_datasets.append(
                 SameSubjectSameModalityDataset(
-                    os.path.join(self.root_dir, ds_name),
+                    os.path.join(data_dir, ds_name),
                     True,
                     self.transform,
                     load_seg=self.load_seg,
@@ -327,7 +339,7 @@ class GigaMed:
         for ds_name in ssdm_dataset_names:
             ssdm_datasets.append(
                 SameSubjectDiffModalityDataset(
-                    os.path.join(self.root_dir, ds_name),
+                    os.path.join(data_dir, ds_name),
                     True,
                     self.transform,
                     load_seg=self.load_seg,
@@ -337,7 +349,7 @@ class GigaMed:
         for ds_name in dssm_dataset_names:
             dssm_datasets.append(
                 DiffSubjectSameModalityDataset(
-                    os.path.join(self.root_dir, ds_name),
+                    os.path.join(data_dir, ds_name),
                     True,
                     self.transform,
                     load_seg=self.load_seg,
@@ -347,7 +359,7 @@ class GigaMed:
         for ds_name in dsdm_dataset_names:
             dsdm_datasets.append(
                 DiffSubjectDiffModalityDataset(
-                    os.path.join(self.root_dir, ds_name),
+                    os.path.join(data_dir, ds_name),
                     True,
                     self.transform,
                     load_seg=self.load_seg,
@@ -376,12 +388,12 @@ class GigaMed:
         )
         return train_loader
 
-    def get_test_loader(self):
+    def get_test_loaders(self):
         test_datasets = []
         for ds_name in list_of_test_datasets:
             test_datasets.append(
                 SingleSubjectDataset(
-                    os.path.join(self.root_dir, ds_name),
+                    os.path.join(data_dir, ds_name),
                     False,
                     self.transform,
                     load_seg=self.load_seg,
@@ -399,8 +411,28 @@ class GigaMed:
             )
         return loaders
 
-    def get_loaders(self):
-        return self.get_train_loader(), self.get_test_loader()
+    def get_group_loaders(self):
+        test_datasets = []
+        for ds_name in list_of_test_datasets:
+            test_datasets.append(
+                GroupDataset(
+                    os.path.join(data_dir, ds_name),
+                    False,
+                    self.transform,
+                    load_seg=self.load_seg,
+                )
+            )
+        self.print_dataset_stats(test_datasets, "Test")
+
+        loaders = {}
+        for ds_name, ds in zip(list_of_test_datasets, test_datasets):
+            loaders[ds_name] = DataLoader(
+                ds,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return loaders
 
     def get_pretraining_loaders(self):
         dataset_names = set(
@@ -413,7 +445,7 @@ class GigaMed:
         for ds_name in dataset_names:
             datasets.append(
                 SingleSubjectDataset(
-                    os.path.join(self.root_dir, ds_name),
+                    os.path.join(data_dir, ds_name),
                     True,
                     self.transform,
                     load_seg=self.load_seg,
@@ -433,7 +465,7 @@ class GigaMed:
 
     def get_reference_subject(self):
         ds_name = datasets_with_multiple_modalities[0]
-        data_dir = os.path.join(self.root_dir, ds_name)
+        data_dir = os.path.join(data_dir, ds_name)
         subject_dict = read_subjects_from_disk(data_dir, True, load_seg=False)
         return subject_dict[list(subject_dict.keys())[0]][0]
 
