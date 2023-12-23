@@ -41,21 +41,3 @@ python run.py \
 
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/__pretraining__gigamed_pretrain_slope5000_${NUM_KEY}_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/pretrained_epoch10000_model.pth.tar \
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/gigamed_keymorph_256_[training]keypoints256_batch1_normTypeinstance_lr3e-06/checkpoints/epoch125_trained_model.pth.tar \
-
-# JOB_NAME="gigamed-pretraining-se3cnn2"
-# python pretraining.py \
-#     --job_name ${JOB_NAME} \
-#     --num_keypoints ${NUM_KEY} \
-#     --use_wandb \
-#     --wandb_kwargs project=keymorph name=$JOB_NAME \
-#     --dataset gigamed \
-#     --data_dir /midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed \
-#     --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/ \
-#     --use_amp \
-#     --num_workers 4 \
-#     --affine_slope -1 \
-#     --batch_size 1 \
-#     --backbone se3cnn \
-#     --epochs 15000
-
-    # --data_dir /midtier/sablab/scratch/alw4013/centered_IXI/centered_IXI/ \

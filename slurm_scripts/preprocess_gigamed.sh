@@ -19,4 +19,4 @@ conda activate alw4013-base
 # if using pip
 # source ~/myvev/bin/activate
 
-python preprocess_gigamed.py --min_max_norm --test
+python /home/alw4013/keymorph/data_scripts/preprocess_gigamed.py --min_max_norm --test
