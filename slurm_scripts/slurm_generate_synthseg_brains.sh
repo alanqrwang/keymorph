@@ -11,6 +11,7 @@
 #SBATCH -e ./job_err/%j-gen_synthseg_brains.err \ 
 
 # if using conda
+module load miniconda3/22.11.1-ctkwnpe
 source activate synthseg_38
 echo $PATH
 # if using pip
