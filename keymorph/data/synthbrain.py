@@ -2,16 +2,54 @@ import os
 from torch.utils.data import Dataset, DataLoader
 import torchio as tio
 import random
+import torch
 
-data_dir = "/midtier/sablab/scratch/alw4013/data/synthseg"
+data_dir = "/midtier/sablab/scratch/alw4013/data/synthseg_clean"
+
+
+def one_hot(asegs):
+    subset_regs = [
+        [0, 0],  # Background
+        [13, 52],  # Pallidum
+        [18, 54],  # Amygdala
+        [11, 50],  # Caudate
+        [3, 42],  # Cerebral Cortex
+        [17, 53],  # Hippocampus
+        [10, 49],  # Thalamus
+        [12, 51],  # Putamen
+        [2, 41],  # Cerebral WM
+        [8, 47],  # Cerebellum Cortex
+        [4, 43],  # Lateral Ventricle
+        [7, 46],  # Cerebellum WM
+        [16, 16],
+    ]  # Brain-Stem
+
+    _, dim1, dim2, dim3 = asegs.shape
+    chs = 14
+    one_hot = torch.zeros(chs, dim1, dim2, dim3)
+
+    for i, s in enumerate(subset_regs):
+        combined_vol = (asegs == s[0]) | (asegs == s[1])
+        one_hot[i, :, :, :] = (combined_vol * 1).float()
+
+    mask = one_hot.sum(0).squeeze()
+    ones = torch.ones_like(mask)
+    non_roi = ones - mask
+    one_hot[-1, :, :, :] = non_roi
+
+    assert (
+        one_hot.sum(0).sum() == dim1 * dim2 * dim3
+    ), "One-hot encoding does not add up to 1"
+    return one_hot
 
 
 def read_subjects_from_disk(root_dir: str, load_seg=True):
     """Creates list of TorchIO subjects."""
+    img_dir = os.path.join(root_dir, "image")
     img_data_paths = sorted(
         [
-            os.path.join(root_dir, name)
-            for name in os.listdir(root_dir)
+            os.path.join(img_dir, name)
+            for name in os.listdir(img_dir)
             if ("image" in name and name.endswith(".nii.gz"))
         ]
     )
@@ -67,16 +105,23 @@ class SynthBrain:
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.load_seg = load_seg
-        # self.transform = tio.Compose(
-        #     [
-        #         tio.OneHot(num_classes=70, include=("seg")),
-        #     ]
-        # )
         self.transform = tio.Compose(
             [
-                tio.RandomNoise(std=0),
+                tio.Lambda(one_hot, include=("seg")),
             ]
         )
+
+    def get_paired_dataset(self):
+        dataset = PairedSubjectDataset(data_dir, self.transform, self.load_seg)
+
+        self.print_dataset_stats([dataset], prefix="SynthMorph")
+        return dataset
+
+    def get_single_dataset(self):
+        dataset = SingleSubjectDataset(data_dir, self.transform, self.load_seg)
+
+        self.print_dataset_stats([dataset], prefix="SynthMorph")
+        return dataset
 
     def get_train_loader(self):
         dataset = PairedSubjectDataset(data_dir, self.transform, self.load_seg)
@@ -88,7 +133,7 @@ class SynthBrain:
         )
         return train_loader
 
-    def get_pretraining_loaders(self):
+    def get_pretrain_loader(self):
         dataset = SingleSubjectDataset(data_dir, self.transform, self.load_seg)
         train_loader = DataLoader(
             dataset,
@@ -97,4 +142,17 @@ class SynthBrain:
             num_workers=self.num_workers,
         )
 
-        return train_loader, None
+        return train_loader
+
+    def print_dataset_stats(self, datasets, prefix=""):
+        print(f"\n{prefix} dataset has {len(datasets)} datasets.")
+        tot = 0
+        for i, ds in enumerate(datasets):
+            tot += len(ds)
+            print(
+                "-> Dataset {} has {} subjects".format(
+                    i,
+                    len(ds),
+                )
+            )
+        print("Total: ", tot)

@@ -2,6 +2,7 @@ import os
 import torchio as tio
 from torch.utils.data import Dataset, DataLoader
 import random
+from .synthbrain import SynthBrain
 
 data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
 
@@ -41,10 +42,10 @@ datasets_with_one_modality = [
 ]
 
 list_of_id_test_datasets = [
-    "Dataset4999_IXIAllModalities",
-    # "Dataset5083_IXIT1",
-    # "Dataset5084_IXIT2",
-    # "Dataset5085_IXIPD",
+    # "Dataset4999_IXIAllModalities",
+    "Dataset5083_IXIT1",
+    "Dataset5084_IXIT2",
+    "Dataset5085_IXIPD",
 ]
 
 list_of_ood_test_datasets = [
@@ -312,18 +313,9 @@ class GigaMed:
             ]
         )
 
-    def get_train_loader(self):
-        """Code currently does not sample across datasets"""
-        # Longitudinal
+    def get_sssm_datasets(self):
+        """Longitudinal"""
         sssm_dataset_names = datasets_with_longitudinal
-        # Single subject, different modality (SSDM) must have multiple modalities for a single subject
-        ssdm_dataset_names = datasets_with_multiple_modalities
-        # Different subject, same modality (DSSM) can have one or multiple modalities for a single subject
-        dssm_dataset_names = (
-            datasets_with_one_modality + datasets_with_multiple_modalities
-        )
-        # Different subject, different modality (DSDM) must have multiple modalities for a single subject
-        dsdm_dataset_names = datasets_with_multiple_modalities
 
         sssm_datasets = []
         for ds_name in sssm_dataset_names:
@@ -335,6 +327,12 @@ class GigaMed:
                     load_seg=self.load_seg,
                 )
             )
+        self.print_dataset_stats(sssm_datasets, "SSSM")
+        return sssm_datasets
+
+    def get_ssdm_datasets(self):
+        """Single subject, different modality (SSDM) must have multiple modalities for a single subject"""
+        ssdm_dataset_names = datasets_with_multiple_modalities
         ssdm_datasets = []
         for ds_name in ssdm_dataset_names:
             ssdm_datasets.append(
@@ -345,6 +343,14 @@ class GigaMed:
                     load_seg=self.load_seg,
                 )
             )
+        self.print_dataset_stats(ssdm_datasets, "SSDM")
+        return ssdm_datasets
+
+    def get_dssm_datasets(self):
+        """Different subject, same modality (DSSM) can have one or multiple modalities for a single subject"""
+        dssm_dataset_names = (
+            datasets_with_one_modality + datasets_with_multiple_modalities
+        )
         dssm_datasets = []
         for ds_name in dssm_dataset_names:
             dssm_datasets.append(
@@ -355,6 +361,12 @@ class GigaMed:
                     load_seg=self.load_seg,
                 )
             )
+        self.print_dataset_stats(dssm_datasets, "DSSM")
+        return dssm_datasets
+
+    def get_dsdm_datasets(self):
+        """Different subject, different modality (DSDM) must have multiple modalities for a single subject"""
+        dsdm_dataset_names = datasets_with_multiple_modalities
         dsdm_datasets = []
         for ds_name in dsdm_dataset_names:
             dsdm_datasets.append(
@@ -366,11 +378,35 @@ class GigaMed:
                 )
             )
 
-        self.print_dataset_stats(sssm_datasets, "SSSM")
-        self.print_dataset_stats(ssdm_datasets, "SSDM")
-        self.print_dataset_stats(dssm_datasets, "DSSM")
         self.print_dataset_stats(dsdm_datasets, "DSDM")
+        return dsdm_datasets
 
+    def get_single_datasets(self):
+        dataset_names = set(
+            datasets_with_longitudinal
+            + datasets_with_multiple_modalities
+            + datasets_with_one_modality
+        )
+
+        datasets = []
+        for ds_name in dataset_names:
+            datasets.append(
+                SingleSubjectDataset(
+                    os.path.join(data_dir, ds_name),
+                    True,
+                    self.transform,
+                    load_seg=self.load_seg,
+                )
+            )
+
+        self.print_dataset_stats(datasets, "Pretraining")
+        return datasets
+
+    def get_train_loader(self):
+        sssm_datasets = self.get_sssm_datasets()
+        dssm_datasets = self.get_dssm_datasets()
+        ssdm_datasets = self.get_ssdm_datasets()
+        dsdm_datasets = self.get_dsdm_datasets()
         if self.sample_same_mod_only:
             final_dataset = ConcatDataset(sssm_datasets, dssm_datasets)
         else:
@@ -434,26 +470,8 @@ class GigaMed:
             )
         return loaders
 
-    def get_pretraining_loaders(self):
-        dataset_names = set(
-            datasets_with_longitudinal
-            + datasets_with_multiple_modalities
-            + datasets_with_one_modality
-        )
-
-        datasets = []
-        for ds_name in dataset_names:
-            datasets.append(
-                SingleSubjectDataset(
-                    os.path.join(data_dir, ds_name),
-                    True,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-
-        self.print_dataset_stats(datasets, "Pretraining")
-
+    def get_pretrain_loader(self):
+        datasets = self.get_single_datasets()
         train_loader = DataLoader(
             ConcatDataset(datasets),
             batch_size=self.batch_size,
@@ -461,12 +479,12 @@ class GigaMed:
             num_workers=self.num_workers,
         )
 
-        return train_loader, None
+        return train_loader
 
     def get_reference_subject(self):
         ds_name = datasets_with_multiple_modalities[0]
-        data_dir = os.path.join(data_dir, ds_name)
-        subject_dict = read_subjects_from_disk(data_dir, True, load_seg=False)
+        root_dir = os.path.join(data_dir, ds_name)
+        subject_dict = read_subjects_from_disk(root_dir, True, load_seg=False)
         return subject_dict[list(subject_dict.keys())[0]][0]
 
     def print_dataset_stats(self, datasets, prefix=""):
@@ -481,3 +499,47 @@ class GigaMed:
                 )
             )
         print("Total: ", tot)
+
+
+class GigaMedSynthBrain(GigaMed):
+    def get_train_loader(self):
+        sssm_datasets = self.get_sssm_datasets()
+        dssm_datasets = self.get_dssm_datasets()
+        ssdm_datasets = self.get_ssdm_datasets()
+        dsdm_datasets = self.get_dsdm_datasets()
+        sb_dataset = SynthBrain(
+            self.batch_size, self.num_workers, load_seg=True
+        ).get_paired_dataset()
+        if self.sample_same_mod_only:
+            final_dataset = ConcatDataset(sssm_datasets, dssm_datasets, [sb_dataset])
+        else:
+            final_dataset = (
+                ConcatDataset(
+                    sssm_datasets,
+                    ssdm_datasets,
+                    dssm_datasets,
+                    dsdm_datasets,
+                    [sb_dataset],
+                ),
+            )
+        train_loader = DataLoader(
+            final_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+        )
+        return train_loader
+
+    def get_pretrain_loader(self):
+        datasets = self.get_single_datasets()
+        sb_dataset = SynthBrain(
+            self.batch_size, self.num_workers, load_seg=True
+        ).get_single_dataset()
+        train_loader = DataLoader(
+            ConcatDataset(datasets, [sb_dataset]),
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+        )
+
+        return train_loader
