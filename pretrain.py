@@ -8,10 +8,13 @@ import torch.nn.functional as F
 from argparse import ArgumentParser
 from pathlib import Path
 import wandb
+from copy import deepcopy
+import json
+from pprint import pprint
 
 from keymorph.net import ConvNet, UNet, RXFM_Net
 from keymorph.cm_plotter import show_warped, show_warped_vol
-from keymorph.data import ixi, gigamed
+from keymorph.data import ixi, gigamed, synthbrain
 from keymorph import utils
 from keymorph.utils import ParseKwargs, initialize_wandb
 from keymorph.augmentation import random_affine_augment
@@ -21,8 +24,6 @@ from keymorph.layers import (
     CenterOfMass2d,
     CenterOfMass3d,
 )
-
-from keymorph.se3_3Dcnn import SE3CNN
 
 
 def parse_args():
@@ -44,13 +45,6 @@ def parse_args():
         type=str,
         default="./pretraining_output/",
         help="Path to the folder where data is saved",
-    )
-
-    parser.add_argument(
-        "--data_dir",
-        type=str,
-        default="./data/centered_IXI/",
-        help="Path to the training data",
     )
 
     parser.add_argument(
@@ -77,8 +71,8 @@ def parse_args():
     parser.add_argument(
         "--backbone",
         type=str,
-        default="conv_com",
-        choices=["conv", "unet", "se3cnn", "se3cnn2"],
+        default="conv",
+        choices=["conv", "unet", "se3cnn"],
         help="Keypoint extractor module to use",
     )
     parser.add_argument(
@@ -90,7 +84,7 @@ def parse_args():
     )
 
     # Data
-    parser.add_argument("--dataset", type=str, default="ixi", help="Dataset")
+    parser.add_argument("--train_dataset", type=str, required=True, help="Dataset")
 
     parser.add_argument(
         "--num_test_subjects", type=int, default=100, help="Number of test subjects"
@@ -161,7 +155,7 @@ def parse_args():
     return args
 
 
-def run_train(loader, random_points, network, keypoint_extractor, optimizer, args):
+def run_pretrain(loader, random_points, network, keypoint_extractor, optimizer, args):
     start_time = time.time()
 
     if args.use_amp:
@@ -175,7 +169,6 @@ def run_train(loader, random_points, network, keypoint_extractor, optimizer, arg
     for step_idx, subject in enumerate(loader):
         if step_idx == args.steps_per_epoch:
             break
-        # Choose modality at random
         x_fixed = subject["img"][tio.DATA].float().to(args.device)
 
         # Deform image and fixed points
@@ -248,11 +241,15 @@ def run_train(loader, random_points, network, keypoint_extractor, optimizer, arg
 
 def main():
     args = parse_args()
+    arg_dict = vars(deepcopy(args))
+    pprint(arg_dict)
 
     # Path to save outputs
     arguments = (
         "__pretraining__"
         + args.job_name
+        + "_dataset"
+        + args.train_dataset
         + "_keypoints"
         + str(args.num_keypoints)
         + "_batch"
@@ -276,6 +273,11 @@ def main():
     if not os.path.exists(args.model_img_dir) and not args.debug_mode:
         os.makedirs(args.model_img_dir)
 
+    # Write arguments to json
+    if not args.debug_mode:
+        with open(os.path.join(args.model_dir, "args.json"), "w") as outfile:
+            json.dump(arg_dict, outfile, sort_keys=True, indent=4)
+
     # Select GPU
     if torch.cuda.is_available():
         args.device = torch.device("cuda")
@@ -292,17 +294,26 @@ def main():
     torch.manual_seed(args.seed)
 
     # Data
-    if args.dataset == "ixi":
-        train_loader, _ = ixi.get_pretraining_loaders()
-        ref_subject = ixi.get_random_subject(train_loader)
-    elif args.dataset == "gigamed":
-        gmed = gigamed.GigaMed(
-            args.data_dir, args.batch_size, args.num_workers, load_seg=False
+    if args.train_dataset == "ixi":
+        pretrain_loader = ixi.get_pretrain_loader()
+        ref_subject = ixi.get_random_subject(pretrain_loader)
+    elif args.train_dataset == "gigamed":
+        gigamed_dataset = gigamed.GigaMed(
+            args.batch_size, args.num_workers, load_seg=False
         )
-        train_loader, _ = gmed.get_pretraining_loaders()
-        ref_subject = gmed.get_reference_subject()
+        pretrain_loader = gigamed_dataset.get_pretrain_loader()
+        ref_subject = gigamed_dataset.get_reference_subject()
+    elif args.train_dataset == "synthbrain":
+        synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
+        pretrain_loader = synth_dataset.get_pretrain_loader()
+    elif args.train_dataset == "gigamed+synthbrain":
+        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
+            args.batch_size, args.num_workers, load_seg=False
+        )
+        pretrain_loader = gigamed_synthbrain_dataset.get_pretrain_loader()
+        ref_subject = gigamed_synthbrain_dataset.get_reference_subject()
     else:
-        raise NotImplementedError
+        raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
 
     # Extract random keypoints from reference subject
     ref_img = ref_subject["img"][tio.DATA].float().unsqueeze(0)
@@ -338,8 +349,6 @@ def main():
         )
     elif args.backbone == "se3cnn":
         network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
-    elif args.backbone == "se3cnn2":
-        network = SE3CNN()
     else:
         raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
     network = torch.nn.DataParallel(network)
@@ -383,8 +392,8 @@ def main():
 
     for epoch in range(start_epoch, args.epochs + 1):
         args.curr_epoch = epoch
-        epoch_stats = run_train(
-            train_loader,
+        epoch_stats = run_pretrain(
+            pretrain_loader,
             random_points,
             network,
             keypoint_layer,
