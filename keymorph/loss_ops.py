@@ -340,3 +340,15 @@ class ImageLC2(torch.nn.Module):
         sym = (var - dist) / var.clamp_min(beta)
 
         return sym.clamp(0, 1)
+
+
+class LesionPenalty(torch.nn.Module):
+    def forward(self, weights, points_f, points_m, lesion_mask_f, lesion_mask_m):
+        ind_in_mask_f = ind_in_lesion(points_f, lesion_mask_f)
+        ind_in_mask_m = ind_in_lesion(points_m, lesion_mask_m)
+
+        gt = torch.ones_like(weights)
+        gt[ind_in_mask_f] = 0
+        gt[ind_in_mask_m] = 0
+
+        return F.mse_loss(gt, weights)

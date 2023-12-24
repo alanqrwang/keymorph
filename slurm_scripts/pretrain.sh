@@ -18,14 +18,14 @@ source activate base
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="gigamed-synthmorph"
+JOB_NAME="gigamed-synthbrain"
 python pretrain.py \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --use_wandb \
     --wandb_kwargs project=keymorph name=$JOB_NAME \
     --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/ \
-    --train_datasets gigamed synthmorph \
+    --train_dataset gigamed+synthbrain \
     --use_amp \
     --num_workers 4 \
     --affine_slope 5000 \

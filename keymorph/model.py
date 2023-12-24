@@ -19,7 +19,7 @@ class KeyMorph(nn.Module):
         use_amp=False,
         weight_keypoints=None,
     ):
-        """Forward pass for one mini-batch step.
+        """KeyMorph pipeline in a single module. Used for training.
 
         :param backbone: Backbone network
         :param num_keypoints: Number of keypoints

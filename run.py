@@ -10,6 +10,8 @@ import wandb
 import torchio as tio
 from scipy.stats import loguniform
 import matplotlib.pyplot as plt
+import json
+from copy import deepcopy
 
 from keymorph import loss_ops
 from keymorph.net import ConvNet, UNet, RXFM_Net
@@ -30,8 +32,6 @@ from keymorph.augmentation import (
 )
 from keymorph.cm_plotter import show_warped, show_warped_vol
 from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
-
-from keymorph.se3_3Dcnn import SE3CNN
 
 
 def parse_args():
@@ -129,7 +129,7 @@ def parse_args():
 
     # Data
     parser.add_argument(
-        "--train_datasets", nargs="+", help="<Required> Train datasets", required=True
+        "--train_dataset", help="<Required> Train datasets", required=True
     )
     parser.add_argument("--test_dataset", type=str, required=True, help="Test Dataset")
 
@@ -256,18 +256,18 @@ def run_train(train_loader, registration_model, optimizer, args):
             align_type = "rigid"
             args.loss_fn = "mse"
             max_random_params = (0, 0.15, 3.1416, 0)
-        elif task_type == "same_sub_diff_mod":
-            raise NotImplementedError()
         elif task_type == "diff_sub_same_mod":
             align_type = "tps"
             args.loss_fn = "mse"
             max_random_params = (0.2, 0.15, 3.1416, 0.1)
-        elif task_type == "diff_sub_diff_mod":
-            raise NotImplementedError()
         elif task_type == "synthbrain":
             align_type = "tps"
             args.loss_fn = "dice"
             max_random_params = (0.2, 0.15, 3.1416, 0.1)
+        elif task_type == "same_sub_diff_mod":
+            raise NotImplementedError()
+        elif task_type == "diff_sub_diff_mod":
+            raise NotImplementedError()
         else:
             raise ValueError('Invalid task_type "{}"'.format(task_type))
 
@@ -328,18 +328,24 @@ def run_train(train_loader, registration_model, optimizer, args):
             metrics = {}
             metrics["scale_augment"] = scale_augment
             metrics["mse"] = loss_ops.MSELoss()(img_f, img_a)
-            metrics["lc2"] = loss_ops.ImageLC2()(img_f, img_a)
+            # metrics["lesion_penalty"] = loss_ops.LesionPenalty(
+            #     weights, points_f, points_m, lesion_mask_f, lesion_mask_m
+            # )
             if seg_available:
                 metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
                 metrics["softdice"] = 1 - metrics["softdiceloss"]
 
             # Compute loss
             if args.loss_fn == "mse":
-                loss = metrics["mse"]
-            elif args.loss_fn == "lc2":
-                loss = metrics["lc2"]
+                loss = (
+                    metrics["mse"]
+                    # + args.lesion_penalty_coeff * metrics["lesion_penalty"]
+                )
             elif args.loss_fn == "dice":
-                loss = metrics["softdiceloss"]
+                loss = (
+                    metrics["softdiceloss"]
+                    # + args.lesion_penalty_coeff * metrics["lesion_penalty"]
+                )
             else:
                 raise ValueError('Invalid loss function "{}"'.format(args.loss_fn))
             metrics["loss"] = loss
@@ -818,7 +824,7 @@ def run_groupwise_eval(
                 num_iters = 5
 
             curr_points = group_points.clone()
-            for iternum in range(5):
+            for iternum in range(num_iters):
                 grids, points_a = groupwise_register(
                     curr_points,
                     keypoint_aligner,
@@ -945,20 +951,25 @@ def run_groupwise_eval(
 
 def main():
     args = parse_args()
+    arg_dict = vars(deepcopy(args))
     if args.loss_fn == "mse":
         assert not args.mix_modalities, "MSE loss can't mix modalities"
     if args.debug_mode:
         args.steps_per_epoch = 3
-    pprint(vars(args))
+    pprint(arg_dict)
 
     # Path to save outputs
     if args.eval:
         prefix = "__eval__"
+        dataset_str = args.test_dataset
     else:
         prefix = "__training__"
+        dataset_str = args.train_dataset
     arguments = (
         prefix
         + args.job_name
+        + "_dataset"
+        + dataset_str
         + "_keypoints"
         + str(args.num_keypoints)
         + "_batch"
@@ -973,15 +984,27 @@ def main():
     if not os.path.exists(args.model_dir) and not args.debug_mode:
         print("Creating directory: {}".format(args.model_dir))
         os.makedirs(args.model_dir)
-    args.model_ckpt_dir = args.model_dir / "checkpoints"
-    if not os.path.exists(args.model_ckpt_dir) and not args.debug_mode:
-        os.makedirs(args.model_ckpt_dir)
-    args.model_result_dir = args.model_dir / "results"
-    if not os.path.exists(args.model_result_dir) and not args.debug_mode:
-        os.makedirs(args.model_result_dir)
-    args.model_img_dir = args.model_dir / "img"
-    if not os.path.exists(args.model_img_dir) and not args.debug_mode:
-        os.makedirs(args.model_img_dir)
+
+    if args.eval:
+        args.model_result_dir = args.model_dir / "eval_results"
+        if not os.path.exists(args.model_result_dir) and not args.debug_mode:
+            os.makedirs(args.model_result_dir)
+        args.model_eval_dir = args.model_dir / "eval_img"
+        if not os.path.exists(args.model_eval_dir) and not args.debug_mode:
+            os.makedirs(args.model_eval_dir)
+
+    else:
+        args.model_ckpt_dir = args.model_dir / "checkpoints"
+        if not os.path.exists(args.model_ckpt_dir) and not args.debug_mode:
+            os.makedirs(args.model_ckpt_dir)
+        args.model_img_dir = args.model_dir / "train_img"
+        if not os.path.exists(args.model_img_dir) and not args.debug_mode:
+            os.makedirs(args.model_img_dir)
+
+    # Write arguments to json
+    if not args.debug_mode:
+        with open(os.path.join(args.model_dir, "args.json"), "w") as outfile:
+            json.dump(arg_dict, outfile, sort_keys=True, indent=4)
 
     # Select GPU
     if torch.cuda.is_available():
@@ -997,21 +1020,23 @@ def main():
     torch.manual_seed(args.seed)
 
     # Data
-    list_of_train_loaders = []
-    for dataset_name in args.train_datasets:
-        if dataset_name == "ixi":
-            train_loader, _ = ixi.get_loaders()
-        elif dataset_name == "gigamed":
-            gigamed_dataset = gigamed.GigaMed(
-                args.batch_size, args.num_workers, load_seg=False
-            )
-            train_loader = gigamed_dataset.get_train_loader()
-        elif dataset_name == "synthbrain":
-            synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
-            train_loader = synth_dataset.get_train_loader()
-        list_of_train_loaders.append(train_loader)
-    if len(list_of_train_loaders) == 0:
-        raise ValueError('Invalid train datasets "{}"'.format(args.train_datasets))
+    if args.train_dataset == "ixi":
+        train_loader, _ = ixi.get_loaders()
+    elif args.train_dataset == "gigamed":
+        gigamed_dataset = gigamed.GigaMed(
+            args.batch_size, args.num_workers, load_seg=False
+        )
+        train_loader = gigamed_dataset.get_train_loader()
+    elif args.train_dataset == "synthbrain":
+        synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
+        train_loader = synth_dataset.get_train_loader()
+    elif args.train_dataset == "gigamed+synthbrain":
+        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
+            args.batch_size, args.num_workers, load_seg=False
+        )
+        train_loader = gigamed_synthbrain_dataset.get_train_loader()
+    else:
+        raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
 
     if args.test_dataset == "ixi":
         _, test_loaders = ixi.get_loaders()
@@ -1048,8 +1073,6 @@ def main():
         )
     elif args.backbone == "se3cnn":
         network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
-    elif args.backbone == "se3cnn2":
-        network = SE3CNN()
     else:
         raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
     network = torch.nn.DataParallel(network)
@@ -1089,7 +1112,7 @@ def main():
             # "dice_total:test",
             # "dice_roi:test",
         ]
-        if args.dataset == "ixi":
+        if args.test_dataset == "ixi":
             list_of_id_test_mods = [
                 ("T1", "T1"),
                 ("T2", "T2"),
@@ -1099,8 +1122,9 @@ def main():
                 ("T2", "PD"),
             ]
             list_of_ood_test_mods = None
-        elif args.dataset == "gigamed":
+        elif args.test_dataset == "gigamed":
             list_of_id_test_mods = [
+                # ('Dataset4999_IXIAllModalities', 'Dataset4999_IXIAllModalities')
                 ("Dataset5083_IXIT1", "Dataset5083_IXIT1"),
                 ("Dataset5084_IXIT2", "Dataset5084_IXIT2"),
                 ("Dataset5085_IXIPD", "Dataset5085_IXIPD"),
@@ -1115,17 +1139,17 @@ def main():
             raise ValueError('Invalid dataset "{}"'.format(args.dataset))
         list_of_test_augs = [
             "rot0",
-            # "rot45",
-            # "rot90",
-            # "rot135",
-            # "rot180",
+            "rot45",
+            "rot90",
+            "rot135",
+            "rot180",
         ]
 
         list_of_test_kp_aligns = [
-            # "rigid",
-            # "affine",
-            # "tps_10",
-            # "tps_1",
+            "rigid",
+            "affine",
+            "tps_10",
+            "tps_1",
             "tps_0",
         ]
         list_of_all_test = []
@@ -1141,7 +1165,8 @@ def main():
         # ID
         for mod in list_of_id_test_mods:
             for aug in list_of_test_augs:
-                mod1, mod2, param = utils.parse_test_metric(mod, aug)
+                mod1, mod2 = utils.parse_test_mod(mod)
+                param = utils.parse_test_aug(aug)
                 test_metrics = run_eval(
                     test_loaders,
                     registration_model,
@@ -1171,7 +1196,8 @@ def main():
             test_metrics.update({key: [] for key in list_of_all_test})
             for mod in list_of_ood_test_mods:
                 for aug in list_of_test_augs:
-                    mod1, mod2, param = utils.parse_test_metric(mod, aug)
+                    mod1, mod2 = utils.parse_test_mod(mod)
+                    param = utils.parse_test_aug(aug)
                     test_metrics = run_eval(
                         test_loaders,
                         registration_model,
