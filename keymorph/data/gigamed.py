@@ -2,7 +2,7 @@ import os
 import torchio as tio
 from torch.utils.data import Dataset, DataLoader
 import random
-from .synthbrain import SynthBrain
+from .synthbrain import SynthBrain, one_hot
 
 data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
 
@@ -302,16 +302,20 @@ class GigaMed:
         num_workers,
         load_seg=True,
         sample_same_mod_only=True,
+        transform=None,
     ):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.load_seg = load_seg
         self.sample_same_mod_only = sample_same_mod_only
-        self.transform = tio.Compose(
-            [
-                tio.OneHot(num_classes=15, include=("seg")),
-            ]
-        )
+        if transform is None:
+            self.transform = tio.Compose(
+                [
+                    tio.Lambda(one_hot, include=("seg")),
+                ]
+            )
+        else:
+            self.transform = transform
 
     def get_sssm_datasets(self):
         """Longitudinal"""

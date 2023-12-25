@@ -101,15 +101,18 @@ class PairedSubjectDataset(Dataset):
 
 
 class SynthBrain:
-    def __init__(self, batch_size, num_workers, load_seg=True):
+    def __init__(self, batch_size, num_workers, load_seg=True, transform=None):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.load_seg = load_seg
-        self.transform = tio.Compose(
-            [
-                tio.Lambda(one_hot, include=("seg")),
-            ]
-        )
+        if transform is None:
+            self.transform = tio.Compose(
+                [
+                    tio.Lambda(one_hot, include=("seg")),
+                ]
+            )
+        else:
+            self.transform = transform
 
     def get_paired_dataset(self):
         dataset = PairedSubjectDataset(data_dir, self.transform, self.load_seg)

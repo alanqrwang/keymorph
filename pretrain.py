@@ -312,6 +312,18 @@ def main():
         )
         pretrain_loader = gigamed_synthbrain_dataset.get_pretrain_loader()
         ref_subject = gigamed_synthbrain_dataset.get_reference_subject()
+    elif args.train_dataset == "gigamed+synthbrain+randomanisotropy":
+        transform = tio.Compose(
+            [
+                tio.Lambda(synthbrain.one_hot, include=("seg")),
+                tio.RandomAnisotropy(downsampling=(1, 4)),
+            ]
+        )
+        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
+            args.batch_size, args.num_workers, load_seg=False, transform=transform
+        )
+        pretrain_loader = gigamed_synthbrain_dataset.get_pretrain_loader()
+        ref_subject = gigamed_synthbrain_dataset.get_reference_subject()
     else:
         raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
 

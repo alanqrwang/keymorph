@@ -1035,6 +1035,17 @@ def main():
             args.batch_size, args.num_workers, load_seg=False
         )
         train_loader = gigamed_synthbrain_dataset.get_train_loader()
+    elif args.train_dataset == "gigamed+synthbrain+randomanistropy":
+        transform = tio.Compose(
+            [
+                tio.Lambda(synthbrain.one_hot, include=("seg")),
+                tio.RandomAnisotropy(downsampling=(1, 4)),
+            ]
+        )
+        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
+            args.batch_size, args.num_workers, load_seg=False, transform=transform
+        )
+        train_loader = gigamed_synthbrain_dataset.get_train_loader()
     else:
         raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
 
@@ -1259,7 +1270,6 @@ def main():
 
         for epoch in range(start_epoch, args.epochs + 1):
             args.curr_epoch = epoch
-            train_loader = random.sample(list_of_train_loaders, 1)[0]
             epoch_stats = run_train(
                 train_loader,
                 registration_model,
