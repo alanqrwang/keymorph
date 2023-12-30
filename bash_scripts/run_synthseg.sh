@@ -16,4 +16,4 @@ source activate synthseg_38
 # if using pip
 # source ~/myvev/bin/activate
 
-python synthseg.py
+python /home/alw4013/keymorph/data_scripts/synthseg.py

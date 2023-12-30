@@ -19,7 +19,7 @@ source activate base
 
 NUM_KEY=$1
 JOB_NAME="gigamed-synthbrain"
-python pretrain.py \
+python /home/alw4013/keymorph/pretrain.py \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --use_wandb \
@@ -31,4 +31,6 @@ python pretrain.py \
     --affine_slope 5000 \
     --batch_size 1 \
     --backbone conv \
-    --epochs 15000
+    --epochs 15000 \
+    --resume \
+    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining__gigamed-synthbrain_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch8500_model.pth.tar
