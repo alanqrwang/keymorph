@@ -272,6 +272,7 @@ def main():
     args.model_img_dir = args.model_dir / "img"
     if not os.path.exists(args.model_img_dir) and not args.debug_mode:
         os.makedirs(args.model_img_dir)
+    print('Model directory: "{}"'.format(args.model_dir))
 
     # Write arguments to json
     if not args.debug_mode:
@@ -327,24 +328,6 @@ def main():
     else:
         raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
 
-    # Extract random keypoints from reference subject
-    ref_img = ref_subject["img"][tio.DATA].float().unsqueeze(0)
-    print("sampling random keypoints...")
-    random_points = utils.sample_valid_coordinates(
-        ref_img, args.num_keypoints, args.dim
-    )
-    random_points = random_points * 2 - 1
-    random_points = random_points.repeat(args.batch_size, 1, 1)
-    show_warped_vol(
-        ref_img[0, 0].cpu().detach().numpy(),
-        ref_img[0, 0].cpu().detach().numpy(),
-        ref_img[0, 0].cpu().detach().numpy(),
-        random_points[0].cpu().detach().numpy(),
-        random_points[0].cpu().detach().numpy(),
-        random_points[0].cpu().detach().numpy(),
-    )
-    del ref_subject
-
     # CNN, i.e. keypoint extractor
     if args.backbone == "conv":
         network = ConvNet(
@@ -398,9 +381,27 @@ def main():
         network.load_state_dict(state["state_dict"])
         optimizer.load_state_dict(state["optimizer"])
         start_epoch = state["epoch"] + 1
+        # Load random keypoints from checkpoint
         random_points = state["random_points"]
     else:
         start_epoch = 1
+        # Extract random keypoints from reference subject
+        ref_img = ref_subject["img"][tio.DATA].float().unsqueeze(0)
+        print("sampling random keypoints...")
+        random_points = utils.sample_valid_coordinates(
+            ref_img, args.num_keypoints, args.dim
+        )
+        random_points = random_points * 2 - 1
+        random_points = random_points.repeat(args.batch_size, 1, 1)
+        show_warped_vol(
+            ref_img[0, 0].cpu().detach().numpy(),
+            ref_img[0, 0].cpu().detach().numpy(),
+            ref_img[0, 0].cpu().detach().numpy(),
+            random_points[0].cpu().detach().numpy(),
+            random_points[0].cpu().detach().numpy(),
+            random_points[0].cpu().detach().numpy(),
+        )
+        del ref_subject
 
     for epoch in range(start_epoch, args.epochs + 1):
         args.curr_epoch = epoch
