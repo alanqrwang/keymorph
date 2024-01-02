@@ -50,7 +50,7 @@ You might need to install Pytorch separately, according to your GPU and CUDA ver
 Install Pytorch [here](https://pytorch.org/get-started/locally/).
 
 ## Downloading Trained Weights
-You can find trained and self-supervised weights for select variants under [Releases](https://github.com/evanmy/keymorph/releases) in this repository.
+You can find all trained weights for most models used in this repository (KeyMorph training, pretraining, and brain extraction) under [Releases](https://github.com/alanqrwang/keymorph/releases) in this repository.
 Download them and put them in the `./weights/` folder.
 
 ## Registering brain volumes
