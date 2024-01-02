@@ -6,7 +6,7 @@
 #SBATCH --time=50:30:00 # set this time according to your need
 #SBATCH --mem=32GB # how much RAM will your notebook consume? 
 #SBATCH --gres=gpu:a100:1 # if you need to use a GPU
-#SBATCH -p sablab-gpu # specify partition
+#SBATCH -p scu-gpu # specify partition
 module purge
 module load miniconda3/22.11.1-ctkwnpe
 # if using conda

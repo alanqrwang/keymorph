@@ -1,0 +1,2 @@
+name,has_lesion_seg,has_longitudinal,has_multiple_modalities,desc
+Dataset6003_AIBL,False,True,False,aging

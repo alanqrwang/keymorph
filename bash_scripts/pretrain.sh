@@ -18,14 +18,14 @@ source activate base
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="gigamed-synthbrain"
+JOB_NAME="_pretrain_gigamed-synthbrain-randomanisotropy-${NUM_KEY}"
 python /home/alw4013/keymorph/pretrain.py \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --use_wandb \
     --wandb_kwargs project=keymorph name=$JOB_NAME \
     --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/ \
-    --train_dataset gigamed+synthbrain \
+    --train_dataset gigamed+synthbrain+randomanisotropy \
     --use_amp \
     --num_workers 4 \
     --affine_slope 5000 \
@@ -33,4 +33,4 @@ python /home/alw4013/keymorph/pretrain.py \
     --backbone conv \
     --epochs 15000 \
     --resume \
-    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining__gigamed-synthbrain_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch8500_model.pth.tar
+    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining__gigamed-synthbrain-randomanisotropy_datasetgigamed+synthbrain+randomanisotropy_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch8500_model.pth.tar

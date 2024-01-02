@@ -185,7 +185,7 @@ def main():
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
         )
     dataset_names = [
-        "Dataset4999_IXIAllModalities",
+        # "Dataset4999_IXIAllModalities",
         "Dataset5000_BraTS-GLI_2023",
         "Dataset5001_BraTS-SSA_2023",
         "Dataset5002_BraTS-MEN_2023",
@@ -226,7 +226,7 @@ def main():
         ds_src_seg_dir = base_dir / ds / label_dir
         ds_tgt_img_dir = torchio_dir / ds / image_dir
         ds_tgt_seg_dir = torchio_dir / ds / label_dir
-        if os.path.exists(ds_src_seg_dir):
+        if os.path.exists(ds_src_seg_dir) and len(os.listdir(ds_src_seg_dir)) > 0:
             seg_available = True
         else:
             seg_available = False
