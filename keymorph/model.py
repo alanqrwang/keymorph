@@ -1,11 +1,20 @@
+import re
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from skimage import morphology
+import SimpleITK as sitk
+from scipy.stats import loguniform
 
-from .keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
-from .layers import LinearRegressor2d, LinearRegressor3d, CenterOfMass2d, CenterOfMass3d
+from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
+from keymorph.layers import (
+    LinearRegressor2d,
+    LinearRegressor3d,
+    CenterOfMass2d,
+    CenterOfMass3d,
+)
+from keymorph.utils import str_or_float, rescale_intensity
 
 
 class KeyMorph(nn.Module):
@@ -45,6 +54,7 @@ class KeyMorph(nn.Module):
         self.use_amp = use_amp
 
         # Keypoint alignment module
+        self.supported_kp_align_types = ["rigid", "affine", "tps"]
         self.rigid_aligner = RigidKeypointAligner(self.dim)
         self.affine_aligner = AffineKeypointAligner(self.dim)
         self.tps_aligner = TPS(self.dim)
@@ -96,20 +106,65 @@ class KeyMorph(nn.Module):
         """Convenience method to get keypoints from an image"""
         return self.keypoint_layer(self.backbone(img))
 
+    @staticmethod
+    def _convert_tps_lmbda(num_samples, tps_lmbda):
+        """Return a tensor of size num_samples composed of specified tps_lmbda values. Values may be constant or sampled from a distribution.
+
+        :param num_samples: int, Number of samples
+        :param tps_lmbda: float or str
+        """
+        if tps_lmbda == "uniform":
+            lmbda = torch.rand(num_samples) * 10
+        elif tps_lmbda == "lognormal":
+            lmbda = torch.tensor(np.random.lognormal(size=num_samples))
+        elif tps_lmbda == "loguniform":
+            a, b = 1e-6, 10
+            lmbda = torch.tensor(loguniform.rvs(a, b, size=num_samples))
+        else:
+            lmbda = torch.tensor(tps_lmbda).repeat(num_samples)
+        return lmbda
+
+    @staticmethod
+    def is_supported_kp_align_type(s):
+        if s in ["affine", "rigid"]:
+            return True
+        elif re.match(r"^tps_.*$", s):
+            return True
+        return False
+
     def forward(
         self,
         img_f,
         img_m,
-        tps_lmbda,
-        align_type="affine",
+        kp_align_type="affine",
         return_aligned_points=False,
-        return_weights=False,
     ):
         """Forward pass for one mini-batch step.
 
         :param img_f, img_m: Fixed and moving images
-        :param tps_lmbda: Lambda value for TPS
+        :param align_type: str or tuple of str of keypoint alignment types. Used for finding registrations
+            for multiple alignment types in one forward pass, without having to extract keypoints
+            every time.
+
+        :return res: Dictionary of results
         """
+
+        if not isinstance(kp_align_type, (list, tuple)):
+            kp_align_type = [kp_align_type]
+        if self.training:
+            assert (
+                len(kp_align_type) == 1
+            ), "Only one alignment type allowed in training"
+        assert all(
+            self.is_supported_kp_align_type(s) for s in kp_align_type
+        ), "Invalid kp_align_type"
+
+        # For evaluation, rescale to [0, 1]. Clone to ensure we don't mess with the original data.
+        # For training, we assume this is handled by preprocessing.
+        if not self.training:
+            img_f = rescale_intensity(img_f.clone())
+            img_m = rescale_intensity(img_m.clone())
+
         with torch.amp.autocast(
             device_type="cuda", enabled=self.use_amp, dtype=torch.float16
         ):
@@ -124,6 +179,30 @@ class KeyMorph(nn.Module):
                 weights = self.weight_by_power(feat_f, feat_m)
             else:
                 weights = None
+
+        # Dictionary of results
+        res = {
+            "grid": [],
+            "points_f": points_f,
+            "points_m": points_m,
+            "points_weights": weights,
+            "align_type": [],
+            "tps_lmbda": [],
+        }
+        if return_aligned_points:
+            res["points_a"] = []
+
+        for align_type_str in kp_align_type:
+            if align_type_str.startswith("tps"):
+                align_type = "tps"
+                tps_lmbda = self._convert_tps_lmbda(
+                    len(img_f), str_or_float(align_type_str[4:])
+                ).to(img_f.device)
+            else:
+                align_type = align_type_str
+                tps_lmbda = None
+            res["align_type"].append(align_type)
+            res["tps_lmbda"].append(tps_lmbda)
 
             if (
                 self.training
@@ -140,31 +219,83 @@ class KeyMorph(nn.Module):
                 if self.weight_keypoints is not None:
                     weights = weights[:, key_batch_idx]
 
-        # Align via keypoints
-        if align_type == "rigid":
-            keypoint_aligner = self.rigid_aligner
-        elif align_type == "affine":
-            keypoint_aligner = self.affine_aligner
-        elif align_type == "tps":
-            keypoint_aligner = self.tps_aligner
+            # Align via keypoints
+            if align_type == "rigid":
+                keypoint_aligner = self.rigid_aligner
+            elif align_type == "affine":
+                keypoint_aligner = self.affine_aligner
+            elif align_type == "tps":
+                keypoint_aligner = self.tps_aligner
 
-        grid = keypoint_aligner.grid_from_points(
-            points_m,
-            points_f,
-            img_f.shape,
-            lmbda=tps_lmbda,
-            weights=weights,
-            compute_on_subgrids=False,
-        )
-        res = grid, points_f, points_m
-        if return_aligned_points:
-            points_a = keypoint_aligner.points_from_points(
-                points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
+            grid = keypoint_aligner.grid_from_points(
+                points_m,
+                points_f,
+                img_f.shape,
+                lmbda=tps_lmbda,
+                weights=weights,
+                compute_on_subgrids=False,
             )
-            res += (points_a,)
-        if return_weights:
-            res += (weights,)
+            res["grid"].append(grid)
+            if return_aligned_points:
+                points_a = keypoint_aligner.points_from_points(
+                    points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
+                )
+                res["points_a"].append(points_a)
         return res
+
+    def pairwise_register(self, *args, **kwargs):
+        """Alias for forward()."""
+        return self.forward(self, args, kwargs)
+
+    def groupwise_register(
+        self,
+        group_points,
+        keypoint_aligner,
+        lmbda,
+        grid_shape,
+        weights=None,
+    ):
+        """Perform groupwise registration.
+
+        Args:
+            group_points: list of tensors of shape (num_subjects, num_points, dim)
+            keypoint_aligner: Keypoint aligner object
+            lmbda: Lambda value for TPS
+            grid_shape: Grid on which to resample
+
+        Returns:
+            grids: All grids for each subject in the group
+            points: All transformed points for each subject in the group
+        """
+
+        # Compute mean of points, to be used as fixed points
+        mean_points = torch.mean(group_points, dim=0, keepdim=True)
+
+        # Register each point to the mean
+        grids = []
+        new_points = []
+        for i in range(len(group_points)):
+            points_m = group_points[i : i + 1]
+            grid = keypoint_aligner.grid_from_points(
+                points_m,
+                mean_points,
+                grid_shape,
+                lmbda=lmbda,
+                weights=weights,
+                compute_on_subgrids=True,
+            )
+            points_a = keypoint_aligner.points_from_points(
+                points_m,
+                mean_points,
+                points_m,
+                lmbda=lmbda,
+                weights=weights,
+            )
+            grids.append(grid)
+            new_points.append(points_a)
+
+        new_points = torch.cat(new_points, dim=0)
+        return grids, new_points
 
 
 class Simple_Unet(nn.Module):
@@ -294,3 +425,37 @@ def clean_mask(mask, threshold=0.2):
         new_mask += (connected == key).astype("uint8")
 
     return new_mask
+
+
+class SimpleElastix:
+    def __call__(self):
+        # Concatenate the ND images into one (N+1)D image
+        population = ["image1.hdr", ..., "imageN.hdr"]
+        vectorOfImages = sitk.VectorOfImage()
+
+        for filename in population:
+            vectorOfImages.push_back(sitk.ReadImage(filename))
+
+        image = sitk.JoinSeries(vectorOfImages)
+
+        # Register
+        elastixImageFilter = sitk.ElastixImageFilter()
+        elastixImageFilter.SetFixedImage(image)
+        elastixImageFilter.SetMovingImage(image)
+        elastixImageFilter.SetParameterMap(sitk.GetDefaultParameterMap("groupwise"))
+        elastixImageFilter.Execute()
+
+    def get_transformed_image(self):
+        return self.transformixImageFilter.GetResultImage()
+
+    def get_transformed_points(self, points):
+        transformed_points = []
+        for point in points:
+            transformed_point = self.transformixImageFilter.TransformPoint(point)
+            transformed_points.append(transformed_point)
+        return transformed_points
+
+    def get_transformed_image_and_points(self, points):
+        transformed_image = self.get_transformed_image()
+        transformed_points = self.get_transformed_points(points)
+        return transformed_image, transformed_points
