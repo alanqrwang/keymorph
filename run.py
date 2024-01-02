@@ -1024,7 +1024,7 @@ def main():
         train_loader, _ = ixi.get_loaders()
     elif args.train_dataset == "gigamed":
         gigamed_dataset = gigamed.GigaMed(
-            args.batch_size, args.num_workers, load_seg=False
+            args.batch_size, args.num_workers, load_seg=True
         )
         train_loader = gigamed_dataset.get_train_loader()
     elif args.train_dataset == "synthbrain":
@@ -1032,7 +1032,7 @@ def main():
         train_loader = synth_dataset.get_train_loader()
     elif args.train_dataset == "gigamed+synthbrain":
         gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
-            args.batch_size, args.num_workers, load_seg=False
+            args.batch_size, args.num_workers, load_seg=True
         )
         train_loader = gigamed_synthbrain_dataset.get_train_loader()
     elif args.train_dataset == "gigamed+synthbrain+randomanistropy":
@@ -1043,7 +1043,7 @@ def main():
             ]
         )
         gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
-            args.batch_size, args.num_workers, load_seg=False, transform=transform
+            args.batch_size, args.num_workers, load_seg=True, transform=transform
         )
         train_loader = gigamed_synthbrain_dataset.get_train_loader()
     else:
