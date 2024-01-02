@@ -59,7 +59,7 @@ def read_subjects_from_disk(root_dir: str, train: bool, load_seg=True):
     for list_value in list(subject_dict.values()):
         assert (
             len(list_value) == first_list_length
-        ), "All lists in the dictionary must be of the same length"
+        ), f"All lists in the dictionary must be of the same length, {img_data_folder}"
     return subject_dict
 
 
@@ -404,7 +404,7 @@ class GigaMed:
 
     def get_test_loaders(self, id=True):
         test_datasets = []
-        list_of_test_datasets = self.get_dataset_names(id=id)
+        list_of_test_datasets = self.get_dataset_names_with_test(id=id)
         for ds_name in list_of_test_datasets:
             test_datasets.append(
                 SingleSubjectDataset(
@@ -428,7 +428,7 @@ class GigaMed:
 
     def get_group_loaders(self, id=True):
         test_datasets = []
-        list_of_test_datasets = self.get_dataset_names(id=id)
+        list_of_test_datasets = self.get_dataset_names_with_test(id=id)
         for ds_name in list_of_test_datasets:
             test_datasets.append(
                 GroupDataset(

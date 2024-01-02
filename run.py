@@ -228,6 +228,149 @@ def _get_tps_lmbda(num_samples, tps_lmbda):
     return lmbda
 
 
+def create_dirs(args):
+    # Path to save outputs
+    if args.eval:
+        prefix = "__eval__"
+        dataset_str = args.test_dataset
+    else:
+        prefix = "__training__"
+        dataset_str = args.train_dataset
+    arguments = (
+        prefix
+        + args.job_name
+        + "_dataset"
+        + dataset_str
+        + "_keypoints"
+        + str(args.num_keypoints)
+        + "_batch"
+        + str(args.batch_size)
+        + "_normType"
+        + str(args.norm_type)
+        + "_lr"
+        + str(args.lr)
+    )
+
+    args.model_dir = Path(args.save_dir) / arguments
+    if not os.path.exists(args.model_dir) and not args.debug_mode:
+        print("Creating directory: {}".format(args.model_dir))
+        os.makedirs(args.model_dir)
+
+    if args.eval:
+        args.model_result_dir = args.model_dir / "eval_results"
+        if not os.path.exists(args.model_result_dir) and not args.debug_mode:
+            os.makedirs(args.model_result_dir)
+        args.model_eval_dir = args.model_dir / "eval_img"
+        if not os.path.exists(args.model_eval_dir) and not args.debug_mode:
+            os.makedirs(args.model_eval_dir)
+
+    else:
+        args.model_ckpt_dir = args.model_dir / "checkpoints"
+        if not os.path.exists(args.model_ckpt_dir) and not args.debug_mode:
+            os.makedirs(args.model_ckpt_dir)
+        args.model_img_dir = args.model_dir / "train_img"
+        if not os.path.exists(args.model_img_dir) and not args.debug_mode:
+            os.makedirs(args.model_img_dir)
+
+    # Write arguments to json
+    arg_dict = vars(deepcopy(args))
+    if not args.debug_mode:
+        with open(os.path.join(args.model_dir, "args.json"), "w") as outfile:
+            json.dump(arg_dict, outfile, sort_keys=True, indent=4)
+
+
+def set_seed(args):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+
+def get_data(args):
+    if args.train_dataset == "ixi":
+        train_loader, _ = ixi.get_loaders()
+    elif args.train_dataset == "gigamed":
+        gigamed_dataset = gigamed.GigaMed(
+            args.batch_size, args.num_workers, load_seg=True
+        )
+        train_loader = gigamed_dataset.get_train_loader()
+    elif args.train_dataset == "synthbrain":
+        synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
+        train_loader = synth_dataset.get_train_loader()
+    elif args.train_dataset == "gigamed+synthbrain":
+        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
+            args.batch_size, args.num_workers, load_seg=True
+        )
+        train_loader = gigamed_synthbrain_dataset.get_train_loader()
+    elif args.train_dataset == "gigamed+synthbrain+randomanistropy":
+        transform = tio.Compose(
+            [
+                tio.Lambda(synthbrain.one_hot, include=("seg")),
+                tio.RandomAnisotropy(downsampling=(1, 4)),
+            ]
+        )
+        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
+            args.batch_size, args.num_workers, load_seg=True, transform=transform
+        )
+        train_loader = gigamed_synthbrain_dataset.get_train_loader()
+    else:
+        raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
+
+    if args.test_dataset == "ixi":
+        _, test_loaders = ixi.get_loaders()
+    elif args.test_dataset == "gigamed":
+        gigamed_dataset = gigamed.GigaMed(
+            args.batch_size, args.num_workers, load_seg=False
+        )
+        test_loaders = gigamed_dataset.get_test_loaders()
+        group_loaders = gigamed_dataset.get_group_loaders()
+    else:
+        raise ValueError('Invalid test dataset "{}"'.format(args.test_dataset))
+
+    # if args.kpconsistency_coeff > 0:
+    #     assert (
+    #         len(moving_datasets) > 1
+    #     ), "Need more than one modality to compute keypoint consistency loss"
+    #     assert all(
+    #         [len(fd) == len(md) for fd, md in zip(fixed_datasets, moving_datasets)]
+    #     ), "Must have same number of subjects for fixed and moving datasets"
+    return train_loader, {"test": test_loaders, "group": group_loaders}
+
+
+def get_model(args):
+    # CNN, i.e. keypoint extractor
+    if args.backbone == "conv":
+        network = ConvNet(
+            args.dim,
+            1,
+            args.num_keypoints,
+            norm_type=args.norm_type,
+        )
+    elif args.backbone == "unet":
+        network = UNet(
+            args.dim,
+            1,
+            args.num_keypoints,
+        )
+    elif args.backbone == "se3cnn":
+        network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
+    else:
+        raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
+    network = torch.nn.DataParallel(network)
+
+    # Keypoint model
+    registration_model = KeyMorph(
+        network,
+        args.num_keypoints,
+        args.dim,
+        use_amp=args.use_amp,
+        max_train_keypoints=args.max_train_keypoints,
+        weight_keypoints=args.weighted_kp_align,
+    )
+    registration_model.to(args.device)
+    utils.summary(registration_model)
+    return registration_model
+
+
 def run_train(train_loader, registration_model, optimizer, args):
     """Train for one epoch.
 
@@ -328,63 +471,49 @@ def run_train(train_loader, registration_model, optimizer, args):
             metrics = {}
             metrics["scale_augment"] = scale_augment
             metrics["mse"] = loss_ops.MSELoss()(img_f, img_a)
-            # metrics["lesion_penalty"] = loss_ops.LesionPenalty(
-            #     weights, points_f, points_m, lesion_mask_f, lesion_mask_m
-            # )
             if seg_available:
                 metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
                 metrics["softdice"] = 1 - metrics["softdiceloss"]
 
             # Compute loss
             if args.loss_fn == "mse":
-                loss = (
-                    metrics["mse"]
-                    # + args.lesion_penalty_coeff * metrics["lesion_penalty"]
-                )
+                loss = metrics["mse"]
             elif args.loss_fn == "dice":
-                loss = (
-                    metrics["softdiceloss"]
-                    # + args.lesion_penalty_coeff * metrics["lesion_penalty"]
-                )
+                loss = metrics["softdiceloss"]
             else:
                 raise ValueError('Invalid loss function "{}"'.format(args.loss_fn))
             metrics["loss"] = loss
 
         # Perform backward pass
         if args.use_amp:
-            # Scales the loss, and calls backward()
-            # to create scaled gradients
             scaler.scale(loss).backward()
-            # Unscales gradients and calls
-            # or skips optimizer.step()
             scaler.step(optimizer)
-            # Updates the scale for next iteration
             scaler.update()
         else:
             loss.backward()
             optimizer.step()
 
         # Keypoint consistency loss
-        if args.kpconsistency_coeff > 0:
-            mods = np.random.choice(len(moving_loaders), size=2, replace=False)
-            rand_subject = np.random.randint(0, len(moving_iter))
-            sub1 = moving_loaders[mods[0]].dataset[rand_subject]
-            sub2 = moving_loaders[mods[1]].dataset[rand_subject]
+        # if args.kpconsistency_coeff > 0:
+        #     mods = np.random.choice(len(moving_loaders), size=2, replace=False)
+        #     rand_subject = np.random.randint(0, len(moving_iter))
+        #     sub1 = moving_loaders[mods[0]].dataset[rand_subject]
+        #     sub2 = moving_loaders[mods[1]].dataset[rand_subject]
 
-            sub1 = sub1["img"][tio.DATA].float().to(args.device).unsqueeze(0)
-            sub2 = sub2["img"][tio.DATA].float().to(args.device).unsqueeze(0)
-            sub1, sub2 = random_affine_augment_pair(
-                sub1, sub2, scale_params=scale_augment
-            )
+        #     sub1 = sub1["img"][tio.DATA].float().to(args.device).unsqueeze(0)
+        #     sub2 = sub2["img"][tio.DATA].float().to(args.device).unsqueeze(0)
+        #     sub1, sub2 = random_affine_augment_pair(
+        #         sub1, sub2, scale_params=scale_augment
+        #     )
 
-            optimizer.zero_grad()
-            with torch.set_grad_enabled(True):
-                points1, points2 = registration_model.extract_keypoints_step(sub1, sub2)
+        #     optimizer.zero_grad()
+        #     with torch.set_grad_enabled(True):
+        #         points1, points2 = registration_model.extract_keypoints_step(sub1, sub2)
 
-            kploss = args.kpconsistency_coeff * loss_ops.MSELoss()(points1, points2)
-            kploss.backward()
-            optimizer.step()
-            metrics["kploss"] = kploss
+        #     kploss = args.kpconsistency_coeff * loss_ops.MSELoss()(points1, points2)
+        #     kploss.backward()
+        #     optimizer.step()
+        #     metrics["kploss"] = kploss
 
         end_time = time.time()
         metrics["epoch_time"] = end_time - start_time
@@ -951,60 +1080,14 @@ def run_groupwise_eval(
 
 def main():
     args = parse_args()
-    arg_dict = vars(deepcopy(args))
     if args.loss_fn == "mse":
         assert not args.mix_modalities, "MSE loss can't mix modalities"
     if args.debug_mode:
         args.steps_per_epoch = 3
-    pprint(arg_dict)
+    pprint(vars(args))
 
-    # Path to save outputs
-    if args.eval:
-        prefix = "__eval__"
-        dataset_str = args.test_dataset
-    else:
-        prefix = "__training__"
-        dataset_str = args.train_dataset
-    arguments = (
-        prefix
-        + args.job_name
-        + "_dataset"
-        + dataset_str
-        + "_keypoints"
-        + str(args.num_keypoints)
-        + "_batch"
-        + str(args.batch_size)
-        + "_normType"
-        + str(args.norm_type)
-        + "_lr"
-        + str(args.lr)
-    )
-
-    args.model_dir = Path(args.save_dir) / arguments
-    if not os.path.exists(args.model_dir) and not args.debug_mode:
-        print("Creating directory: {}".format(args.model_dir))
-        os.makedirs(args.model_dir)
-
-    if args.eval:
-        args.model_result_dir = args.model_dir / "eval_results"
-        if not os.path.exists(args.model_result_dir) and not args.debug_mode:
-            os.makedirs(args.model_result_dir)
-        args.model_eval_dir = args.model_dir / "eval_img"
-        if not os.path.exists(args.model_eval_dir) and not args.debug_mode:
-            os.makedirs(args.model_eval_dir)
-
-    else:
-        args.model_ckpt_dir = args.model_dir / "checkpoints"
-        if not os.path.exists(args.model_ckpt_dir) and not args.debug_mode:
-            os.makedirs(args.model_ckpt_dir)
-        args.model_img_dir = args.model_dir / "train_img"
-        if not os.path.exists(args.model_img_dir) and not args.debug_mode:
-            os.makedirs(args.model_img_dir)
-
-    # Write arguments to json
-    if not args.debug_mode:
-        with open(os.path.join(args.model_dir, "args.json"), "w") as outfile:
-            json.dump(arg_dict, outfile, sort_keys=True, indent=4)
+    # Create run directories
+    create_dirs(args)
 
     # Select GPU
     if torch.cuda.is_available():
@@ -1015,90 +1098,13 @@ def main():
     print("Number of GPUs: {}".format(torch.cuda.device_count()))
 
     # Set seed
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    set_seed(args)
 
     # Data
-    if args.train_dataset == "ixi":
-        train_loader, _ = ixi.get_loaders()
-    elif args.train_dataset == "gigamed":
-        gigamed_dataset = gigamed.GigaMed(
-            args.batch_size, args.num_workers, load_seg=True
-        )
-        train_loader = gigamed_dataset.get_train_loader()
-    elif args.train_dataset == "synthbrain":
-        synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
-        train_loader = synth_dataset.get_train_loader()
-    elif args.train_dataset == "gigamed+synthbrain":
-        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
-            args.batch_size, args.num_workers, load_seg=True
-        )
-        train_loader = gigamed_synthbrain_dataset.get_train_loader()
-    elif args.train_dataset == "gigamed+synthbrain+randomanistropy":
-        transform = tio.Compose(
-            [
-                tio.Lambda(synthbrain.one_hot, include=("seg")),
-                tio.RandomAnisotropy(downsampling=(1, 4)),
-            ]
-        )
-        gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
-            args.batch_size, args.num_workers, load_seg=True, transform=transform
-        )
-        train_loader = gigamed_synthbrain_dataset.get_train_loader()
-    else:
-        raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
+    train_loader, eval_loaders = get_data(args)
 
-    if args.test_dataset == "ixi":
-        _, test_loaders = ixi.get_loaders()
-    elif args.test_dataset == "gigamed":
-        gigamed_dataset = gigamed.GigaMed(
-            args.batch_size, args.num_workers, load_seg=False
-        )
-        test_loaders = gigamed_dataset.get_test_loaders()
-        group_loaders = gigamed_dataset.get_group_loaders()
-    else:
-        raise ValueError('Invalid test dataset "{}"'.format(args.test_dataset))
-
-    if args.kpconsistency_coeff > 0:
-        assert (
-            len(moving_datasets) > 1
-        ), "Need more than one modality to compute keypoint consistency loss"
-        assert all(
-            [len(fd) == len(md) for fd, md in zip(fixed_datasets, moving_datasets)]
-        ), "Must have same number of subjects for fixed and moving datasets"
-
-    # CNN, i.e. keypoint extractor
-    if args.backbone == "conv":
-        network = ConvNet(
-            args.dim,
-            1,
-            args.num_keypoints,
-            norm_type=args.norm_type,
-        )
-    elif args.backbone == "unet":
-        network = UNet(
-            args.dim,
-            1,
-            args.num_keypoints,
-        )
-    elif args.backbone == "se3cnn":
-        network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
-    else:
-        raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
-    network = torch.nn.DataParallel(network)
-
-    # Keypoint model
-    registration_model = KeyMorph(
-        network,
-        args.num_keypoints,
-        args.dim,
-        use_amp=args.use_amp,
-        max_train_keypoints=args.max_train_keypoints,
-        weight_keypoints=args.weighted_kp_align,
-    )
-    registration_model.to(args.device)
-    utils.summary(registration_model)
+    # Model
+    registration_model = get_model(args)
 
     # Optimizer
     optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
@@ -1179,7 +1185,7 @@ def main():
                 mod1, mod2 = utils.parse_test_mod(mod)
                 param = utils.parse_test_aug(aug)
                 test_metrics = run_eval(
-                    test_loaders,
+                    eval_loaders["test"],
                     registration_model,
                     mod1,
                     mod2,
@@ -1210,7 +1216,7 @@ def main():
                     mod1, mod2 = utils.parse_test_mod(mod)
                     param = utils.parse_test_aug(aug)
                     test_metrics = run_eval(
-                        test_loaders,
+                        eval_loaders["test"],
                         registration_model,
                         mod1,
                         mod2,
@@ -1241,7 +1247,7 @@ def main():
                 for aug in list_of_test_augs:
                     param = utils.parse_test_aug(aug)
                     test_metrics = run_groupwise_eval(
-                        group_loaders,
+                        eval_loaders["group"],
                         registration_model,
                         mod,
                         param,

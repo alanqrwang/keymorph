@@ -22,7 +22,7 @@ Dataset5084_IXIT2,True,False,False,False,T2 modality of Dataset4999_IXIAllModali
 Dataset5085_IXIPD,True,False,False,False,PD modality of Dataset4999_IXIAllModalities
 Dataset5090_ISLES2022,False,True,False,True,ichemic stroke lesions
 Dataset5095_MSSEG,True,True,False,True,multiple sclerosis
-Dataset5096_MSSEG2,True,True,False,True,multiple sclerosis
+Dataset5096_MSSEG2,False,True,False,True,multiple sclerosis
 Dataset5111_UCSF-ALPTDG-time1,False,True,False,True,timepoint 1 of Dataset5114_UCSF-ALPTDG
 Dataset5112_UCSF-ALPTDG-time2,False,True,False,True,timepoint 2 of Dataset5114_UCSF-ALPTDG
 Dataset5113_StanfordMETShare,True,True,False,True,metastases
