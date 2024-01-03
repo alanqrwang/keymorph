@@ -22,6 +22,8 @@ need_skullstrip = [
     "Dataset5085_IXIPD",
     "Dataset5096_MSSEG2",
     "NYU_METS",
+    "Dataset7000_openneuro-ds004791",
+    "Dataset7001_openneuro-ds004848",
 ]
 
 
@@ -185,7 +187,7 @@ def main():
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
         )
     dataset_names = [
-        # "Dataset4999_IXIAllModalities",
+        "Dataset4999_IXIAllModalities",
         "Dataset5000_BraTS-GLI_2023",
         "Dataset5001_BraTS-SSA_2023",
         "Dataset5002_BraTS-MEN_2023",
@@ -218,6 +220,8 @@ def main():
         "Dataset6001_ADNI-group-T1-3T-PreProc",
         "Dataset6002_OASIS3",
         "Dataset6003_AIBL",
+        "Dataset7000_openneuro-ds004791",
+        "Dataset7001_openneuro-ds004848",
     ]
 
     for ds in dataset_names:
