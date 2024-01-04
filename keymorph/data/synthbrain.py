@@ -9,7 +9,7 @@ data_dir = "/midtier/sablab/scratch/alw4013/data/synthseg_clean_MNI"
 
 def one_hot(asegs):
     subset_regs = [
-        [0, 0],  # Background
+        [0, 24],  # Background and CSF
         [13, 52],  # Pallidum
         [18, 54],  # Amygdala
         [11, 50],  # Caudate
