@@ -247,7 +247,205 @@ class ConcatDataset(Dataset):
         return l
 
 
+class GigaMedNames:
+    """Convenience class. Handles all dataset names in GigaMed."""
+
+    def __init__(self):
+        self.gigamed_id_df = pd.read_csv(id_csv_file, header=0)
+        self.gigamed_ood_df = pd.read_csv(ood_csv_file, header=0)
+
+    def all(self, id=True, train=True):
+        df = self.gigamed_id_df if id else self.gigamed_ood_df
+        if train:
+            mask = df["has_train"]
+        else:
+            mask = df["has_test"]
+        return df.loc[mask]["name"].tolist()
+
+    def with_longitudinal(self, id=True, train=True):
+        df = self.gigamed_id_df if id else self.gigamed_ood_df
+        if train:
+            mask = df["has_longitudinal"] & df["has_train"]
+        else:
+            mask = df["has_longitudinal"] & df["has_test"]
+        return df.loc[mask]["name"].tolist()
+
+    def with_multiple_modalities(self, id=True, train=True):
+        df = self.gigamed_id_df if id else self.gigamed_ood_df
+        if train:
+            mask = df["has_multiple_modalities"] & df["has_train"]
+        else:
+            mask = df["has_multiple_modalities"] & df["has_test"]
+        return df.loc[mask]["name"].tolist()
+
+    def with_one_modality(self, id=True, train=True):
+        df = self.gigamed_id_df if id else self.gigamed_ood_df
+        if train:
+            mask = ~df["has_multiple_modalities"] & df["has_train"]
+        else:
+            mask = ~df["has_multiple_modalities"] & df["has_test"]
+        return df.loc[mask]["name"].tolist()
+
+    def with_lesion_seg(self, id=True, train=True):
+        df = self.gigamed_id_df if id else self.gigamed_ood_df
+        if train:
+            mask = df["has_lesion_seg"] & df["has_train"]
+        else:
+            mask = df["has_lesion_seg"] & df["has_test"]
+        return df.loc[mask]["name"].tolist()
+
+
+class GigaMedDataset:
+    """Convenience class. Handles creating Pytorch Datasets."""
+
+    def __init__(
+        self,
+        load_seg=True,
+        transform=None,
+    ):
+        self.load_seg = load_seg
+        if transform is None:
+            self.transform = tio.Compose(
+                [
+                    tio.Lambda(one_hot, include=("seg")),
+                ]
+            )
+        else:
+            self.transform = transform
+
+        self.gigamed_names = GigaMedNames()
+
+    def get_sssm_datasets(self, id=True, train=True):
+        """Single subject, single modality (Longitudinal)"""
+        names = self.gigamed_names.with_longitudinal(id=id)
+        datasets = {}
+        for name in names:
+            datasets[name] = SameSubjectSameModalityDataset(
+                os.path.join(data_dir, name),
+                train,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+        self.print_dataset_stats(datasets, f"SSSM, ID={id}, Train={train}")
+        return datasets
+
+    def get_ssdm_datasets(self, id=True, train=True):
+        """Single subject, different modality (SSDM) must have multiple modalities for a single subject"""
+        names = self.gigamed_names.with_multiple_modalities(id=id)
+        datasets = {}
+        for name in names:
+            datasets[name] = SameSubjectDiffModalityDataset(
+                os.path.join(data_dir, name),
+                train,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+        self.print_dataset_stats(datasets, f"SSDM, ID={id}, Train={train}")
+        return datasets
+
+    def get_dssm_datasets(self, id=True, train=True):
+        """Different subject, same modality (DSSM) can have one or multiple modalities for a single subject"""
+        names = self.gigamed_names.with_one_modality(
+            id=id
+        ) + self.gigamed_names.with_multiple_modalities(id=id)
+        datasets = {}
+        for name in names:
+            datasets[name] = DiffSubjectSameModalityDataset(
+                os.path.join(data_dir, name),
+                train,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+        self.print_dataset_stats(datasets, f"DSSM, ID={id}, Train={train}")
+        return datasets
+
+    def get_dsdm_datasets(self, id=True, train=True):
+        """Different subject, different modality (DSDM) must have multiple modalities for a single subject"""
+        names = self.gigamed_names.with_multiple_modalities(id=id)
+        datasets = {}
+        for name in names:
+            datasets[name] = DiffSubjectDiffModalityDataset(
+                os.path.join(data_dir, name),
+                train,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+
+        self.print_dataset_stats(datasets, f"DSDM, ID={id}, Train={train}")
+        return datasets
+
+    def get_datasets(self, id=True, train=True):
+        names = self.gigamed_names.all(id=id, train=train)
+        datasets = {}
+        for name in names:
+            datasets[name] = SingleSubjectDataset(
+                os.path.join(data_dir, name),
+                train,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+
+        self.print_dataset_stats(datasets, f"All datasets, ID={id}, Train={train}")
+        return datasets
+
+    def get_group_datasets(self, id=True, train=True):
+        """Group datasets can be from any dataset"""
+        names = self.gigamed_names.all(id=id, train=train)
+        datasets = {}
+        for name in names:
+            datasets[name] = GroupDataset(
+                os.path.join(data_dir, name),
+                train,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+        self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
+        return datasets
+
+    def get_longitudinal_datasets(self, id=True, train=True):
+        names = self.gigamed_names.with_longitudinal(id=id, train=train)
+        datasets = {}
+        for name in names:
+            datasets[name] = GroupDataset(
+                os.path.join(data_dir, name),
+                train,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+        self.print_dataset_stats(datasets, f"Longitudinal, ID={id}, Train={train}")
+        return datasets
+
+    def get_lesion_datasets(self, id=True, train=True):
+        names = self.gigamed_names.with_lesion_seg(id=id, train=train)
+        datasets = {}
+        for name in names:
+            datasets[name] = GroupDataset(
+                os.path.join(data_dir, name),
+                False,
+                self.transform,
+                load_seg=self.load_seg,
+            )
+        self.print_dataset_stats(datasets, f"Lesion, ID={id}, Train={train}")
+        return datasets
+
+    def print_dataset_stats(self, datasets, prefix=""):
+        print(f"\n{prefix} dataset has {len(datasets)} datasets.")
+        tot = 0
+        for name, ds in datasets.items():
+            tot += len(ds)
+            print(f"-> {name} has {len(ds)} subjects")
+        print("Total: ", tot)
+
+    def get_reference_subject(self):
+        ds_name = self.gigamed_names.all(id=True, train=True)[0]
+        root_dir = os.path.join(data_dir, ds_name)
+        subject_dict = read_subjects_from_disk(root_dir, True, load_seg=False)
+        return subject_dict[list(subject_dict.keys())[0]][0]
+
+
 class GigaMed:
+    """Top-level class. Handles creating Pytorch dataloaders."""
+
     def __init__(
         self,
         batch_size,
@@ -258,133 +456,25 @@ class GigaMed:
     ):
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.load_seg = load_seg
         self.sample_same_mod_only = sample_same_mod_only
-        if transform is None:
-            self.transform = tio.Compose(
-                [
-                    tio.Lambda(one_hot, include=("seg")),
-                ]
-            )
-        else:
-            self.transform = transform
-
-        self.gigamed_id_df = pd.read_csv(id_csv_file, header=0)
-        self.gigamed_ood_df = pd.read_csv(ood_csv_file, header=0)
-
-    def get_dataset_names(self, id):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        return df["name"].tolist()
-
-    def get_dataset_names_with_longitudinal(self, id):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        return df.loc[df["has_longitudinal"]]["name"].tolist()
-
-    def get_dataset_names_with_multiple_modalities(self, id):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        return df.loc[df["has_multiple_modalities"]]["name"].tolist()
-
-    def get_dataset_names_with_one_modality(self, id):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        return df.loc[~df["has_multiple_modalities"]]["name"].tolist()
-
-    def get_dataset_names_with_lesion_seg(self, id):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        return df.loc[df["has_lesion_seg"]]["name"].tolist()
-
-    def get_dataset_names_with_test(self, id):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        return df.loc[df["has_test"]]["name"].tolist()
-
-    def get_sssm_datasets(self, id=True, train=True):
-        """Longitudinal"""
-        sssm_dataset_names = self.get_dataset_names_with_longitudinal(id=id)
-
-        sssm_datasets = []
-        for ds_name in sssm_dataset_names:
-            sssm_datasets.append(
-                SameSubjectSameModalityDataset(
-                    os.path.join(data_dir, ds_name),
-                    train,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-        self.print_dataset_stats(sssm_datasets, "SSSM")
-        return sssm_datasets
-
-    def get_ssdm_datasets(self, id=True, train=True):
-        """Single subject, different modality (SSDM) must have multiple modalities for a single subject"""
-        ssdm_dataset_names = self.get_dataset_names_with_multiple_modalities(id=id)
-        ssdm_datasets = []
-        for ds_name in ssdm_dataset_names:
-            ssdm_datasets.append(
-                SameSubjectDiffModalityDataset(
-                    os.path.join(data_dir, ds_name),
-                    train,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-        self.print_dataset_stats(ssdm_datasets, "SSDM")
-        return ssdm_datasets
-
-    def get_dssm_datasets(self, id=True, train=True):
-        """Different subject, same modality (DSSM) can have one or multiple modalities for a single subject"""
-        dssm_dataset_names = self.get_dataset_names_with_one_modality(
-            id=True
-        ) + self.get_dataset_names_with_multiple_modalities(id=id)
-        dssm_datasets = []
-        for ds_name in dssm_dataset_names:
-            dssm_datasets.append(
-                DiffSubjectSameModalityDataset(
-                    os.path.join(data_dir, ds_name),
-                    train,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-        self.print_dataset_stats(dssm_datasets, "DSSM")
-        return dssm_datasets
-
-    def get_dsdm_datasets(self, id=True, train=True):
-        """Different subject, different modality (DSDM) must have multiple modalities for a single subject"""
-        dsdm_dataset_names = self.get_dataset_names_with_multiple_modalities(id=id)
-        dsdm_datasets = []
-        for ds_name in dsdm_dataset_names:
-            dsdm_datasets.append(
-                DiffSubjectDiffModalityDataset(
-                    os.path.join(data_dir, ds_name),
-                    train,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-
-        self.print_dataset_stats(dsdm_datasets, "DSDM")
-        return dsdm_datasets
-
-    def get_single_datasets(self):
-        dataset_names = self.get_dataset_names(id=True)
-        datasets = []
-        for ds_name in dataset_names:
-            datasets.append(
-                SingleSubjectDataset(
-                    os.path.join(data_dir, ds_name),
-                    True,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-
-        self.print_dataset_stats(datasets, "Pretraining")
-        return datasets
+        self.gigamed_dataset = GigaMedDataset(
+            load_seg=load_seg,
+            transform=transform,
+        )
 
     def get_train_loader(self):
-        sssm_datasets = self.get_sssm_datasets(id=True, train=True)
-        dssm_datasets = self.get_dssm_datasets(id=True, train=True)
-        ssdm_datasets = self.get_ssdm_datasets(id=True, train=True)
-        dsdm_datasets = self.get_dsdm_datasets(id=True, train=True)
+        sssm_datasets = list(
+            self.gigamed_dataset.get_sssm_datasets(id=True, train=True).values()
+        )
+        dssm_datasets = list(
+            self.gigamed_dataset.get_dssm_datasets(id=True, train=True).values()
+        )
+        ssdm_datasets = list(
+            self.gigamed_dataset.get_ssdm_datasets(id=True, train=True).values()
+        )
+        dsdm_datasets = list(
+            self.gigamed_dataset.get_dsdm_datasets(id=True, train=True).values()
+        )
         if self.sample_same_mod_only:
             final_dataset = ConcatDataset(sssm_datasets, dssm_datasets)
         else:
@@ -402,23 +492,11 @@ class GigaMed:
         )
         return train_loader
 
-    def get_test_loaders(self, id=True):
-        test_datasets = []
-        list_of_test_datasets = self.get_dataset_names_with_test(id=id)
-        for ds_name in list_of_test_datasets:
-            test_datasets.append(
-                SingleSubjectDataset(
-                    os.path.join(data_dir, ds_name),
-                    False,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-        self.print_dataset_stats(test_datasets, "Test")
-
+    def get_eval_loaders(self, id):
+        datasets = self.gigamed_dataset.get_datasets(id=id, train=False)
         loaders = {}
-        for ds_name, ds in zip(list_of_test_datasets, test_datasets):
-            loaders[ds_name] = DataLoader(
+        for name, ds in datasets.items():
+            loaders[name] = DataLoader(
                 ds,
                 batch_size=self.batch_size,
                 shuffle=False,
@@ -426,23 +504,11 @@ class GigaMed:
             )
         return loaders
 
-    def get_group_loaders(self, id=True):
-        test_datasets = []
-        list_of_test_datasets = self.get_dataset_names_with_test(id=id)
-        for ds_name in list_of_test_datasets:
-            test_datasets.append(
-                GroupDataset(
-                    os.path.join(data_dir, ds_name),
-                    False,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-        self.print_dataset_stats(test_datasets, "Test")
-
+    def get_eval_group_loaders(self, id):
+        datasets = self.gigamed_dataset.get_group_datasets(id=id, train=False)
         loaders = {}
-        for ds_name, ds in zip(list_of_test_datasets, test_datasets):
-            loaders[ds_name] = DataLoader(
+        for name, ds in datasets.items():
+            loaders[name] = DataLoader(
                 ds,
                 batch_size=self.batch_size,
                 shuffle=False,
@@ -450,23 +516,11 @@ class GigaMed:
             )
         return loaders
 
-    def get_longitudinal_loaders(self, id=True):
-        test_datasets = []
-        list_of_test_datasets = self.get_dataset_names_with_longitudinal(id=id)
-        for ds_name in list_of_test_datasets:
-            test_datasets.append(
-                GroupDataset(
-                    os.path.join(data_dir, ds_name),
-                    False,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-        self.print_dataset_stats(test_datasets, "Test")
-
+    def get_eval_longitudinal_loaders(self, id):
+        datasets = self.gigamed_dataset.get_longitudinal_datasets(id=id, train=False)
         loaders = {}
-        for ds_name, ds in zip(list_of_test_datasets, test_datasets):
-            loaders[ds_name] = DataLoader(
+        for name, ds in datasets.items():
+            loaders[name] = DataLoader(
                 ds,
                 batch_size=self.batch_size,
                 shuffle=False,
@@ -474,23 +528,11 @@ class GigaMed:
             )
         return loaders
 
-    def get_lesion_loaders(self, id=True):
-        test_datasets = []
-        list_of_test_datasets = self.get_dataset_names_with_lesion_seg(id=id)
-        for ds_name in list_of_test_datasets:
-            test_datasets.append(
-                GroupDataset(
-                    os.path.join(data_dir, ds_name),
-                    False,
-                    self.transform,
-                    load_seg=self.load_seg,
-                )
-            )
-        self.print_dataset_stats(test_datasets, "Test")
-
+    def get_eval_lesion_loaders(self, id):
+        datasets = self.gigamed_dataset.get_lesion_datasets(id=id, train=False)
         loaders = {}
-        for ds_name, ds in zip(list_of_test_datasets, test_datasets):
-            loaders[ds_name] = DataLoader(
+        for name, ds in datasets.items():
+            loaders[name] = DataLoader(
                 ds,
                 batch_size=self.batch_size,
                 shuffle=False,
@@ -499,7 +541,7 @@ class GigaMed:
         return loaders
 
     def get_pretrain_loader(self):
-        datasets = self.get_single_datasets()
+        datasets = self.gigamed_dataset.get_datasets(id=True, train=True)
         train_loader = DataLoader(
             ConcatDataset(datasets),
             batch_size=self.batch_size,
@@ -510,31 +552,17 @@ class GigaMed:
         return train_loader
 
     def get_reference_subject(self):
-        ds_name = self.get_dataset_names_with_multiple_modalities(id=True)[0]
-        root_dir = os.path.join(data_dir, ds_name)
-        subject_dict = read_subjects_from_disk(root_dir, True, load_seg=False)
-        return subject_dict[list(subject_dict.keys())[0]][0]
-
-    def print_dataset_stats(self, datasets, prefix=""):
-        print(f"\n{prefix} dataset has {len(datasets)} datasets.")
-        tot = 0
-        for i, ds in enumerate(datasets):
-            tot += len(ds)
-            print(
-                "-> Dataset {} has {} subjects".format(
-                    i,
-                    len(ds),
-                )
-            )
-        print("Total: ", tot)
+        return self.gigamed_dataset.get_reference_subject()
 
 
 class GigaMedSynthBrain(GigaMed):
+    """Combination of GigaMed + SynthBrain."""
+
     def get_train_loader(self):
-        sssm_datasets = self.get_sssm_datasets()
-        dssm_datasets = self.get_dssm_datasets()
-        ssdm_datasets = self.get_ssdm_datasets()
-        dsdm_datasets = self.get_dsdm_datasets()
+        sssm_datasets = list(self.gigamed_dataset.get_sssm_datasets().values())
+        dssm_datasets = list(self.gigamed_dataset.get_dssm_datasets().values())
+        ssdm_datasets = list(self.gigamed_dataset.get_ssdm_datasets().values())
+        dsdm_datasets = list(self.gigamed_dataset.get_dsdm_datasets().values())
         sb_dataset = SynthBrain(
             self.batch_size, self.num_workers, load_seg=True
         ).get_paired_dataset()
@@ -559,7 +587,7 @@ class GigaMedSynthBrain(GigaMed):
         return train_loader
 
     def get_pretrain_loader(self):
-        datasets = self.get_single_datasets()
+        datasets = self.gigamed_dataset.get_single_datasets()
         sb_dataset = SynthBrain(
             self.batch_size, self.num_workers, load_seg=True
         ).get_single_dataset()
@@ -629,7 +657,7 @@ if __name__ == "__main__":
 
     list_of_test_datasets = list_of_id_test_datasets + list_of_ood_test_datasets
 
-    gigamed = GigaMed(1, 1)
+    gigamed = GigaMedDataset()
     print(gigamed.get_dataset_names_with_longitudinal(id=True))
     print(gigamed.get_dataset_names_with_multiple_modalities(id=True))
     print(gigamed.get_dataset_names_with_one_modality(id=True))
