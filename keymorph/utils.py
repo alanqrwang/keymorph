@@ -45,16 +45,16 @@ def parse_test_mod(mod):
 def parse_test_aug(aug):
     if "rot" in aug:
         if aug == "rot0":
-            rot_aug = [0, 0, 0]
+            rot_aug = 0
         elif aug == "rot45":
-            rot_aug = np.random.choice([0, math.pi / 4], size=3)
+            rot_aug = math.pi / 4
         elif aug == "rot90":
-            rot_aug = np.random.choice([0, math.pi / 2], size=3)
+            rot_aug = math.pi / 2
         elif aug == "rot135":
-            rot_aug = np.random.choice([0, 3 * math.pi / 4], size=3)
+            rot_aug = 3 * math.pi / 4
         elif aug == "rot180":
-            rot_aug = np.random.choice([0, math.pi], size=3)
-        aug_param = [(0, 0, 0), (0, 0, 0), rot_aug, (0, 0, 0, 0, 0, 0)]
+            rot_aug = math.pi
+        aug_param = (0, 0, rot_aug, 0)
     else:
         raise NotImplementedError()
 
@@ -85,8 +85,10 @@ def initialize_wandb(config):
     wandb.config.update(config)
 
 
-def load_checkpoint(checkpoint_path, model, optimizer, scheduler=None, resume=False):
-    state = torch.load(checkpoint_path)
+def load_checkpoint(
+    checkpoint_path, model, optimizer, scheduler=None, resume=False, device="cpu"
+):
+    state = torch.load(checkpoint_path, map_location=torch.device(device))
     state_dict = state["state_dict"]
     if "keypoint_extractor" in list(state_dict.keys())[-1]:
         # Rename any keypoint_extractor keys to backbone

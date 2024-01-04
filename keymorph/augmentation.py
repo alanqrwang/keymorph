@@ -231,22 +231,23 @@ def random_affine_augment(
 
 def affine_augment(img, fixed_params, seg=None, points=None):
     """Augment moving image. Optionally augments corresponding segmentation and keypoints.
+    Augments isotropically in all directions. TODO: fix this?
 
     :param img: Moving image to augment (bs, nch, l, w) or (bs, nch, l, w, h)
-    :param fixed_params: Fixed parameters for transformation.
+    :param fixed_params: tuple of floats, fixed parameters for transformation.
     """
     s, o, a, z = fixed_params
     if len(img.shape) == 4:
-        scale = torch.tensor([e + 1 for e in s]).unsqueeze(0).float()
-        offset = torch.tensor(o).unsqueeze(0).float()
-        theta = torch.tensor(a).unsqueeze(0).float()
-        shear = torch.tensor(z).unsqueeze(0).float()
+        scale = torch.FloatTensor(1, 2).fill_(1 + s)
+        offset = torch.FloatTensor(1, 2).fill_(o)
+        theta = torch.FloatTensor(1, 1).fill_(a)
+        shear = torch.FloatTensor(1, 2).fill_(z)
         augmenter = AffineDeformation2d(device=img.device)
     else:
-        scale = torch.tensor([e + 1 for e in s]).unsqueeze(0).float()
-        offset = torch.tensor(o).unsqueeze(0).float()
-        theta = torch.tensor(a).unsqueeze(0).float()
-        shear = torch.tensor(z).unsqueeze(0).float()
+        scale = torch.FloatTensor(1, 3).fill_(1 + s)
+        offset = torch.FloatTensor(1, 3).fill_(o)
+        theta = torch.FloatTensor(1, 3).fill_(a)
+        shear = torch.FloatTensor(1, 6).fill_(z)
         augmenter = AffineDeformation3d(device=img.device)
 
     params = (scale, offset, theta, shear)
