@@ -35,5 +35,6 @@ python run.py \
     --tps_lmbda loguniform \
     --early_stop_eval_subjects 3 \
     --eval \
-    --save_preds
+    --save_preds \
+    --seg_available
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/__training__gigamed-keymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch2000_trained_model.pth.tar \

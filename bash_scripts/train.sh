@@ -18,12 +18,12 @@ source activate base
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="gigamed-synthbrain-keymorph"
+JOB_NAME="gigamed-synthbrain-weighted-keymorph"
 python run.py \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --max_train_keypoints 32 \
-    --epochs 2000 \
+    --epochs 5000 \
     --loss_fn mse \
     --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/ \
     --use_wandb \
@@ -34,12 +34,12 @@ python run.py \
     --use_amp \
     --batch_size 1 \
     --backbone conv \
-    --tps_lmbda loguniform \
     --compute_subgrids_for_tps \
-    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining__gigamed-synthbrain_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch8500_model.pth.tar
-    # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/se3cnn/__pretraining__gigamed-pretraining-se3cnn_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
+    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining___pretrain_gigamed-synthbrain_${NUM_KEY}_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar \
+    --seg_available \
+    --weighted_kp_align power \
     # --visualize \
-    # --weighted_kp_align power \
-
+    # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining__gigamed-synthbrain_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch8500_model.pth.tar \
+    # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/se3cnn/__pretraining__gigamed-pretraining-se3cnn_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/__pretraining__gigamed_pretrain_slope5000_${NUM_KEY}_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/pretrained_epoch10000_model.pth.tar \
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/gigamed_keymorph_256_[training]keypoints256_batch1_normTypeinstance_lr3e-06/checkpoints/epoch125_trained_model.pth.tar \

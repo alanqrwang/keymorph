@@ -1,32 +1,32 @@
-name,has_test,has_lesion_seg,has_longitudinal,has_multiple_modalities,desc
-Dataset4999_IXIAllModalities,True,False,False,True,healthy
-Dataset5000_BraTS-GLI_2023,True,True,False,True,glioblastomas
-Dataset5001_BraTS-SSA_2023,True,True,False,True,African gliloms
-Dataset5002_BraTS-MEN_2023,True,True,False,True,meningiomas
-Dataset5003_BraTS-MET_2023,False,True,False,True,metastases
-Dataset5004_BraTS-MET-NYU_2023,False,True,False,True,metastases
-Dataset5005_BraTS-PED_2023,True,True,False,True,pediatric glioblastomas
-Dataset5006_BraTS-MET-UCSF_2023,False,True,False,True,metastases
-Dataset5007_UCSF-BMSR,False,True,False,True,metastases
-Dataset5010_ATLASR2,True,True,False,False,lesions after stroke
-Dataset5012_ShiftsBest,False,True,False,True,multiple sclerosis
-Dataset5013_ShiftsLjubljana,False,True,False,True,multiple sclerosis
-Dataset5038_BrainTumour,True,True,False,True,tumors
-Dataset5041_BRATS,False,True,False,False,tumor
-Dataset5042_BRATS2016,False,True,False,False,tumor
-Dataset5043_BrainDevelopment,False,True,False,False,--
-Dataset5044_EPISURG,False,True,False,False,--
-Dataset5066_WMH,False,True,False,False,--
-Dataset5083_IXIT1,True,False,False,False,T1 modality of Dataset4999_IXIAllModalities
-Dataset5084_IXIT2,True,False,False,False,T2 modality of Dataset4999_IXIAllModalities
-Dataset5085_IXIPD,True,False,False,False,PD modality of Dataset4999_IXIAllModalities
-Dataset5090_ISLES2022,False,True,False,True,ichemic stroke lesions
-Dataset5095_MSSEG,True,True,False,True,multiple sclerosis
-Dataset5096_MSSEG2,False,True,False,True,multiple sclerosis
-Dataset5111_UCSF-ALPTDG-time1,False,True,False,True,timepoint 1 of Dataset5114_UCSF-ALPTDG
-Dataset5112_UCSF-ALPTDG-time2,False,True,False,True,timepoint 2 of Dataset5114_UCSF-ALPTDG
-Dataset5113_StanfordMETShare,True,True,False,True,metastases
-Dataset5114_UCSF-ALPTDG,False,True,True,True,tumor
-Dataset6000_PPMI-T1-3T-PreProc,True,False,True,False,Parkinson's disease
-Dataset6001_ADNI-group-T1-3T-PreProc,True,False,True,False,Alzheimer's disease
-Dataset6002_OASIS3,True,False,True,False,Alzheimer's disease
+name,has_train,has_test,has_lesion_seg,has_longitudinal,has_multiple_modalities,desc
+Dataset4999_IXIAllModalities,True,True,False,False,True,healthy
+Dataset5000_BraTS-GLI_2023,True,True,True,False,True,glioblastomas
+Dataset5001_BraTS-SSA_2023,True,True,True,False,True,African gliloms
+Dataset5002_BraTS-MEN_2023,True,True,True,False,True,meningiomas
+Dataset5003_BraTS-MET_2023,True,False,True,False,True,metastases
+Dataset5004_BraTS-MET-NYU_2023,True,False,True,False,True,metastases
+Dataset5005_BraTS-PED_2023,True,True,True,False,True,pediatric glioblastomas
+Dataset5006_BraTS-MET-UCSF_2023,True,False,True,False,True,metastases
+Dataset5007_UCSF-BMSR,True,False,True,False,True,metastases
+Dataset5010_ATLASR2,True,True,True,False,False,lesions after stroke
+Dataset5012_ShiftsBest,True,False,True,False,True,multiple sclerosis
+Dataset5013_ShiftsLjubljana,True,False,True,False,True,multiple sclerosis
+Dataset5038_BrainTumour,True,True,True,False,True,tumors
+Dataset5041_BRATS,True,False,True,False,False,tumor
+Dataset5042_BRATS2016,True,False,True,False,False,tumor
+Dataset5043_BrainDevelopment,True,False,True,False,False,--
+Dataset5044_EPISURG,True,False,True,False,False,--
+Dataset5066_WMH,True,False,True,False,False,--
+Dataset5083_IXIT1,True,True,False,False,False,T1 modality of Dataset4999_IXIAllModalities
+Dataset5084_IXIT2,True,True,False,False,False,T2 modality of Dataset4999_IXIAllModalities
+Dataset5085_IXIPD,True,True,False,False,False,PD modality of Dataset4999_IXIAllModalities
+Dataset5090_ISLES2022,True,False,True,False,True,ichemic stroke lesions
+Dataset5095_MSSEG,True,True,True,False,True,multiple sclerosis
+Dataset5096_MSSEG2,True,False,True,False,True,multiple sclerosis
+Dataset5111_UCSF-ALPTDG-time1,True,False,True,False,True,timepoint 1 of Dataset5114_UCSF-ALPTDG
+Dataset5112_UCSF-ALPTDG-time2,True,False,True,False,True,timepoint 2 of Dataset5114_UCSF-ALPTDG
+Dataset5113_StanfordMETShare,True,True,True,False,True,metastases
+Dataset5114_UCSF-ALPTDG,True,False,True,True,True,tumor
+Dataset6000_PPMI-T1-3T-PreProc,True,True,False,True,False,Parkinson's disease
+Dataset6001_ADNI-group-T1-3T-PreProc,True,True,False,True,False,Alzheimer's disease
+Dataset6002_OASIS3,True,True,False,True,False,Alzheimer's disease

@@ -6,7 +6,7 @@
 #SBATCH --time=120:00:00 # set this time according to your need
 #SBATCH --mem=64GB # how much RAM will your notebook consume? 
 #SBATCH --gres=gpu:1 # if you need to use a GPU
-#SBATCH -p sablab-gpu # specify partition
+#SBATCH -p scu-gpu # specify partition
 #SBATCH -o ./job_out/%j-preprocess_gigamed.out
 #SBATCH -e ./job_err/%j-preprocess_gigamed.err \ 
 
