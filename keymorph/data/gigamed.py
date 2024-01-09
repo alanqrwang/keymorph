@@ -5,7 +5,6 @@ import random
 from keymorph.data.synthbrain import SynthBrain, one_hot
 import pandas as pd
 
-data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
 id_csv_file = "/home/alw4013/keymorph/keymorph/data/gigamed_id.csv"
 ood_csv_file = "/home/alw4013/keymorph/keymorph/data/gigamed_ood.csv"
 
@@ -130,6 +129,24 @@ class SingleSubjectDataset(Dataset):
         return sub1
 
 
+class SingleSubjectPathDataset(Dataset):
+    """Same as SingleSubjectDataset, but only returns paths.
+    Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
+    won't load the image data into memory."""
+
+    def __init__(self, root_dir, train, load_seg=True):
+        self.subject_dict = read_subjects_from_disk(root_dir, train, load_seg=load_seg)
+
+    def __len__(self):
+        return len(self.subject_dict[list(self.subject_dict.keys())[0]])
+
+    def __getitem__(self, x):
+        mult_mod_list = list(self.subject_dict.values())
+        single_mod_list1 = random.sample(mult_mod_list, 1)[0]
+        sub1 = random.sample(single_mod_list1, 1)[0]
+        return sub1
+
+
 class GroupDataset(SingleSubjectDataset):
     def __init__(self, root_dir, train, transform=None, load_seg=True, group_size=3):
         super().__init__(root_dir, train, transform, load_seg)
@@ -138,6 +155,21 @@ class GroupDataset(SingleSubjectDataset):
     def __getitem__(self, x):
         return [
             super(GroupDataset, self).__getitem__(x) for _ in range(self.group_size)
+        ]
+
+
+class GroupPathDataset(SingleSubjectPathDataset):
+    """Same as GroupDataset, but only returns paths.
+    Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
+    won't load the image data into memory."""
+
+    def __init__(self, root_dir, train, load_seg=True, group_size=3):
+        super().__init__(root_dir, train, load_seg)
+        self.group_size = group_size
+
+    def __getitem__(self, x):
+        return [
+            super(GroupPathDataset, self).__getitem__(x) for _ in range(self.group_size)
         ]
 
 
@@ -300,9 +332,11 @@ class GigaMedDataset:
 
     def __init__(
         self,
+        data_dir,
         load_seg=True,
         transform=None,
     ):
+        self.data_dir = data_dir
         self.load_seg = load_seg
         if transform is None:
             self.transform = tio.Compose(
@@ -321,7 +355,7 @@ class GigaMedDataset:
         datasets = {}
         for name in names:
             datasets[name] = SameSubjectSameModalityDataset(
-                os.path.join(data_dir, name),
+                os.path.join(self.data_dir, name),
                 train,
                 self.transform,
                 load_seg=self.load_seg,
@@ -335,7 +369,7 @@ class GigaMedDataset:
         datasets = {}
         for name in names:
             datasets[name] = SameSubjectDiffModalityDataset(
-                os.path.join(data_dir, name),
+                os.path.join(self.data_dir, name),
                 train,
                 self.transform,
                 load_seg=self.load_seg,
@@ -351,7 +385,7 @@ class GigaMedDataset:
         datasets = {}
         for name in names:
             datasets[name] = DiffSubjectSameModalityDataset(
-                os.path.join(data_dir, name),
+                os.path.join(self.data_dir, name),
                 train,
                 self.transform,
                 load_seg=self.load_seg,
@@ -365,7 +399,7 @@ class GigaMedDataset:
         datasets = {}
         for name in names:
             datasets[name] = DiffSubjectDiffModalityDataset(
-                os.path.join(data_dir, name),
+                os.path.join(self.data_dir, name),
                 train,
                 self.transform,
                 load_seg=self.load_seg,
@@ -379,7 +413,7 @@ class GigaMedDataset:
         datasets = {}
         for name in names:
             datasets[name] = SingleSubjectDataset(
-                os.path.join(data_dir, name),
+                os.path.join(self.data_dir, name),
                 train,
                 self.transform,
                 load_seg=self.load_seg,
@@ -394,9 +428,22 @@ class GigaMedDataset:
         datasets = {}
         for name in names:
             datasets[name] = GroupDataset(
-                os.path.join(data_dir, name),
+                os.path.join(self.data_dir, name),
                 train,
                 self.transform,
+                load_seg=self.load_seg,
+            )
+        self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
+        return datasets
+
+    def get_group_path_datasets(self, id=True, train=True):
+        """Group datasets can be from any dataset"""
+        names = self.gigamed_names.all(id=id, train=train)
+        datasets = {}
+        for name in names:
+            datasets[name] = GroupPathDataset(
+                os.path.join(self.data_dir, name),
+                train,
                 load_seg=self.load_seg,
             )
         self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
@@ -407,7 +454,7 @@ class GigaMedDataset:
         datasets = {}
         for name in names:
             datasets[name] = GroupDataset(
-                os.path.join(data_dir, name),
+                os.path.join(self.data_dir, name),
                 train,
                 self.transform,
                 load_seg=self.load_seg,
@@ -419,8 +466,8 @@ class GigaMedDataset:
         names = self.gigamed_names.with_lesion_seg(id=id, train=train)
         datasets = {}
         for name in names:
-            datasets[name] = GroupDataset(
-                os.path.join(data_dir, name),
+            datasets[name] = SingleSubjectDataset(
+                os.path.join(self.data_dir, name),
                 False,
                 self.transform,
                 load_seg=self.load_seg,
@@ -438,7 +485,7 @@ class GigaMedDataset:
 
     def get_reference_subject(self):
         ds_name = self.gigamed_names.all(id=True, train=True)[0]
-        root_dir = os.path.join(data_dir, ds_name)
+        root_dir = os.path.join(self.data_dir, ds_name)
         subject_dict = read_subjects_from_disk(root_dir, True, load_seg=False)
         return subject_dict[list(subject_dict.keys())[0]][0]
 
@@ -453,11 +500,20 @@ class GigaMed:
         load_seg=True,
         sample_same_mod_only=True,
         transform=None,
+        use_raw_data=False,
     ):
+        proc_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+        raw_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base"
+
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.sample_same_mod_only = sample_same_mod_only
+        if use_raw_data:
+            root_data_dir = raw_data_dir
+        else:
+            root_data_dir = proc_data_dir
         self.gigamed_dataset = GigaMedDataset(
+            root_data_dir,
             load_seg=load_seg,
             transform=transform,
         )
@@ -505,7 +561,7 @@ class GigaMed:
         return loaders
 
     def get_eval_group_loaders(self, id):
-        datasets = self.gigamed_dataset.get_group_datasets(id=id, train=False)
+        datasets = self.gigamed_dataset.get_group_path_datasets(id=id, train=False)
         loaders = {}
         for name, ds in datasets.items():
             loaders[name] = DataLoader(

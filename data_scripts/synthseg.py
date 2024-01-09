@@ -49,9 +49,10 @@ def _synthseg(src_img_dir, tgt_dir):
 
 def main():
     all_failed = []
-    root_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
-    )
+    # root_dir = Path(
+    #     "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+    # )
+    root_dir = Path("/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base")
     dataset_names = [
         "Dataset4999_IXIAllModalities",
         "Dataset5000_BraTS-GLI_2023",
@@ -93,7 +94,7 @@ def main():
     for ds in dataset_names:
         # SynthSeg on train if it exists
         ds_src_img_dir = root_dir / ds / "imagesTr"
-        if os.path.exists(ds_src_img_dir):
+        if os.path.exists(ds_src_img_dir) and len(os.listdir(ds_src_img_dir)) > 0:
             ds_tgt_dir = root_dir / ds / "synthSeglabelsTr"
 
             if not os.path.exists(ds_tgt_dir):
@@ -106,7 +107,7 @@ def main():
 
         # SynthSeg on test if it exists
         ds_src_img_dir = root_dir / ds / "imagesTs"
-        if os.path.exists(ds_src_img_dir):
+        if os.path.exists(ds_src_img_dir) and len(os.listdir(ds_src_img_dir)) > 0:
             ds_tgt_dir = root_dir / ds / "synthSeglabelsTs"
 
             if not os.path.exists(ds_tgt_dir):

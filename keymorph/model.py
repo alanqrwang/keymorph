@@ -1,3 +1,4 @@
+import os
 import re
 import numpy as np
 import torch
@@ -6,6 +7,7 @@ import torch.nn.functional as F
 from skimage import morphology
 import SimpleITK as sitk
 from scipy.stats import loguniform
+import nibabel as nib
 
 from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
 from keymorph.layers import (
@@ -15,6 +17,7 @@ from keymorph.layers import (
     CenterOfMass3d,
 )
 from keymorph.utils import str_or_float, rescale_intensity
+from keymorph.augmentation import random_affine_augment
 
 
 class KeyMorph(nn.Module):
@@ -183,9 +186,9 @@ class KeyMorph(nn.Module):
         # Dictionary of results
         res = {
             "grid": [],
-            "points_f": points_f,
-            "points_m": points_m,
-            "points_weights": weights,
+            "points_f": [],
+            "points_m": [],
+            "points_weights": [],
             "align_type": [],
             "tps_lmbda": [],
         }
@@ -201,8 +204,6 @@ class KeyMorph(nn.Module):
             else:
                 align_type = align_type_str
                 tps_lmbda = None
-            res["align_type"].append(align_type)
-            res["tps_lmbda"].append(tps_lmbda)
 
             if (
                 self.training
@@ -233,9 +234,14 @@ class KeyMorph(nn.Module):
                 img_f.shape,
                 lmbda=tps_lmbda,
                 weights=weights,
-                compute_on_subgrids=False,
+                compute_on_subgrids=False if self.training else True,
             )
             res["grid"].append(grid)
+            res["points_f"].append(points_f)
+            res["points_m"].append(points_m)
+            res["points_weights"].append(weights)
+            res["align_type"].append(align_type)
+            res["tps_lmbda"].append(tps_lmbda)
             if return_aligned_points:
                 points_a = keypoint_aligner.points_from_points(
                     points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
@@ -249,11 +255,12 @@ class KeyMorph(nn.Module):
 
     def groupwise_register(
         self,
-        group_points,
-        keypoint_aligner,
-        lmbda,
-        grid_shape,
-        weights=None,
+        list_of_img_paths,
+        list_of_seg_paths=None,
+        kp_align_type="affine",
+        aug_params=None,
+        device="cuda",
+        num_iters=1,
     ):
         """Perform groupwise registration.
 
@@ -268,34 +275,111 @@ class KeyMorph(nn.Module):
             points: All transformed points for each subject in the group
         """
 
-        # Compute mean of points, to be used as fixed points
-        mean_points = torch.mean(group_points, dim=0, keepdim=True)
+        def _groupwise_register_step(
+            group_points, keypoint_aligner, grid_shape, lmbda, weights=None
+        ):
+            # Compute mean of points, to be used as fixed points
+            mean_points = torch.mean(group_points, dim=0, keepdim=True)
 
-        # Register each point to the mean
-        grids = []
-        new_points = []
-        for i in range(len(group_points)):
-            points_m = group_points[i : i + 1]
-            grid = keypoint_aligner.grid_from_points(
-                points_m,
-                mean_points,
-                grid_shape,
-                lmbda=lmbda,
-                weights=weights,
-                compute_on_subgrids=True,
-            )
-            points_a = keypoint_aligner.points_from_points(
-                points_m,
-                mean_points,
-                points_m,
-                lmbda=lmbda,
-                weights=weights,
-            )
-            grids.append(grid)
-            new_points.append(points_a)
+            # Register each point to the mean
+            grids = []
+            new_points = []
+            for i in range(len(group_points)):
+                points_m = group_points[i : i + 1]
+                grid = keypoint_aligner.grid_from_points(
+                    points_m,
+                    mean_points,
+                    grid_shape,
+                    lmbda=lmbda,
+                    weights=weights,
+                    compute_on_subgrids=True,
+                )
+                points_a = keypoint_aligner.points_from_points(
+                    points_m,
+                    mean_points,
+                    points_m,
+                    lmbda=lmbda,
+                    weights=weights,
+                )
+                grids.append(grid)
+                new_points.append(points_a)
 
-        new_points = torch.cat(new_points, dim=0)
-        return grids, new_points
+            new_points = torch.cat(new_points, dim=0)
+            return grids, new_points
+
+        seg_available = list_of_seg_paths is not None
+        group_points = []
+        group_imgs_m = []
+        if seg_available:
+            group_segs_m = []
+        for i in range(len(list_of_img_paths)):
+            img_m = nib.load(list_of_img_paths[i]).get_fdata()
+            img_m = torch.tensor(img_m).unsqueeze(0).unsqueeze(0).to(device).float()
+            if seg_available:
+                seg_m = nib.load(list_of_seg_paths[i]).get_fdata()
+                seg_m = torch.tensor(seg_m).unsqueeze(0).unsqueeze(0).to(device).float()
+
+            # For groupwise, we randomly affine augment all images
+            if aug_params is not None:
+                if seg_available:
+                    img_m, seg_m = random_affine_augment(
+                        img_m, max_random_params=aug_params, seg=seg_m
+                    )
+                else:
+                    img_m = random_affine_augment(img_m, max_random_params=aug_params)
+            group_imgs_m.append(img_m)
+            if seg_available:
+                group_segs_m.append(seg_m)
+
+            points = self.get_keypoints(img_m)
+
+            # if args.weighted_kp_align == "variance":
+            #     weights = registration_model.weight_by_variance(feat_f, feat_m)
+            # elif args.weighted_kp_align == "power":
+            #     weights = registration_model.weight_by_power(feat_f, feat_m)
+            # else:
+            #     weights = None
+            weights = None  # TODO: support weighted groupwise registration??
+            group_points.append(points)
+        group_points = torch.cat(group_points, dim=0)
+
+        res = {"grids": [], "points_a": []}
+        res["imgs_m"] = group_imgs_m
+        if seg_available:
+            res["segs_m"] = group_segs_m
+        for align_type_str in kp_align_type:
+            if align_type_str.startswith("tps"):
+                align_type = "tps"
+                tps_lmbda = self._convert_tps_lmbda(
+                    len(img_m), str_or_float(align_type_str[4:])
+                ).to(img_m.device)
+            else:
+                align_type = align_type_str
+                tps_lmbda = None
+
+            # Align via keypoints
+            if align_type == "rigid":
+                keypoint_aligner = self.rigid_aligner
+            elif align_type == "affine":
+                keypoint_aligner = self.affine_aligner
+            elif align_type == "tps":
+                keypoint_aligner = self.tps_aligner
+
+            curr_points = group_points.clone()
+            for _ in range(num_iters):
+                grids, next_points = _groupwise_register_step(
+                    curr_points,
+                    keypoint_aligner,
+                    img_m.shape,
+                    tps_lmbda,
+                    weights=weights,
+                )
+                curr_points = next_points
+
+            res["grids"].append(grids)
+            res["points_a"].append(curr_points)
+
+        return res
 
 
 class Simple_Unet(nn.Module):

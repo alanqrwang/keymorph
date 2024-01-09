@@ -204,6 +204,6 @@ def summary(network):
 
 
 def save_summary_json(dict, save_path):
+    print("Saving summary to", save_path)
     with open(save_path, "w") as outfile:
-        print("Saving summary to", outfile)
         json.dump(dict, outfile, sort_keys=True, indent=4)
