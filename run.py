@@ -609,7 +609,7 @@ def main():
                         if seg_available:
                             img_m, seg_m = affine_augment(img_m, param, seg=seg_m)
                         else:
-                            img_m = affine_augment(img_m, param)
+                            img_m, = affine_augment(img_m, param)
                         lmbda = _get_tps_lmbda(len(img_f), args, is_train=False)
 
                         with torch.set_grad_enabled(False):
