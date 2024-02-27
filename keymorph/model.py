@@ -57,7 +57,7 @@ class KeyMorph(nn.Module):
         self.use_amp = use_amp
 
         # Keypoint alignment module
-        self.supported_kp_align_types = ["rigid", "affine", "tps"]
+        self.supported_transform_type = ["rigid", "affine", "tps"]
         self.rigid_aligner = RigidKeypointAligner(self.dim)
         self.affine_aligner = AffineKeypointAligner(self.dim)
         self.tps_aligner = TPS(self.dim)
@@ -128,7 +128,7 @@ class KeyMorph(nn.Module):
         return lmbda
 
     @staticmethod
-    def is_supported_kp_align_type(s):
+    def is_supported_transform_type(s):
         if s in ["affine", "rigid"]:
             return True
         elif re.match(r"^tps_.*$", s):
@@ -139,7 +139,7 @@ class KeyMorph(nn.Module):
         self,
         img_f,
         img_m,
-        kp_align_type="affine",
+        transform_type="affine",
         return_aligned_points=False,
     ):
         """Forward pass for one mini-batch step.
@@ -152,21 +152,19 @@ class KeyMorph(nn.Module):
         :return res: Dictionary of results
         """
 
-        if not isinstance(kp_align_type, (list, tuple)):
-            kp_align_type = [kp_align_type]
+        if not isinstance(transform_type, (list, tuple)):
+            transform_type = [transform_type]
         if self.training:
             assert (
-                len(kp_align_type) == 1
+                len(transform_type) == 1
             ), "Only one alignment type allowed in training"
         assert all(
-            self.is_supported_kp_align_type(s) for s in kp_align_type
-        ), "Invalid kp_align_type"
+            self.is_supported_transform_type(s) for s in transform_type
+        ), "Invalid transform_type"
 
-        # For evaluation, rescale to [0, 1]. Clone to ensure we don't mess with the original data.
-        # For training, we assume this is handled by preprocessing.
-        if not self.training:
-            img_f = rescale_intensity(img_f.clone())
-            img_m = rescale_intensity(img_m.clone())
+        # Rescale inputs to [0, 1]. Clone to ensure we don't mess with the original data.
+        img_f = rescale_intensity(img_f.clone())
+        img_m = rescale_intensity(img_m.clone())
 
         with torch.amp.autocast(
             device_type="cuda", enabled=self.use_amp, dtype=torch.float16
@@ -195,7 +193,7 @@ class KeyMorph(nn.Module):
         if return_aligned_points:
             res["points_a"] = []
 
-        for align_type_str in kp_align_type:
+        for align_type_str in transform_type:
             if align_type_str.startswith("tps"):
                 align_type = "tps"
                 tps_lmbda = self._convert_tps_lmbda(
@@ -257,7 +255,7 @@ class KeyMorph(nn.Module):
         self,
         list_of_img_paths,
         list_of_seg_paths=None,
-        kp_align_type="affine",
+        transform_type="affine",
         aug_params=None,
         device="cuda",
         num_iters=1,
@@ -347,7 +345,7 @@ class KeyMorph(nn.Module):
         res["imgs_m"] = group_imgs_m
         if seg_available:
             res["segs_m"] = group_segs_m
-        for align_type_str in kp_align_type:
+        for align_type_str in transform_type:
             if align_type_str.startswith("tps"):
                 align_type = "tps"
                 tps_lmbda = self._convert_tps_lmbda(
@@ -512,9 +510,49 @@ def clean_mask(mask, threshold=0.2):
 
 
 class SimpleElastix:
-    def __call__(self):
+    def __init__(self):
+        print(sitk)
+        self.filter = sitk.ElastixImageFilter()
+
+    def __call__(self, fixed, moving, transform_type="rigid"):
+        return self.pairwise_register(fixed, moving, transform_type)
+
+    def pairwise_register(fixed, moving, transform_type="rigid"):
+        # Convert PyTorch tensors to SimpleITK images
+        fixed_image = sitk.GetImageFromArray(fixed.numpy())
+        moving_image = sitk.GetImageFromArray(moving.numpy())
+
+        # Initialize the elastix image filter
+        filter = sitk.ElastixImageFilter()
+
+        # Set images
+        filter.SetFixedImage(fixed_image)
+        filter.SetMovingImage(moving_image)
+
+        # Set the parameter map according to the transformation type
+        if transform_type == "rigid":
+            parameter_map = sitk.GetDefaultParameterMap("rigid")
+        elif transform_type == "affine":
+            parameter_map = sitk.GetDefaultParameterMap("affine")
+        elif transform_type == "nonlinear":
+            parameter_map = sitk.GetDefaultParameterMap("bspline")
+        else:
+            raise ValueError("Unknown transform_type: {}".format(transform_type))
+
+        filter.SetParameterMap(parameter_map)
+        filter.Execute()
+
+        # Retrieve the transformation parameters
+        transform_param = filter.GetTransformParameterMap()[0]
+
+        # Convert transformation parameters to pytorch grid
+        grid = convert_to_grid(transform_param, fixed_image)
+
+        return grid
+
+    def groupwise_register(self, list_of_img_paths):
         # Concatenate the ND images into one (N+1)D image
-        population = ["image1.hdr", ..., "imageN.hdr"]
+        population = list_of_img_paths
         vectorOfImages = sitk.VectorOfImage()
 
         for filename in population:
@@ -523,11 +561,15 @@ class SimpleElastix:
         image = sitk.JoinSeries(vectorOfImages)
 
         # Register
-        elastixImageFilter = sitk.ElastixImageFilter()
-        elastixImageFilter.SetFixedImage(image)
-        elastixImageFilter.SetMovingImage(image)
-        elastixImageFilter.SetParameterMap(sitk.GetDefaultParameterMap("groupwise"))
-        elastixImageFilter.Execute()
+        self.filter.SetFixedImage(image)
+        self.filter.SetMovingImage(image)
+        self.filter.SetParameterMap(sitk.GetDefaultParameterMap("groupwise"))
+        self.filter.Execute()
+
+        # Get transform parameters
+        transform_params = self.filter.GetTransformParameterMap()
+        grids = [self.convert_to_grid(param, images[0]) for param in transform_params]
+        return grids
 
     def get_transformed_image(self):
         return self.transformixImageFilter.GetResultImage()

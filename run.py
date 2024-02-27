@@ -14,7 +14,7 @@ from copy import deepcopy
 
 from keymorph import loss_ops
 from keymorph.net import ConvNet, UNet, RXFM_Net
-from keymorph.model import KeyMorph
+from keymorph.model import KeyMorph, SimpleElastix
 from keymorph import utils
 from keymorph.utils import (
     ParseKwargs,
@@ -22,7 +22,7 @@ from keymorph.utils import (
     align_img,
     save_summary_json,
 )
-from keymorph.data import ixi, gigamed, synthbrain
+from keymorph.data import ixi, gigamed, synthbrain, gigamed_normal_brains_only_with_segs
 from keymorph.augmentation import (
     affine_augment,
     random_affine_augment,
@@ -68,6 +68,10 @@ def parse_args():
     )
 
     # KeyMorph
+    parser.add_argument(
+        "--registration_model", type=str, required=True, help="Registration model"
+    )
+
     parser.add_argument(
         "--num_keypoints", type=int, required=True, help="Number of keypoints"
     )
@@ -230,6 +234,8 @@ def create_dirs(args):
         + args.job_name
         + "_dataset"
         + dataset_str
+        + "_model"
+        + str(args.registration_model)
         + "_keypoints"
         + str(args.num_keypoints)
         + "_batch"
@@ -278,6 +284,11 @@ def get_data(args):
         train_loader, _ = ixi.get_loaders()
     elif args.train_dataset == "gigamed":
         gigamed_dataset = gigamed.GigaMed(
+            args.batch_size, args.num_workers, load_seg=args.seg_available
+        )
+        train_loader = gigamed_dataset.get_train_loader()
+    elif args.train_dataset == "gigamednb":
+        gigamed_dataset = gigamed_normal_brains_only_with_segs.GigaMed(
             args.batch_size, args.num_workers, load_seg=args.seg_available
         )
         train_loader = gigamed_dataset.get_train_loader()
@@ -368,37 +379,40 @@ def get_data(args):
 
 
 def get_model(args):
-    # CNN, i.e. keypoint extractor
-    if args.backbone == "conv":
-        network = ConvNet(
-            args.dim,
-            1,
-            args.num_keypoints,
-            norm_type=args.norm_type,
-        )
-    elif args.backbone == "unet":
-        network = UNet(
-            args.dim,
-            1,
-            args.num_keypoints,
-        )
-    elif args.backbone == "se3cnn":
-        network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
-    else:
-        raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
-    network = torch.nn.DataParallel(network)
+    if args.registration_model == "keymorph":
+        # CNN, i.e. keypoint extractor
+        if args.backbone == "conv":
+            network = ConvNet(
+                args.dim,
+                1,
+                args.num_keypoints,
+                norm_type=args.norm_type,
+            )
+        elif args.backbone == "unet":
+            network = UNet(
+                args.dim,
+                1,
+                args.num_keypoints,
+            )
+        elif args.backbone == "se3cnn":
+            network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
+        else:
+            raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
+        network = torch.nn.DataParallel(network)
 
-    # Keypoint model
-    registration_model = KeyMorph(
-        network,
-        args.num_keypoints,
-        args.dim,
-        use_amp=args.use_amp,
-        max_train_keypoints=args.max_train_keypoints,
-        weight_keypoints=args.weighted_kp_align,
-    )
-    registration_model.to(args.device)
-    utils.summary(registration_model)
+        # Keypoint model
+        registration_model = KeyMorph(
+            network,
+            args.num_keypoints,
+            args.dim,
+            use_amp=args.use_amp,
+            max_train_keypoints=args.max_train_keypoints,
+            weight_keypoints=args.weighted_kp_align,
+        )
+        registration_model.to(args.device)
+        utils.summary(registration_model)
+    elif args.registration_model == "simple-elastix":
+        registration_model = SimpleElastix()
     return registration_model
 
 
@@ -427,15 +441,15 @@ def run_train(train_loader, registration_model, optimizer, args):
             break
 
         if task_type == "same_sub_same_mod":
-            kp_align_type = "rigid"
+            transform_type = "rigid"
             args.loss_fn = "mse"
             max_random_params = (0, 0.15, 3.1416, 0)
         elif task_type == "diff_sub_same_mod":
-            kp_align_type = "tps_loguniform"
+            transform_type = "tps_loguniform"
             args.loss_fn = "mse"
             max_random_params = (0.2, 0.15, 3.1416, 0.1)
         elif task_type == "synthbrain":
-            kp_align_type = "tps_loguniform"
+            transform_type = "tps_loguniform"
             args.loss_fn = "dice"
             max_random_params = (0.2, 0.15, 3.1416, 0.1)
         elif task_type == "same_sub_diff_mod":
@@ -479,7 +493,7 @@ def run_train(train_loader, registration_model, optimizer, args):
             registration_results = registration_model(
                 img_f,
                 img_m,
-                kp_align_type=kp_align_type,
+                transform_type=transform_type,
                 return_aligned_points=args.visualize,
             )
             grid = registration_results["grid"][0]
@@ -593,9 +607,13 @@ def run_train(train_loader, registration_model, optimizer, args):
                     points_m[0].cpu().detach().numpy(),
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
-                    save_path=None
-                    if args.debug_mode
-                    else os.path.join(args.model_img_dir, f"img_{args.curr_epoch}.png"),
+                    save_path=(
+                        None
+                        if args.debug_mode
+                        else os.path.join(
+                            args.model_img_dir, f"img_{args.curr_epoch}.png"
+                        )
+                    ),
                 )
                 if args.seg_available:
                     show_warped_vol(
@@ -605,10 +623,12 @@ def run_train(train_loader, registration_model, optimizer, args):
                         points_m[0].cpu().detach().numpy(),
                         points_f[0].cpu().detach().numpy(),
                         points_a[0].cpu().detach().numpy(),
-                        save_path=None
-                        if args.debug_mode
-                        else os.path.join(
-                            args.model_img_dir, f"seg_{args.curr_epoch}.png"
+                        save_path=(
+                            None
+                            if args.debug_mode
+                            else os.path.join(
+                                args.model_img_dir, f"seg_{args.curr_epoch}.png"
+                            )
                         ),
                     )
 
@@ -677,7 +697,7 @@ def run_eval(
                         registration_results = registration_model(
                             img_f,
                             img_m,
-                            kp_align_type=list_of_eval_kp_aligns,
+                            transform_type=list_of_eval_kp_aligns,
                             return_aligned_points=True,
                         )
 
@@ -953,7 +973,7 @@ def run_groupwise_eval(
                     registration_results = registration_model.groupwise_register(
                         list_of_img_paths,
                         list_of_seg_paths,
-                        kp_align_type=list_of_eval_kp_aligns,
+                        transform_type=list_of_eval_kp_aligns,
                         aug_params=aug_params,
                         device=args.device,
                     )
