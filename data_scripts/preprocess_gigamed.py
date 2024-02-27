@@ -24,6 +24,13 @@ need_skullstrip = [
     "NYU_METS",
     "Dataset7000_openneuro-ds004791",
     "Dataset7001_openneuro-ds004848",
+    "Dataset1000_PPMI",
+    "Dataset1001_PACS2019",
+    "Dataset1002_AIBL",
+    "Dataset1004_OASIS2",
+    "Dataset1005_OASIS1",
+    "Dataset1006_OASIS3",
+    "Dataset1007_ADNI",
 ]
 
 
@@ -69,16 +76,27 @@ def _resample_pad_intensity_normalize(
             extension = ".".join(basename.split(".")[1:])
             seg_path = os.path.join(src_seg_dir, path_name[:-5] + "." + extension)
             subject_kwargs["seg"] = tio.LabelMap(seg_path)
+
+        # Target paths
+        tgt_img_path = os.path.join(tgt_img_dir, path_name + ".nii.gz")
+        if seg_available:
+            tgt_seg_path = os.path.join(tgt_seg_dir, path_name + ".nii.gz")
+
+        # Skip if already exists
+        if os.path.exists(tgt_img_path) and (
+            not seg_available or os.path.exists(tgt_seg_path)
+        ):
+            print("Already exists, skipping:", img_path)
+            continue
+
+        # Build subject and save
         try:
             subject = tio.Subject(**subject_kwargs)
             subject = tio_transform(subject)
-            subject["img"].save(
-                os.path.join(tgt_img_dir, path_name + ".nii.gz"),
-            )
+            subject["img"].save(tgt_img_path)
+            print("Saved:", tgt_img_path)
             if seg_available:
-                subject["seg"].save(
-                    os.path.join(tgt_seg_dir, path_name + ".nii.gz"),
-                )
+                subject["seg"].save(tgt_seg_path)
         except Exception as e:
             print("Error torchioing:", img_path)
             print(e)
@@ -164,66 +182,100 @@ def main():
         image_dir, label_dir = "imagesTr", "labelsTr"
 
     all_failed = []
-    base_dir = Path("/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base")
+    # base_dir = Path("/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base")
+
+    # if args.min_max_norm:
+    #     torchio_dir = Path(
+    #         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_preprocessed"
+    #     )
+    #     reorient_dir = Path(
+    #         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed"
+    #     )
+    #     bet_dir = Path(
+    #         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+    #     )
+    # else:
+    #     torchio_dir = Path(
+    #         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_preprocessed"
+    #     )
+    #     reorient_dir = Path(
+    #         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_preprocessed"
+    #     )
+    #     bet_dir = Path(
+    #         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
+    #     )
+    # dataset_names = [
+    #     "Dataset4999_IXIAllModalities",
+    #     "Dataset5000_BraTS-GLI_2023",
+    #     "Dataset5001_BraTS-SSA_2023",
+    #     "Dataset5002_BraTS-MEN_2023",
+    #     "Dataset5003_BraTS-MET_2023",
+    #     "Dataset5004_BraTS-MET-NYU_2023",
+    #     "Dataset5005_BraTS-PED_2023",
+    #     "Dataset5006_BraTS-MET-UCSF_2023",
+    #     "Dataset5007_UCSF-BMSR",
+    #     "Dataset5010_ATLASR2",
+    #     "Dataset5012_ShiftsBest",
+    #     "Dataset5013_ShiftsLjubljana",
+    #     "Dataset5038_BrainTumour",
+    #     "Dataset5041_BRATS",
+    #     "Dataset5042_BRATS2016",
+    #     "Dataset5043_BrainDevelopment",
+    #     "Dataset5044_EPISURG",
+    #     "Dataset5046_FeTA",
+    #     "Dataset5066_WMH",
+    #     "Dataset5083_IXIT1",
+    #     "Dataset5084_IXIT2",
+    #     "Dataset5085_IXIPD",
+    #     "Dataset5090_ISLES2022",
+    #     "Dataset5095_MSSEG",
+    #     "Dataset5096_MSSEG2",
+    #     "Dataset5111_UCSF-ALPTDG-time1",
+    #     "Dataset5112_UCSF-ALPTDG-time2",
+    #     "Dataset5113_StanfordMETShare",
+    #     "Dataset5114_UCSF-ALPTDG",
+    #     "Dataset6000_PPMI-T1-3T-PreProc",
+    #     "Dataset6001_ADNI-group-T1-3T-PreProc",
+    #     "Dataset6002_OASIS3",
+    #     "Dataset6003_AIBL",
+    #     "Dataset7000_openneuro-ds004791",
+    #     "Dataset7001_openneuro-ds004848",
+    # ]
+
+    base_dir = Path(
+        "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_raw_data_base"
+    )
 
     if args.min_max_norm:
         torchio_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_preprocessed"
         )
         reorient_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed"
         )
         bet_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
         )
     else:
         torchio_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_unscaled_preprocessed"
         )
         reorient_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_unscaled_MNI_preprocessed"
         )
         bet_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_unscaled_MNI_HD-BET_preprocessed"
         )
     dataset_names = [
-        "Dataset4999_IXIAllModalities",
-        "Dataset5000_BraTS-GLI_2023",
-        "Dataset5001_BraTS-SSA_2023",
-        "Dataset5002_BraTS-MEN_2023",
-        "Dataset5003_BraTS-MET_2023",
-        "Dataset5004_BraTS-MET-NYU_2023",
-        "Dataset5005_BraTS-PED_2023",
-        "Dataset5006_BraTS-MET-UCSF_2023",
-        "Dataset5007_UCSF-BMSR",
-        "Dataset5010_ATLASR2",
-        "Dataset5012_ShiftsBest",
-        "Dataset5013_ShiftsLjubljana",
-        "Dataset5038_BrainTumour",
-        "Dataset5041_BRATS",
-        "Dataset5042_BRATS2016",
-        "Dataset5043_BrainDevelopment",
-        "Dataset5044_EPISURG",
-        "Dataset5046_FeTA",
-        "Dataset5066_WMH",
-        "Dataset5083_IXIT1",
-        "Dataset5084_IXIT2",
-        "Dataset5085_IXIPD",
-        "Dataset5090_ISLES2022",
-        "Dataset5095_MSSEG",
-        "Dataset5096_MSSEG2",
-        "Dataset5111_UCSF-ALPTDG-time1",
-        "Dataset5112_UCSF-ALPTDG-time2",
-        "Dataset5113_StanfordMETShare",
-        "Dataset5114_UCSF-ALPTDG",
-        "Dataset6000_PPMI-T1-3T-PreProc",
-        "Dataset6001_ADNI-group-T1-3T-PreProc",
-        "Dataset6002_OASIS3",
-        "Dataset6003_AIBL",
-        "Dataset7000_openneuro-ds004791",
-        "Dataset7001_openneuro-ds004848",
+        # "Dataset4999_IXIAllModalities",
+        # "Dataset1000_PPMI",
+        # "Dataset1001_PACS2019",
+        # "Dataset1002_AIBL",
+        # "Dataset1004_OASIS2",
+        # "Dataset1005_OASIS1",
+        # "Dataset1006_OASIS3",
+        "Dataset1007_ADNI",
     ]
-
     for ds in dataset_names:
         # TorchIO
         ds_src_img_dir = base_dir / ds / image_dir
@@ -267,9 +319,9 @@ def main():
             ds_src_img_dir,
             ds_tgt_img_dir,
             skip=(ds == "Dataset5012_ShiftsBest"),
-            swapdim="x -y z"
-            if ds == "Dataset5113_StanfordMETShare"
-            else None,  # for some reason, this dataset needs to swap dimensions
+            swapdim=(
+                "x -y z" if ds == "Dataset5113_StanfordMETShare" else None
+            ),  # for some reason, this dataset needs to swap dimensions
         )
         all_failed += failed
         if seg_available:
@@ -277,9 +329,9 @@ def main():
                 ds_src_seg_dir,
                 ds_tgt_seg_dir,
                 skip=(ds == "Dataset5012_ShiftsBest"),
-                swapdim="x -y z"
-                if ds == "Dataset5113_StanfordMETShare"
-                else None,  # for some reason, this dataset needs to swap dimensions
+                swapdim=(
+                    "x -y z" if ds == "Dataset5113_StanfordMETShare" else None
+                ),  # for some reason, this dataset needs to swap dimensions
             )
             all_failed += failed
 
