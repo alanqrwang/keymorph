@@ -15,7 +15,7 @@ module load miniconda3/22.11.1-ctkwnpe
 module load FSL/6.0.7-4
 module load bc/1.07.1-higilk3
 # if using conda
-source activate base
+source activate keymorph
 # if using pip
 # source ~/myvev/bin/activate
 

@@ -21,6 +21,7 @@ NUM_KEY=128
 JOB_NAME="train-debug"
 python run.py \
     --job_name ${JOB_NAME} \
+    --registration_model keymorph \
     --num_keypoints ${NUM_KEY} \
     --max_train_keypoints 32 \
     --loss_fn mse \
