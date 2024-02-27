@@ -37,15 +37,19 @@ def _reorient(src_dir, tgt_dir):
 
 def main():
     all_failed = []
-    base_dir = Path("/midtier/sablab/scratch/alw4013/data/synthseg_clean/")
+    base_dir = Path(
+        "/midtier/sablab/scratch/alw4013/data/synthbrain_w_and_wo_extracerebral_w_and_wo_lesions"
+    )
 
-    reorient_dir = Path("/midtier/sablab/scratch/alw4013/data/synthseg_clean_MNI")
+    reorient_dir = Path(
+        "/midtier/sablab/scratch/alw4013/data/synthbrain_w_and_wo_extracerebral_w_and_wo_lesions_MNI"
+    )
 
     # fslreorient2std
-    ds_src_img_dir = base_dir / "image"
-    ds_src_seg_dir = base_dir / "labels"
-    ds_tgt_img_dir = reorient_dir / "image"
-    ds_tgt_seg_dir = reorient_dir / "labels"
+    ds_src_img_dir = base_dir / "imagesTr"
+    ds_src_seg_dir = base_dir / "synthSeglabelsTr"
+    ds_tgt_img_dir = reorient_dir / "imagesTr"
+    ds_tgt_seg_dir = reorient_dir / "synthSeglabelsTr"
 
     if not os.path.exists(ds_tgt_img_dir):
         os.makedirs(ds_tgt_img_dir)
