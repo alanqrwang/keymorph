@@ -1,6 +1,7 @@
 import os
 from pprint import pprint
 import torch
+import torch.nn.functional as F
 import time
 import numpy as np
 import random
@@ -8,7 +9,6 @@ from argparse import ArgumentParser
 from pathlib import Path
 import wandb
 import torchio as tio
-import matplotlib.pyplot as plt
 import json
 from copy import deepcopy
 
@@ -84,7 +84,7 @@ def parse_args():
     parser.add_argument(
         "--backbone",
         type=str,
-        default="conv_com",
+        default="conv",
         choices=["conv", "unet", "se3cnn", "se3cnn2"],
         help="Keypoint extractor module to use",
     )
@@ -181,6 +181,13 @@ def parse_args():
     )
 
     # Miscellaneous
+    parser.add_argument(
+        "--run_mode",
+        required=True,
+        choices=["train", "pretrain", "eval"],
+        help="Run mode",
+    )
+
     parser.add_argument("--debug_mode", action="store_true", help="Debug mode")
 
     parser.add_argument(
@@ -280,6 +287,7 @@ def set_seed(args):
 
 
 def get_data(args):
+    # Train dataset
     if args.train_dataset == "ixi":
         train_loader, _ = ixi.get_loaders()
     elif args.train_dataset == "gigamed":
@@ -292,6 +300,8 @@ def get_data(args):
             args.batch_size, args.num_workers, load_seg=args.seg_available
         )
         train_loader = gigamed_dataset.get_train_loader()
+        pretrain_loader = gigamed_dataset.get_pretrain_loader()
+        ref_subject = gigamed_dataset.get_reference_subject()
     elif args.train_dataset == "synthbrain":
         synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
         train_loader = synth_dataset.get_train_loader()
@@ -317,6 +327,7 @@ def get_data(args):
     else:
         raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
 
+    # Eval dataset
     if args.test_dataset == "ixi":
         _, id_eval_loaders = ixi.get_loaders()
 
@@ -352,19 +363,24 @@ def get_data(args):
         #     id=False
         # )
 
-        return train_loader, {
-            "id": id_eval_loaders,
-            "id_lesion": id_eval_lesion_loaders,
-            "id_group": id_eval_group_loaders,
-            "id_long": id_eval_long_loaders,
-            "ood": ood_eval_loaders,
-            "ood_lesion": ood_eval_lesion_loaders,
-            "ood_group": ood_eval_group_loaders,
-            "ood_long": ood_eval_long_loaders,
-            # "raw": raw_eval_loaders,
-            # "raw_lesion": raw_eval_lesion_loaders,
-            # "raw_group": raw_eval_group_loaders,
-            # "raw_long": raw_eval_long_loaders,
+        return {
+            "pretrain": pretrain_loader,
+            "train": train_loader,
+            "eval": {
+                "id": id_eval_loaders,
+                "id_lesion": id_eval_lesion_loaders,
+                "id_group": id_eval_group_loaders,
+                "id_long": id_eval_long_loaders,
+                "ood": ood_eval_loaders,
+                "ood_lesion": ood_eval_lesion_loaders,
+                "ood_group": ood_eval_group_loaders,
+                "ood_long": ood_eval_long_loaders,
+                # "raw": raw_eval_loaders,
+                # "raw_lesion": raw_eval_lesion_loaders,
+                # "raw_group": raw_eval_group_loaders,
+                # "raw_long": raw_eval_long_loaders,
+            },
+            "ref_subject": ref_subject,
         }
     else:
         raise ValueError('Invalid test dataset "{}"'.format(args.test_dataset))
@@ -631,6 +647,92 @@ def run_train(train_loader, registration_model, optimizer, args):
                             )
                         ),
                     )
+
+    return utils.aggregate_dicts(res)
+
+
+def run_pretrain(loader, random_points, keymorph_model, optimizer, args):
+    start_time = time.time()
+
+    if args.use_amp:
+        scaler = torch.cuda.amp.GradScaler()
+
+    keymorph_model.train()
+
+    res = []
+
+    random_points = random_points.to(args.device)
+    for step_idx, subject in enumerate(loader):
+        if step_idx == args.steps_per_epoch:
+            break
+        x_fixed = subject["img"][tio.DATA].float().to(args.device)
+
+        # Deform image and fixed points
+        if args.affine_slope >= 0:
+            scale_augment = np.clip(args.curr_epoch / args.affine_slope, None, 1)
+        else:
+            scale_augment = 1
+        x_moving, tgt_points = random_affine_augment(
+            x_fixed, points=random_points, scale_params=scale_augment
+        )
+
+        optimizer.zero_grad()
+        with torch.set_grad_enabled(True):
+            with torch.amp.autocast(
+                device_type="cuda", enabled=args.use_amp, dtype=torch.float16
+            ):
+                pred_points = keymorph_model.get_keypoints(x_moving)
+                pred_points = pred_points.view(-1, args.num_keypoints, args.dim)
+                loss = F.mse_loss(tgt_points, pred_points)
+
+        # Perform backward pass
+        if args.use_amp:
+            # Scales the loss, and calls backward()
+            # to create scaled gradients
+            scaler.scale(loss).backward()
+            # Unscales gradients and calls
+            # or skips optimizer.step()
+            scaler.step(optimizer)
+            # Updates the scale for next iteration
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
+
+        # Compute metrics
+        metrics = {}
+        metrics["scale_augment"] = scale_augment
+        metrics["loss"] = loss.cpu().detach().numpy()
+        end_time = time.time()
+        metrics["epoch_time"] = end_time - start_time
+        res.append(metrics)
+
+        if args.visualize and step_idx == 0:
+            if args.dim == 2:
+                show_warped(
+                    x_moving[0, 0].cpu().detach().numpy(),
+                    x_fixed[0, 0].cpu().detach().numpy(),
+                    x_fixed[0, 0].cpu().detach().numpy(),
+                    tgt_points[0].cpu().detach().numpy(),
+                    random_points[0].cpu().detach().numpy(),
+                    pred_points[0].cpu().detach().numpy(),
+                )
+            else:
+                show_warped_vol(
+                    x_moving[0, 0].cpu().detach().numpy(),
+                    x_fixed[0, 0].cpu().detach().numpy(),
+                    x_fixed[0, 0].cpu().detach().numpy(),
+                    tgt_points[0].cpu().detach().numpy(),
+                    random_points[0].cpu().detach().numpy(),
+                    pred_points[0].cpu().detach().numpy(),
+                    save_path=(
+                        None
+                        if args.debug_mode
+                        else os.path.join(
+                            args.model_img_dir, f"img_{args.curr_epoch}.png"
+                        )
+                    ),
+                )
 
     return utils.aggregate_dicts(res)
 
@@ -1194,7 +1296,7 @@ def main():
     set_seed(args)
 
     # Data
-    train_loader, eval_loaders = get_data(args)
+    loaders = get_data(args)
 
     # Model
     registration_model = get_model(args)
@@ -1212,7 +1314,7 @@ def main():
             device=args.device,
         )
 
-    if args.eval:
+    if args.run_mode == "eval":
         assert args.batch_size == 1, ":("
         registration_model.eval()
 
@@ -1242,7 +1344,7 @@ def main():
             json_path = args.model_result_dir / f"summary_{dist}.json"
             if not os.path.exists(json_path):
                 eval_metrics = run_eval(
-                    eval_loaders[dist],
+                    loaders["eval"][dist],
                     registration_model,
                     list_of_eval_metrics,
                     list_of_eval_names[dist],
@@ -1259,7 +1361,7 @@ def main():
             json_path = args.model_result_dir / f"summary_lesion_{dist}.json"
             if not os.path.exists(json_path) and list_of_eval_lesion_names is not None:
                 lesion_metrics = run_eval(
-                    eval_loaders[f"{dist}_lesion"],
+                    loaders["eval"][f"{dist}_lesion"],
                     registration_model,
                     list_of_eval_metrics,
                     list_of_eval_lesion_names[dist],
@@ -1279,7 +1381,7 @@ def main():
             json_path = args.model_result_dir / f"summary_group_{dist}.json"
             if not os.path.exists(json_path) and list_of_eval_group_names is not None:
                 group_metrics = run_groupwise_eval(
-                    eval_loaders[f"{dist}_group"],
+                    loaders["eval"][f"{dist}_group"],
                     registration_model,
                     list_of_eval_metrics,
                     list_of_eval_group_names[dist],
@@ -1296,7 +1398,7 @@ def main():
             json_path = args.model_result_dir / f"summary_long_{dist}.json"
             if not os.path.exists(json_path) and list_of_eval_long_names is not None:
                 long_metrics = run_groupwise_eval(
-                    eval_loaders[f"{dist}_long"],
+                    loaders["eval"][f"{dist}_long"],
                     registration_model,
                     list_of_eval_metrics,
                     list_of_eval_long_names[dist],
@@ -1308,6 +1410,78 @@ def main():
                     save_summary_json(long_metrics, json_path)
             else:
                 print("Skipping eval on", json_path)
+
+    elif args.run_mode == "pretrain":
+        assert args.registration_model == "keymorph"
+
+        registration_model.train()
+        train_loss = []
+
+        if args.use_wandb and not args.debug_mode:
+            initialize_wandb(args)
+
+        if args.resume:
+            start_epoch = ckpt_state["epoch"] + 1
+            # Load random keypoints from checkpoint
+            random_points = state["random_points"]
+        else:
+            start_epoch = 1
+            # Extract random keypoints from reference subject
+            ref_subject = loaders["ref_subject"]
+            ref_img = ref_subject["img"][tio.DATA].float().unsqueeze(0)
+            print("sampling random keypoints...")
+            random_points = utils.sample_valid_coordinates(
+                ref_img, args.num_keypoints, args.dim
+            )
+            random_points = random_points * 2 - 1
+            random_points = random_points.repeat(args.batch_size, 1, 1)
+            show_warped_vol(
+                ref_img[0, 0].cpu().detach().numpy(),
+                ref_img[0, 0].cpu().detach().numpy(),
+                ref_img[0, 0].cpu().detach().numpy(),
+                random_points[0].cpu().detach().numpy(),
+                random_points[0].cpu().detach().numpy(),
+                random_points[0].cpu().detach().numpy(),
+            )
+            del ref_subject
+
+        for epoch in range(start_epoch, args.epochs + 1):
+            args.curr_epoch = epoch
+            epoch_stats = run_pretrain(
+                loaders["pretrain"],
+                random_points,
+                registration_model,
+                optimizer,
+                args,
+            )
+
+            train_loss.append(epoch_stats["loss"])
+
+            print(f"Epoch {epoch}/{args.epochs}")
+            for name, metric in epoch_stats.items():
+                print(f"[Train Stat] {name}: {metric:.5f}")
+
+            if args.use_wandb and not args.debug_mode:
+                wandb.log(epoch_stats)
+
+            # Save model
+            state = {
+                "epoch": epoch,
+                "args": args,
+                "state_dict": registration_model.backbone.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "random_points": random_points,
+            }
+
+            if epoch % args.log_interval == 0 and not args.debug_mode:
+                torch.save(
+                    state,
+                    os.path.join(
+                        args.model_ckpt_dir,
+                        "pretrained_epoch{}_model.pth.tar".format(epoch),
+                    ),
+                )
+            del state
     else:
         registration_model.train()
         train_loss = []
@@ -1323,7 +1497,7 @@ def main():
         for epoch in range(start_epoch, args.epochs + 1):
             args.curr_epoch = epoch
             epoch_stats = run_train(
-                train_loader,
+                loaders["train"],
                 registration_model,
                 optimizer,
                 args,

@@ -231,9 +231,13 @@ def run_pretrain(loader, random_points, network, keypoint_extractor, optimizer, 
                     tgt_points[0].cpu().detach().numpy(),
                     random_points[0].cpu().detach().numpy(),
                     pred_points[0].cpu().detach().numpy(),
-                    save_path=None
-                    if args.debug_mode
-                    else os.path.join(args.model_img_dir, f"img_{args.curr_epoch}.png"),
+                    save_path=(
+                        None
+                        if args.debug_mode
+                        else os.path.join(
+                            args.model_img_dir, f"img_{args.curr_epoch}.png"
+                        )
+                    ),
                 )
 
     return utils.aggregate_dicts(res)
