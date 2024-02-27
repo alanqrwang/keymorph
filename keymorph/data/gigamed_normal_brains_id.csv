@@ -1,0 +1,6 @@
+name,has_train,has_test,has_lesion_seg,has_longitudinal,has_multiple_modalities,desc
+Dataset4999_IXIAllModalities,True,True,False,False,True,healthy
+Dataset1000_PPMI,True,True,False,False,True,Parkinson's disease
+Dataset1001_PACS2019,True,True,False,False,True,--
+Dataset1002_AIBL,True,True,False,False,True,--
+Dataset1004_OASIS2,True,True,False,True,True,--
