@@ -341,7 +341,7 @@ class GigaMedDataset:
         if transform is None:
             self.transform = tio.Compose(
                 [
-                    tio.Lambda(one_hot, include=("seg")),
+                    tio.Lambda(one_hot, include=("seg",)),
                 ]
             )
         else:
@@ -597,7 +597,7 @@ class GigaMed:
         return loaders
 
     def get_pretrain_loader(self):
-        datasets = self.gigamed_dataset.get_datasets(id=True, train=True)
+        datasets = list(self.gigamed_dataset.get_datasets(id=True, train=True).values())
         train_loader = DataLoader(
             ConcatDataset(datasets),
             batch_size=self.batch_size,
@@ -643,7 +643,7 @@ class GigaMedSynthBrain(GigaMed):
         return train_loader
 
     def get_pretrain_loader(self):
-        datasets = self.gigamed_dataset.get_single_datasets()
+        datasets = self.gigamed_dataset.get_datasets()
         sb_dataset = SynthBrain(
             self.batch_size, self.num_workers, load_seg=True
         ).get_single_dataset()

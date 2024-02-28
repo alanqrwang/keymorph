@@ -171,8 +171,6 @@ def parse_args():
         help="Number of gradient steps per epoch",
     )
 
-    parser.add_argument("--eval", action="store_true", help="Perform evaluation")
-
     parser.add_argument(
         "--affine_slope",
         type=int,
@@ -230,8 +228,11 @@ def create_dirs(args):
     arg_dict = vars(deepcopy(args))
 
     # Path to save outputs
-    if args.eval:
+    if args.run_mode == 'eval':
         prefix = "__eval__"
+        dataset_str = args.test_dataset
+    elif args.run_mode == 'pretrain':
+        prefix = "__pretrain__"
         dataset_str = args.test_dataset
     else:
         prefix = "__training__"
@@ -258,7 +259,7 @@ def create_dirs(args):
         print("Creating directory: {}".format(args.model_dir))
         os.makedirs(args.model_dir)
 
-    if args.eval:
+    if args.run_mode == "eval":
         args.model_result_dir = args.model_dir / "eval_results"
         if not os.path.exists(args.model_result_dir) and not args.debug_mode:
             os.makedirs(args.model_result_dir)
@@ -292,12 +293,16 @@ def get_data(args):
         train_loader, _ = ixi.get_loaders()
     elif args.train_dataset == "gigamed":
         gigamed_dataset = gigamed.GigaMed(
-            args.batch_size, args.num_workers, load_seg=args.seg_available
+            args.batch_size, args.num_workers, load_seg=(args.seg_available and not args.run_mode == 'pretrain') # Only load segs if not pretraining
         )
         train_loader = gigamed_dataset.get_train_loader()
+        pretrain_loader = gigamed_dataset.get_pretrain_loader()
+        ref_subject = gigamed_dataset.get_reference_subject()
     elif args.train_dataset == "gigamednb":
         gigamed_dataset = gigamed_normal_brains_only_with_segs.GigaMed(
-            args.batch_size, args.num_workers, load_seg=args.seg_available
+            args.batch_size, 
+            args.num_workers, 
+            load_seg=(args.seg_available and not args.run_mode == "pretrain") # Only load segs if not pretraining
         )
         train_loader = gigamed_dataset.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
@@ -1435,14 +1440,15 @@ def main():
             )
             random_points = random_points * 2 - 1
             random_points = random_points.repeat(args.batch_size, 1, 1)
-            show_warped_vol(
-                ref_img[0, 0].cpu().detach().numpy(),
-                ref_img[0, 0].cpu().detach().numpy(),
-                ref_img[0, 0].cpu().detach().numpy(),
-                random_points[0].cpu().detach().numpy(),
-                random_points[0].cpu().detach().numpy(),
-                random_points[0].cpu().detach().numpy(),
-            )
+            if args.visualize:
+                show_warped_vol(
+                    ref_img[0, 0].cpu().detach().numpy(),
+                    ref_img[0, 0].cpu().detach().numpy(),
+                    ref_img[0, 0].cpu().detach().numpy(),
+                    random_points[0].cpu().detach().numpy(),
+                    random_points[0].cpu().detach().numpy(),
+                    random_points[0].cpu().detach().numpy(),
+                )
             del ref_subject
 
         for epoch in range(start_epoch, args.epochs + 1):
@@ -1465,15 +1471,14 @@ def main():
                 wandb.log(epoch_stats)
 
             # Save model
-            state = {
-                "epoch": epoch,
-                "args": args,
-                "state_dict": registration_model.backbone.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "random_points": random_points,
-            }
-
             if epoch % args.log_interval == 0 and not args.debug_mode:
+                state = {
+                    "epoch": epoch,
+                    "args": args,
+                    "state_dict": registration_model.backbone.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "random_points": random_points,
+                }
                 torch.save(
                     state,
                     os.path.join(
@@ -1481,7 +1486,6 @@ def main():
                         "pretrained_epoch{}_model.pth.tar".format(epoch),
                     ),
                 )
-            del state
     else:
         registration_model.train()
         train_loss = []
@@ -1512,14 +1516,13 @@ def main():
                 wandb.log(epoch_stats)
 
             # Save model
-            state = {
-                "epoch": epoch,
-                "args": args,
-                "state_dict": registration_model.backbone.state_dict(),
-                "optimizer": optimizer.state_dict(),
-            }
-
             if epoch % args.log_interval == 0 and not args.debug_mode:
+                state = {
+                    "epoch": epoch,
+                    "args": args,
+                    "state_dict": registration_model.backbone.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                }
                 torch.save(
                     state,
                     os.path.join(

@@ -320,7 +320,7 @@ def main():
     elif args.train_dataset == "gigamed+synthbrain+randomanisotropy":
         transform = tio.Compose(
             [
-                tio.Lambda(synthbrain.one_hot, include=("seg")),
+                tio.Lambda(synthbrain.one_hot, include=("seg",)),
                 tio.RandomAnisotropy(downsampling=(1, 4)),
             ]
         )
@@ -397,14 +397,15 @@ def main():
         )
         random_points = random_points * 2 - 1
         random_points = random_points.repeat(args.batch_size, 1, 1)
-        show_warped_vol(
-            ref_img[0, 0].cpu().detach().numpy(),
-            ref_img[0, 0].cpu().detach().numpy(),
-            ref_img[0, 0].cpu().detach().numpy(),
-            random_points[0].cpu().detach().numpy(),
-            random_points[0].cpu().detach().numpy(),
-            random_points[0].cpu().detach().numpy(),
-        )
+        if args.visualize:
+            show_warped_vol(
+                ref_img[0, 0].cpu().detach().numpy(),
+                ref_img[0, 0].cpu().detach().numpy(),
+                ref_img[0, 0].cpu().detach().numpy(),
+                random_points[0].cpu().detach().numpy(),
+                random_points[0].cpu().detach().numpy(),
+                random_points[0].cpu().detach().numpy(),
+            )
         del ref_subject
 
     for epoch in range(start_epoch, args.epochs + 1):

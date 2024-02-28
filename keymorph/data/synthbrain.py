@@ -4,7 +4,7 @@ import torchio as tio
 import random
 import torch
 
-data_dir = "/midtier/sablab/scratch/alw4013/data/synthseg_clean_MNI"
+data_dir = "/midtier/sablab/scratch/alw4013/data/synthbrain_clean_MNI"
 
 
 def one_hot(asegs):
@@ -108,7 +108,7 @@ class SynthBrain:
         if transform is None:
             self.transform = tio.Compose(
                 [
-                    tio.Lambda(one_hot, include=("seg")),
+                    tio.Lambda(one_hot, include=("seg",)),
                 ]
             )
         else:

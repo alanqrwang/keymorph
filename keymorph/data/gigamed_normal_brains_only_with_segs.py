@@ -211,7 +211,7 @@ class GigaMedDataset:
         if transform is None:
             self.transform = tio.Compose(
                 [
-                    tio.Lambda(one_hot, include=("seg")),
+                    tio.Lambda(one_hot, include=("seg",)),
                 ]
             )
         else:
