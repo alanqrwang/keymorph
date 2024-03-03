@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 
 # WARNING!!!!
 # On AI cluster, load FSL and bc modules.
-# Activate conda environment alw4013-hdbet.
+# Activate conda environment keymorph
 
 need_skullstrip = [
     "Dataset4999_IXIAllModalities",
@@ -159,6 +159,27 @@ def _hdbet(src_img_dir, tgt_img_dir, need_skullstrip=True):
 
     return failed
 
+def _deepsurfer_reorient(src_dir, tgt_dir):
+    '''Correct matrix using deepsurfer and then reorient again'''
+    failed = []
+    for basename in sorted(os.listdir(src_dir)):
+        try:
+            name = basename.split(".")[0]
+            s = os.path.join(src_dir, basename)
+            t = os.path.join(tgt_dir, name)
+            ext = '.nii.gz'
+
+            deepsurfer_command = f'deepsurfer correct-matrix --image {s} --fixed {t}{ext}'
+            shell_command(deepsurfer_command)
+            reorient_command = f"fslreorient2std {t} {t}"
+            shell_command(reorient_command)
+
+        except Exception as e:
+            print("Error deepsurfer reorienting:", src_dir)
+            failed.append(src_dir)
+
+    return failed
+
 
 def main():
     parser = ArgumentParser()
@@ -251,10 +272,10 @@ def main():
             "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_preprocessed"
         )
         reorient_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_deepsurfMNI_preprocessed"
         )
         bet_dir = Path(
-            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+            "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_deepsurfMNI_HD-BET_preprocessed"
         )
     else:
         torchio_dir = Path(
@@ -272,12 +293,12 @@ def main():
         # "Dataset1001_PACS2019",
         # "Dataset1002_AIBL",
         # "Dataset1004_OASIS2",
-        # "Dataset1005_OASIS1",
+        "Dataset1005_OASIS1",
         # "Dataset1006_OASIS3",
-        "Dataset1007_ADNI",
+        # "Dataset1007_ADNI",
     ]
     for ds in dataset_names:
-        # TorchIO
+        # # TorchIO
         ds_src_img_dir = base_dir / ds / image_dir
         ds_src_seg_dir = base_dir / ds / label_dir
         ds_tgt_img_dir = torchio_dir / ds / image_dir
@@ -315,23 +336,24 @@ def main():
             os.makedirs(ds_tgt_img_dir)
         if not os.path.exists(ds_tgt_seg_dir) and seg_available:
             os.makedirs(ds_tgt_seg_dir)
-        failed = _reorient(
+        # failed = _reorient(
+        #     ds_src_img_dir,
+        #     ds_tgt_img_dir,
+        #     skip=(ds == "Dataset5012_ShiftsBest"),
+        #     swapdim=(
+        #         "x -y z" if ds == "Dataset5113_StanfordMETShare" else None
+        #     ),  # for some reason, this dataset needs to swap dimensions
+        # )
+
+        failed = _deepsurfer_reorient(
             ds_src_img_dir,
             ds_tgt_img_dir,
-            skip=(ds == "Dataset5012_ShiftsBest"),
-            swapdim=(
-                "x -y z" if ds == "Dataset5113_StanfordMETShare" else None
-            ),  # for some reason, this dataset needs to swap dimensions
         )
         all_failed += failed
         if seg_available:
-            failed = _reorient(
+            failed = _deepsurfer_reorient(
                 ds_src_seg_dir,
                 ds_tgt_seg_dir,
-                skip=(ds == "Dataset5012_ShiftsBest"),
-                swapdim=(
-                    "x -y z" if ds == "Dataset5113_StanfordMETShare" else None
-                ),  # for some reason, this dataset needs to swap dimensions
             )
             all_failed += failed
 
