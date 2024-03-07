@@ -14,25 +14,20 @@
 module purge
 source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 
+#!/bin/bash
+
 NUM_KEY=$1
-JOB_NAME="_pretrain_gigamednb-${NUM_KEY}"
-python /home/alw4013/keymorph/run.py \
-    --run_mode pretrain \
-    --registration_model keymorph \
+JOB_NAME="_pretrainold_gigamednb-${NUM_KEY}"
+python /home/alw4013/keymorph/pretrain.py \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --use_wandb \
     --wandb_kwargs project=keymorph name=$JOB_NAME \
     --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/ \
-    --train_dataset gigamednb \
-    --test_dataset gigamed \
+    --train_dataset gigamed \
     --use_amp \
-    --num_workers 8 \
+    --num_workers 4 \
     --affine_slope 5000 \
     --batch_size 1 \
     --backbone conv \
-    --epochs 15000 \
-    --seg_available \
-    --lr 1e-4
-    # --resume \
-    # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining__gigamed-synthbrain-randomanisotropy_datasetgigamed+synthbrain+randomanisotropy_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch8500_model.pth.tar
+    --epochs 15000

@@ -12,23 +12,24 @@
 #SBATCH -e ./job_err/%j-train.err \ 
 
 module purge
-module load miniconda3/22.11.1-ctkwnpe
-source activate keymorph
+source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="gigamed-synthbrain-weighted-keymorph2"
+JOB_NAME="gigamednb-keymorph"
 python run.py \
+    --run_mode train \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --max_train_keypoints 32 \
-    --epochs 2000 \
+    --registration_model keymorph \
+    --epochs 5000 \
     --loss_fn mse \
     --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/ \
     --use_wandb \
     --wandb_kwargs project=keymorph name=${JOB_NAME} \
-    --train_dataset gigamed+synthbrain \
+    --train_dataset gigamednb \
     --test_dataset gigamed \
     --num_workers 4 \
     --use_amp \
@@ -36,10 +37,17 @@ python run.py \
     --backbone conv \
     --compute_subgrids_for_tps \
     --seg_available \
-    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__training__gigamed-synthbrain-weighted-keymorph_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch1250_trained_model.pth.tar \
-    --resume \
-    --weighted_kp_align power 
+    --resume_latest
+    # --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/__pretrain___pretrain_gigamednb-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
     # --visualize \
+    
+
+
+
+
+
+
+
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining___pretrain_gigamed-synthbrain_${NUM_KEY}_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar \
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__pretraining__gigamed-synthbrain_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch8500_model.pth.tar \
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/se3cnn/__pretraining__gigamed-pretraining-se3cnn_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar

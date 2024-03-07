@@ -8,9 +8,7 @@
 #SBATCH -p sablab-gpu # specify partition
 #SBATCH --gres=gpu:1 # if you need to use a GPU
 module purge
-module load miniconda3/22.11.1-ctkwnpe
-# if using conda
-source activate keymorph
+source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 # if using pip
 # source ~/myvev/bin/activate
 

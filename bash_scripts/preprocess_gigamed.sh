@@ -11,12 +11,12 @@
 #SBATCH -e ./job_err/%j-preprocess_gigamed.err \ 
 
 module purge
-module load miniconda3/22.11.1-ctkwnpe
 module load FSL/6.0.7-4
 module load bc/1.07.1-higilk3
+module load miniconda3/22.11.1-ctkwnpe
 # if using conda
-source activate keymorph
+source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 # if using pip
 # source ~/myvev/bin/activate
 
-python /home/alw4013/keymorph/data_scripts/preprocess_gigamed.py --min_max_norm
+python /home/alw4013/keymorph/data_scripts/preprocess_gigamed.py --min_max_norm --test
