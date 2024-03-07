@@ -1,3 +1,4 @@
+import re
 import torch
 import torch.nn.functional as F
 import math
@@ -207,3 +208,27 @@ def save_summary_json(dict, save_path):
     print("Saving summary to", save_path)
     with open(save_path, "w") as outfile:
         json.dump(dict, outfile, sort_keys=True, indent=4)
+
+def get_latest_epoch_file(directory_path):
+    max_epoch = -1
+    latest_epoch_file = None
+    
+    # Compile a regular expression pattern to extract the epoch number
+    epoch_pattern = re.compile(r'epoch(\d+)_trained_model.pth.tar')
+    
+    # List all files in the given directory
+    for filename in os.listdir(directory_path):
+        match = epoch_pattern.match(filename)
+        if match:
+            # Extract the epoch number and convert it to an integer
+            epoch_num = int(match.group(1))
+            # Update the max_epoch and latest_epoch_file if this file has a larger epoch number
+            if epoch_num > max_epoch:
+                max_epoch = epoch_num
+                latest_epoch_file = filename
+    
+    # Return the path of the file with the largest epoch number
+    if latest_epoch_file is not None:
+        return os.path.join(directory_path, latest_epoch_file)
+    else:
+        return None
