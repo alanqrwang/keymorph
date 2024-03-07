@@ -162,6 +162,9 @@ class KeyMorph(nn.Module):
             self.is_supported_transform_type(s) for s in transform_type
         ), "Invalid transform_type"
 
+        assert img_f.shape == img_m.shape, "Fixed and moving images must have same shape"
+        assert img_f.shape[1] == 1, "Image dimension must be 1"
+
         # Rescale inputs to [0, 1]. Clone to ensure we don't mess with the original data.
         img_f = rescale_intensity(img_f.clone())
         img_m = rescale_intensity(img_m.clone())
