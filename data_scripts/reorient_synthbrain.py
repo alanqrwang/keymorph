@@ -9,7 +9,6 @@ from argparse import ArgumentParser
 
 # WARNING!!!!
 # On AI cluster, load FSL and bc modules.
-# Activate conda environment alw4013-hdbet.
 
 
 def shell_command(command):
@@ -25,8 +24,12 @@ def _reorient(src_dir, tgt_dir):
             name = basename.split(".")[0]
             s = os.path.join(src_dir, basename)
             t = os.path.join(tgt_dir, name)
-            reorient_command = f"fslreorient2std {s} {t}"
-            shell_command(reorient_command)
+            t_with_ext = os.path.join(tgt_dir, f'{name}.nii.gz')
+            if not os.path.exists(t_with_ext): # Only perform reorient if the file doesn't exist
+                reorient_command = f"fslreorient2std {s} {t}"
+                shell_command(reorient_command)
+            else:
+                print(f"File {t_with_ext} already exists, skipping reorientation")
 
         except Exception as e:
             print("Error reorienting:", src_dir)
