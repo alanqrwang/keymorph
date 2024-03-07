@@ -57,6 +57,10 @@ def parse_args():
         "--resume", action="store_true", help="Resume checkpoint, must set --load_path"
     )
 
+    parser.add_argument(
+        "--resume_latest", action="store_true", help="Resume latest checkpoint available"
+    )
+
     parser.add_argument("--save_preds", action="store_true", help="Perform evaluation")
 
     parser.add_argument(
@@ -482,6 +486,9 @@ def run_train(train_loader, registration_model, optimizer, args):
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
+        assert img_f.shape == img_m.shape, f"Fixed and moving images must have same shape:\n --> {fixed['img']['path']}: {img_f.shape}\n --> {moving['img']['path']}: {img_m.shape}"
+        assert img_f.shape[1] == 1, f"Fixed image must have 1 channel:\n --> {fixed['img']['path']}: {img_f.shape}"
+        assert img_m.shape[1] == 1,  f"Moving image must have 1 channel:\n--> {moving['img']['path']}: {img_m.shape}"
         if args.seg_available:
             seg_f, seg_m = fixed["seg"][tio.DATA], moving["seg"][tio.DATA]
 
@@ -1310,7 +1317,13 @@ def main():
     optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
 
     # Checkpoint loading
+    if args.resume_latest:
+        args.resume = True
+        args.load_path = utils.get_latest_epoch_file(args.model_ckpt_dir)
+        if args.load_path is None:
+            raise ValueError(f"No checkpoint found to resume from: {args.model_ckpt_dir}")
     if args.load_path is not None:
+        print(f"Loading checkpoint from {args.load_path}")
         ckpt_state, registration_model, optimizer = utils.load_checkpoint(
             args.load_path,
             registration_model,
