@@ -293,12 +293,12 @@ def main():
         # "Dataset1001_PACS2019",
         # "Dataset1002_AIBL",
         # "Dataset1004_OASIS2",
-        "Dataset1005_OASIS1",
-        # "Dataset1006_OASIS3",
-        # "Dataset1007_ADNI",
+        # "Dataset1005_OASIS1",
+        "Dataset1006_OASIS3",
+        "Dataset1007_ADNI",
     ]
     for ds in dataset_names:
-        # # TorchIO
+        # TorchIO
         ds_src_img_dir = base_dir / ds / image_dir
         ds_src_seg_dir = base_dir / ds / label_dir
         ds_tgt_img_dir = torchio_dir / ds / image_dir
@@ -308,23 +308,23 @@ def main():
         else:
             seg_available = False
 
-        # If image directory doesn't exist, skip
-        if not os.path.exists(ds_src_img_dir):
-            continue
+        # # If image directory doesn't exist, skip
+        # if not os.path.exists(ds_src_img_dir):
+        #     continue
 
-        if not os.path.exists(ds_tgt_img_dir):
-            os.makedirs(ds_tgt_img_dir)
-        if not os.path.exists(ds_tgt_seg_dir) and seg_available:
-            os.makedirs(ds_tgt_seg_dir)
-        failed = _resample_pad_intensity_normalize(
-            ds_src_img_dir,
-            ds_src_seg_dir,
-            ds_tgt_img_dir,
-            ds_tgt_seg_dir,
-            seg_available=seg_available,
-            min_max_norm=args.min_max_norm,
-        )
-        all_failed += failed
+        # if not os.path.exists(ds_tgt_img_dir):
+        #     os.makedirs(ds_tgt_img_dir)
+        # if not os.path.exists(ds_tgt_seg_dir) and seg_available:
+        #     os.makedirs(ds_tgt_seg_dir)
+        # failed = _resample_pad_intensity_normalize(
+        #     ds_src_img_dir,
+        #     ds_src_seg_dir,
+        #     ds_tgt_img_dir,
+        #     ds_tgt_seg_dir,
+        #     seg_available=seg_available,
+        #     min_max_norm=args.min_max_norm,
+        # )
+        # all_failed += failed
 
         # fslreorient2std
         ds_src_img_dir = torchio_dir / ds / image_dir

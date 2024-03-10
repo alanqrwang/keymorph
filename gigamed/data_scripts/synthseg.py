@@ -107,12 +107,12 @@ def main():
     )
     dataset_names = [
         # "Dataset4999_IXIAllModalities",
-        "Dataset1000_PPMI",
-        "Dataset1001_PACS2019",
-        "Dataset1002_AIBL",
-        "Dataset1004_OASIS2",
-        "Dataset1005_OASIS1",
-        "Dataset1006_OASIS3",
+        # "Dataset1000_PPMI",
+        # "Dataset1001_PACS2019",
+        # "Dataset1002_AIBL",
+        # "Dataset1004_OASIS2",
+        # "Dataset1005_OASIS1",
+        # "Dataset1006_OASIS3",
         "Dataset1007_ADNI",
     ]
 
