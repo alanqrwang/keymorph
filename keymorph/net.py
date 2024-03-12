@@ -61,7 +61,7 @@ class UNet(nn.Module):
                 input_ch,
                 out_dim,
                 final_sigmoid=False,
-                f_maps=64,
+                f_maps=32,  # Used by nnUNet
                 layer_order="gcr",
                 num_groups=8,
                 num_levels=4,
