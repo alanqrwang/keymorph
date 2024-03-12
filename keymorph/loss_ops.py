@@ -352,3 +352,64 @@ class ImageLC2(torch.nn.Module):
 #         gt[ind_in_mask_m] = 0
 
 #         return F.mse_loss(gt, weights)
+
+
+class _AvgPairwiseLoss(torch.nn.Module):
+    """Pairwise loss."""
+
+    def __init__(self, metric_fn):
+        super().__init__()
+        self.metric_fn = metric_fn
+
+    def forward(self, batch_of_imgs):
+        loss = 0
+        num = 0
+        for i in range(len(batch_of_imgs)):
+            for j in range(len(batch_of_imgs)):
+                if i != j:
+                    img1 = batch_of_imgs[i : i + 1]
+                    img2 = batch_of_imgs[j : j + 1]
+                    loss += self.metric_fn(img1, img2)
+                    num += 1
+        return loss / num
+
+
+class MSEPairwiseLoss(_AvgPairwiseLoss):
+    """MSE pairwise loss."""
+
+    def __init__(self):
+        super().__init__(MSELoss().forward)
+
+
+class SoftDicePairwiseLoss(_AvgPairwiseLoss):
+    """Soft Dice pairwise loss."""
+
+    def __init__(self):
+        super().__init__(DiceLoss().forward)
+
+
+class HausdorffPairwiseLoss(_AvgPairwiseLoss):
+    """Hausdorff pairwise loss."""
+
+    def __init__(self):
+        super().__init__(hausdorff_distance)
+
+
+class HardDicePairwiseLoss(torch.nn.Module):
+    """Pairwise loss."""
+
+    def __init__(self):
+        super().__init__()
+        self.hard_dice = DiceLoss(hard=True)
+
+    def forward(self, batch_of_imgs):
+        loss = 0
+        num = 0
+        for i in range(len(batch_of_imgs)):
+            for j in range(len(batch_of_imgs)):
+                if i != j:
+                    img1 = batch_of_imgs[i : i + 1]
+                    img2 = batch_of_imgs[j : j + 1]
+                    loss += self.hard_dice(img1, img2)[0]
+                    num += 1
+        return loss / num
