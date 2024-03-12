@@ -4,6 +4,6 @@ Dataset1000_PPMI,True,True,False,False,True,Parkinson's disease
 Dataset1001_PACS2019,True,True,False,False,True,--
 Dataset1002_AIBL,True,True,False,False,True,--
 Dataset1004_OASIS2,True,True,False,True,True,--
-Dataset1006_OASIS3,True,True,False,True,True,--
 Dataset1007_ADNI,True,True,False,True,True,--
 Dataset1008_OASIS1deepsurfercorrected,True,True,False,True,True,fixed version of Dataset1005_OASIS1 with corrected matrix using deepsurfer 
+Dataset1009_OASIS3deepsurfercorrected,True,True,False,True,True,fixed version of Dataset1006_OASIS3 with corrected matrix using deepsurfer 
