@@ -8,12 +8,28 @@ import wandb
 import os
 import argparse
 import json
+import itk
 
 
 def align_img(grid, x):
     return F.grid_sample(
-        x, grid=grid, mode="bilinear", padding_mode="border", align_corners=False
+        x,
+        grid=grid,
+        mode="bilinear",
+        padding_mode="border",
+        align_corners=False,
     )
+
+
+def align_img_elastix(transform_parameters, x):
+    """x: (dim1, dim2, dim3) or (dim1, dim2)
+    Returns: (dim1, dim2, dim3) or (dim1, dim2)"""
+    x = x.cpu().detach().numpy().astype(np.float32)
+    x = itk.image_view_from_array(x)
+    transform_parameters.SetParameter("FinalBSplineInterpolationOrder", "0")
+    result_image = itk.transformix_filter(x, transform_parameters)
+    res = torch.tensor(itk.array_view_from_image(result_image))
+    return res
 
 
 def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
@@ -209,13 +225,14 @@ def save_summary_json(dict, save_path):
     with open(save_path, "w") as outfile:
         json.dump(dict, outfile, sort_keys=True, indent=4)
 
+
 def get_latest_epoch_file(directory_path):
     max_epoch = -1
     latest_epoch_file = None
-    
+
     # Compile a regular expression pattern to extract the epoch number
-    epoch_pattern = re.compile(r'epoch(\d+)_trained_model.pth.tar')
-    
+    epoch_pattern = re.compile(r"epoch(\d+)_trained_model.pth.tar")
+
     # List all files in the given directory
     for filename in os.listdir(directory_path):
         match = epoch_pattern.match(filename)
@@ -226,7 +243,7 @@ def get_latest_epoch_file(directory_path):
             if epoch_num > max_epoch:
                 max_epoch = epoch_num
                 latest_epoch_file = filename
-    
+
     # Return the path of the file with the largest epoch number
     if latest_epoch_file is not None:
         return os.path.join(directory_path, latest_epoch_file)
