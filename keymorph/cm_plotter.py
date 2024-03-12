@@ -249,9 +249,9 @@ def show_warped_vol(
     moving,
     fixed,
     warped,
-    ctl_points,
-    tgt_points,
-    warped_points,
+    ctl_points=None,
+    tgt_points=None,
+    warped_points=None,
     weights=None,
     suptitle=None,
     save_path=None,
@@ -278,9 +278,23 @@ def show_warped_vol(
     """
 
     img_dim = moving.shape[-1]
-    tgt_points = (tgt_points + 1) / 2
-    ctl_points = (ctl_points + 1) / 2
-    warped_points = (warped_points + 1) / 2
+    if tgt_points is not None and ctl_points is not None and warped_points is not None:
+        plot_points = True
+    else:
+        plot_points = False
+    if plot_points:
+        tgt_points = (tgt_points + 1) / 2
+        ctl_points = (ctl_points + 1) / 2
+        warped_points = (warped_points + 1) / 2
+
+        moving_colors = ["r" for _ in range(len(ctl_points))]
+        fixed_colors = ["b" for _ in range(len(ctl_points))]
+        warped_colors = ["r" for _ in range(len(ctl_points))]
+
+        if weights is None:
+            weights = np.ones(len(ctl_points))
+        else:
+            weights = utils.rescale_intensity(weights)
 
     # Set global vmin and vmax so intensities values are comparable relative to each other
     vmin = min(moving.min(), fixed.min(), warped.min())
@@ -293,15 +307,6 @@ def show_warped_vol(
     [ax.set_yticklabels([-1, 1]) for ax in axes.ravel()]
     [ax.set_xlim([-0 * img_dim, 1 * img_dim]) for ax in axes.ravel()]
     [ax.set_ylim([-0 * img_dim, 1 * img_dim]) for ax in axes.ravel()]
-
-    # colors = cm.viridis(np.linspace(0, 1, len(ctl_points)))
-    moving_colors = ["r" for _ in range(len(ctl_points))]
-    fixed_colors = ["b" for _ in range(len(ctl_points))]
-    warped_colors = ["r" for _ in range(len(ctl_points))]
-    if weights is None:
-        weights = np.ones(len(ctl_points))
-    else:
-        weights = utils.rescale_intensity(weights)
 
     xy_ind = moving.shape[-1] // 2
     xz_ind = moving.shape[-2] // 2
@@ -325,46 +330,46 @@ def show_warped_vol(
         elif index == 2:
             p_index = 0
         axes[index, 0].imshow(m, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
-        for k, c, alpha in zip(range(len(ctl_points)), moving_colors, weights):
-            axes[p_index, 0].scatter(
-                ctl_points[k, i] * img_dim,
-                ctl_points[k, j] * img_dim,
-                marker=".",
-                s=100,
-                color=c,
-                alpha=alpha,
-            )
-
         axes[index, 1].imshow(f, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
-        for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
-            axes[p_index, 1].scatter(
-                tgt_points[k, i] * img_dim,
-                tgt_points[k, j] * img_dim,
-                marker="+",
-                s=100,
-                color="b",
-                alpha=alpha,
-            )
-
         axes[index, 2].imshow(w, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
-        for k, c, alpha in zip(range(len(ctl_points)), warped_colors, weights):
-            axes[p_index, 2].scatter(
-                warped_points[k, i] * img_dim,
-                warped_points[k, j] * img_dim,
-                marker=".",
-                s=100,
-                color="r",
-                alpha=alpha,
-            )
-        for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
-            axes[p_index, 2].scatter(
-                tgt_points[k, i] * img_dim,
-                tgt_points[k, j] * img_dim,
-                marker="+",
-                s=100,
-                color="b",
-                alpha=alpha,
-            )
+
+        if plot_points:
+            for k, c, alpha in zip(range(len(ctl_points)), moving_colors, weights):
+                axes[p_index, 0].scatter(
+                    ctl_points[k, i] * img_dim,
+                    ctl_points[k, j] * img_dim,
+                    marker=".",
+                    s=100,
+                    color=c,
+                    alpha=alpha,
+                )
+            for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
+                axes[p_index, 1].scatter(
+                    tgt_points[k, i] * img_dim,
+                    tgt_points[k, j] * img_dim,
+                    marker="+",
+                    s=100,
+                    color="b",
+                    alpha=alpha,
+                )
+            for k, c, alpha in zip(range(len(ctl_points)), warped_colors, weights):
+                axes[p_index, 2].scatter(
+                    warped_points[k, i] * img_dim,
+                    warped_points[k, j] * img_dim,
+                    marker=".",
+                    s=100,
+                    color="r",
+                    alpha=alpha,
+                )
+            for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
+                axes[p_index, 2].scatter(
+                    tgt_points[k, i] * img_dim,
+                    tgt_points[k, j] * img_dim,
+                    marker="+",
+                    s=100,
+                    color="b",
+                    alpha=alpha,
+                )
 
     axes[0, 0].set_title("Moving")
     axes[0, 1].set_title("Fixed")
@@ -389,3 +394,17 @@ def show_warped_vol(
     fig.show()
     plt.show()
     plt.close()
+
+
+def plot_groupwise_register(list_of_moving_imgs, list_of_aligned_imgs):
+    fig, axes = plt.subplots(
+        2, len(list_of_moving_imgs), figsize=(len(list_of_moving_imgs) * 4, 2 * 4)
+    )
+    for i, img in enumerate(list_of_moving_imgs):
+        axes[0, i].imshow(img, cmap="gray")
+        axes[0, i].axis("off")
+    for i, img in enumerate(list_of_aligned_imgs):
+        axes[1, i].imshow(img, cmap="gray")
+        axes[1, i].axis("off")
+    fig.show()
+    plt.show()
