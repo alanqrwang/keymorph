@@ -4,9 +4,11 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --time=50:30:00 # set this time according to your need
-#SBATCH --mem=32GB # how much RAM will your notebook consume? 
-#SBATCH -p sablab-gpu # specify partition
+#SBATCH --mem=16GB # how much RAM will your notebook consume? 
+#SBATCH -p scu-gpu # specify partition
 #SBATCH --gres=gpu:1 # if you need to use a GPU
+#SBATCH -o ./job_out/%j-jupyter.out
+#SBATCH -e ./job_err/%j-jupyter.err \ 
 module purge
 source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 # if using pip

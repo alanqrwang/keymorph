@@ -15,4 +15,4 @@ source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate synthseg_38
 # if using pip
 # source ~/myvev/bin/activate
 
-python /home/alw4013/keymorph/data_scripts/synthseg.py
+python /home/alw4013/keymorph/gigamed/data_scripts/synthseg.py

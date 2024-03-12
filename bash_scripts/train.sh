@@ -17,7 +17,7 @@ source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="gigamednb-keymorph"
+JOB_NAME="gigamednb-withADNI-keymorph-${NUM_KEY}"
 python run.py \
     --run_mode train \
     --job_name ${JOB_NAME} \
@@ -37,7 +37,8 @@ python run.py \
     --backbone conv \
     --compute_subgrids_for_tps \
     --seg_available \
-    --resume_latest
+    --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/__pretrain___pretrain_gigamednb-withADNI-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
+    # --resume_latest
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/__pretrain___pretrain_gigamednb-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
     # --visualize \
     

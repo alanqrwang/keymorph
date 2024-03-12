@@ -103,7 +103,7 @@ def main():
     # ]
 
     root_dir = Path(
-        "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/"
+        "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_deepsurfMNI_HD-BET_preprocessed"
     )
     dataset_names = [
         # "Dataset4999_IXIAllModalities",
@@ -112,8 +112,8 @@ def main():
         # "Dataset1002_AIBL",
         # "Dataset1004_OASIS2",
         # "Dataset1005_OASIS1",
-        # "Dataset1006_OASIS3",
-        "Dataset1007_ADNI",
+        "Dataset1006_OASIS3",
+        # "Dataset1007_ADNI",
     ]
 
     for ds in dataset_names:

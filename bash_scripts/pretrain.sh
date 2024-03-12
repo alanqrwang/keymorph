@@ -15,7 +15,7 @@ module purge
 source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 
 NUM_KEY=$1
-JOB_NAME="_pretrain_gigamednb-${NUM_KEY}"
+JOB_NAME="_pretrain_gigamednb-withADNI-${NUM_KEY}"
 python /home/alw4013/keymorph/run.py \
     --run_mode pretrain \
     --registration_model keymorph \

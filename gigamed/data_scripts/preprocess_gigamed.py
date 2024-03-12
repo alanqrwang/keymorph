@@ -159,17 +159,20 @@ def _hdbet(src_img_dir, tgt_img_dir, need_skullstrip=True):
 
     return failed
 
+
 def _deepsurfer_reorient(src_dir, tgt_dir):
-    '''Correct matrix using deepsurfer and then reorient again'''
+    """Correct matrix using deepsurfer and then reorient again"""
     failed = []
     for basename in sorted(os.listdir(src_dir)):
         try:
             name = basename.split(".")[0]
             s = os.path.join(src_dir, basename)
             t = os.path.join(tgt_dir, name)
-            ext = '.nii.gz'
+            ext = ".nii.gz"
 
-            deepsurfer_command = f'deepsurfer correct-matrix --image {s} --fixed {t}{ext}'
+            deepsurfer_command = (
+                f"deepsurfer correct-matrix --image {s} --fixed {t}{ext}"
+            )
             shell_command(deepsurfer_command)
             reorient_command = f"fslreorient2std {t} {t}"
             shell_command(reorient_command)
@@ -295,7 +298,7 @@ def main():
         # "Dataset1004_OASIS2",
         # "Dataset1005_OASIS1",
         "Dataset1006_OASIS3",
-        "Dataset1007_ADNI",
+        # "Dataset1007_ADNI",
     ]
     for ds in dataset_names:
         # TorchIO
