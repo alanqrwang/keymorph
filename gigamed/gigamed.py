@@ -148,7 +148,7 @@ class SingleSubjectPathDataset(Dataset):
 
 
 class GroupDataset(SingleSubjectDataset):
-    def __init__(self, root_dir, train, transform=None, load_seg=True, group_size=3):
+    def __init__(self, root_dir, train, transform=None, load_seg=True, group_size=4):
         super().__init__(root_dir, train, transform, load_seg)
         self.group_size = group_size
 
@@ -163,7 +163,7 @@ class GroupPathDataset(SingleSubjectPathDataset):
     Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
     won't load the image data into memory."""
 
-    def __init__(self, root_dir, train, load_seg=True, group_size=3):
+    def __init__(self, root_dir, train, load_seg=True, group_size=4):
         super().__init__(root_dir, train, load_seg)
         self.group_size = group_size
 
@@ -171,6 +171,30 @@ class GroupPathDataset(SingleSubjectPathDataset):
         return [
             super(GroupPathDataset, self).__getitem__(x) for _ in range(self.group_size)
         ]
+
+
+class LongPathDataset(SingleSubjectPathDataset):
+    """Same as GroupDataset, but only returns paths.
+    Samples longitudinal; i.e. only within the same subject.
+    Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
+    won't load the image data into memory."""
+
+    def __init__(self, root_dir, train, load_seg=True, group_size=4):
+        super().__init__(root_dir, train, load_seg)
+        self.subject_dict = read_longitudinal_subjects_from_disk(
+            root_dir, train, load_seg=load_seg
+        )
+        self.group_size = group_size
+
+    def __len__(self):
+        return len(self.subject_dict)
+
+    def __getitem__(self, x):
+        all_sub_mod_list = list(self.subject_dict.values())
+        single_sub_mod_list = random.sample(all_sub_mod_list, 1)[0]
+        return random.sample(
+            single_sub_mod_list, min(len(single_sub_mod_list), self.group_size)
+        )
 
 
 class SameSubjectSameModalityDataset(Dataset):
@@ -335,6 +359,7 @@ class GigaMedDataset:
         data_dir,
         load_seg=True,
         transform=None,
+        group_size=4,
     ):
         self.data_dir = data_dir
         self.load_seg = load_seg
@@ -348,6 +373,7 @@ class GigaMedDataset:
             self.transform = transform
 
         self.gigamed_names = GigaMedNames()
+        self.group_size = group_size
 
     def get_sssm_datasets(self, id=True, train=True):
         """Single subject, single modality (Longitudinal)"""
@@ -432,6 +458,7 @@ class GigaMedDataset:
                 train,
                 self.transform,
                 load_seg=self.load_seg,
+                group_size=self.group_size,
             )
         self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
         return datasets
@@ -445,19 +472,20 @@ class GigaMedDataset:
                 os.path.join(self.data_dir, name),
                 train,
                 load_seg=self.load_seg,
+                group_size=self.group_size,
             )
         self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
         return datasets
 
-    def get_longitudinal_datasets(self, id=True, train=True):
+    def get_longitudinal_path_datasets(self, id=True, train=True):
         names = self.gigamed_names.with_longitudinal(id=id, train=train)
         datasets = {}
         for name in names:
-            datasets[name] = GroupDataset(
+            datasets[name] = LongPathDataset(
                 os.path.join(self.data_dir, name),
                 train,
-                self.transform,
                 load_seg=self.load_seg,
+                group_size=self.group_size,
             )
         self.print_dataset_stats(datasets, f"Longitudinal, ID={id}, Train={train}")
         return datasets
@@ -501,6 +529,7 @@ class GigaMed:
         sample_same_mod_only=True,
         transform=None,
         use_raw_data=False,
+        group_size=4,
     ):
         proc_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
         raw_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base"
@@ -513,9 +542,7 @@ class GigaMed:
         else:
             root_data_dir = proc_data_dir
         self.gigamed_dataset = GigaMedDataset(
-            root_data_dir,
-            load_seg=load_seg,
-            transform=transform,
+            root_data_dir, load_seg=load_seg, transform=transform, group_size=group_size
         )
 
     def get_train_loader(self):
@@ -573,7 +600,9 @@ class GigaMed:
         return loaders
 
     def get_eval_longitudinal_loaders(self, id):
-        datasets = self.gigamed_dataset.get_longitudinal_datasets(id=id, train=False)
+        datasets = self.gigamed_dataset.get_longitudinal_path_datasets(
+            id=id, train=False
+        )
         loaders = {}
         for name, ds in datasets.items():
             loaders[name] = DataLoader(

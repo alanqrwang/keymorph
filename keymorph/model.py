@@ -1,11 +1,9 @@
-import os
 import re
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from skimage import morphology
-import SimpleITK as sitk
 from scipy.stats import loguniform
 import nibabel as nib
 
@@ -17,7 +15,6 @@ from keymorph.layers import (
     CenterOfMass3d,
 )
 from keymorph.utils import str_or_float, rescale_intensity
-from keymorph.augmentation import random_affine_augment
 
 
 class KeyMorph(nn.Module):
@@ -135,13 +132,7 @@ class KeyMorph(nn.Module):
             return True
         return False
 
-    def forward(
-        self,
-        img_f,
-        img_m,
-        transform_type="affine",
-        return_aligned_points=False,
-    ):
+    def forward(self, img_f, img_m, transform_type="affine", **kwargs):
         """Forward pass for one mini-batch step.
 
         :param img_f, img_m: Fixed and moving images
@@ -151,6 +142,7 @@ class KeyMorph(nn.Module):
 
         :return res: Dictionary of results
         """
+        return_aligned_points = kwargs["return_aligned_points"]
 
         if not isinstance(transform_type, (list, tuple)):
             transform_type = [transform_type]
@@ -162,7 +154,9 @@ class KeyMorph(nn.Module):
             self.is_supported_transform_type(s) for s in transform_type
         ), "Invalid transform_type"
 
-        assert img_f.shape == img_m.shape, "Fixed and moving images must have same shape"
+        assert (
+            img_f.shape == img_m.shape
+        ), "Fixed and moving images must have same shape"
         assert img_f.shape[1] == 1, "Image dimension must be 1"
 
         # Rescale inputs to [0, 1]. Clone to ensure we don't mess with the original data.
@@ -184,17 +178,8 @@ class KeyMorph(nn.Module):
             else:
                 weights = None
 
-        # Dictionary of results
-        res = {
-            "grid": [],
-            "points_f": [],
-            "points_m": [],
-            "points_weights": [],
-            "align_type": [],
-            "tps_lmbda": [],
-        }
-        if return_aligned_points:
-            res["points_a"] = []
+        # List of results
+        result_list = []
 
         for align_type_str in transform_type:
             if align_type_str.startswith("tps"):
@@ -237,18 +222,22 @@ class KeyMorph(nn.Module):
                 weights=weights,
                 compute_on_subgrids=False if self.training else True,
             )
-            res["grid"].append(grid)
-            res["points_f"].append(points_f)
-            res["points_m"].append(points_m)
-            res["points_weights"].append(weights)
-            res["align_type"].append(align_type)
-            res["tps_lmbda"].append(tps_lmbda)
+
+            res = {
+                "grid": grid,
+                "points_f": points_f,
+                "points_m": points_m,
+                "points_weights": weights,
+                "align_type": align_type_str,
+                "tps_lmbda": tps_lmbda,
+            }
             if return_aligned_points:
                 points_a = keypoint_aligner.points_from_points(
                     points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
                 )
-                res["points_a"].append(points_a)
-        return res
+                res["points_a"] = points_a
+            result_list.append(res)
+        return result_list
 
     def pairwise_register(self, *args, **kwargs):
         """Alias for forward()."""
@@ -256,10 +245,8 @@ class KeyMorph(nn.Module):
 
     def groupwise_register(
         self,
-        list_of_img_paths,
-        list_of_seg_paths=None,
+        group_imgs_m=None,
         transform_type="affine",
-        aug_params=None,
         device="cuda",
         num_iters=1,
     ):
@@ -308,30 +295,11 @@ class KeyMorph(nn.Module):
             new_points = torch.cat(new_points, dim=0)
             return grids, new_points
 
-        seg_available = list_of_seg_paths is not None
+        # Load images and segmentations
         group_points = []
-        group_imgs_m = []
-        if seg_available:
-            group_segs_m = []
-        for i in range(len(list_of_img_paths)):
-            img_m = nib.load(list_of_img_paths[i]).get_fdata()
-            img_m = torch.tensor(img_m).unsqueeze(0).unsqueeze(0).to(device).float()
-            if seg_available:
-                seg_m = nib.load(list_of_seg_paths[i]).get_fdata()
-                seg_m = torch.tensor(seg_m).unsqueeze(0).unsqueeze(0).to(device).float()
-
-            # For groupwise, we randomly affine augment all images
-            if aug_params is not None:
-                if seg_available:
-                    img_m, seg_m = random_affine_augment(
-                        img_m, max_random_params=aug_params, seg=seg_m
-                    )
-                else:
-                    img_m = random_affine_augment(img_m, max_random_params=aug_params)
-            group_imgs_m.append(img_m)
-            if seg_available:
-                group_segs_m.append(seg_m)
-
+        for i in range(len(group_imgs_m)):
+            img_m = group_imgs_m[i : i + 1]
+            img_m = rescale_intensity(img_m.clone()).to(device)
             points = self.get_keypoints(img_m)
 
             # if args.weighted_kp_align == "variance":
@@ -341,13 +309,11 @@ class KeyMorph(nn.Module):
             # else:
             #     weights = None
             weights = None  # TODO: support weighted groupwise registration??
-            group_points.append(points)
+            group_points.append(points.detach())
+
         group_points = torch.cat(group_points, dim=0)
 
-        res = {"grids": [], "points_a": []}
-        res["imgs_m"] = group_imgs_m
-        if seg_available:
-            res["segs_m"] = group_segs_m
+        result_list = []
         for align_type_str in transform_type:
             if align_type_str.startswith("tps"):
                 align_type = "tps"
@@ -377,10 +343,15 @@ class KeyMorph(nn.Module):
                 )
                 curr_points = next_points
 
-            res["grids"].append(grids)
-            res["points_a"].append(curr_points)
+            res = {
+                "align_type": align_type_str,
+                "grids": torch.cat(grids, dim=0),
+                "points_m": group_points,
+                "points_a": curr_points,
+            }
+            result_list.append(res)
 
-        return res
+        return result_list
 
 
 class Simple_Unet(nn.Module):
@@ -510,81 +481,3 @@ def clean_mask(mask, threshold=0.2):
         new_mask += (connected == key).astype("uint8")
 
     return new_mask
-
-
-class SimpleElastix:
-    def __init__(self):
-        print(sitk)
-        self.filter = sitk.ElastixImageFilter()
-
-    def __call__(self, fixed, moving, transform_type="rigid"):
-        return self.pairwise_register(fixed, moving, transform_type)
-
-    def pairwise_register(fixed, moving, transform_type="rigid"):
-        # Convert PyTorch tensors to SimpleITK images
-        fixed_image = sitk.GetImageFromArray(fixed.numpy())
-        moving_image = sitk.GetImageFromArray(moving.numpy())
-
-        # Initialize the elastix image filter
-        filter = sitk.ElastixImageFilter()
-
-        # Set images
-        filter.SetFixedImage(fixed_image)
-        filter.SetMovingImage(moving_image)
-
-        # Set the parameter map according to the transformation type
-        if transform_type == "rigid":
-            parameter_map = sitk.GetDefaultParameterMap("rigid")
-        elif transform_type == "affine":
-            parameter_map = sitk.GetDefaultParameterMap("affine")
-        elif transform_type == "nonlinear":
-            parameter_map = sitk.GetDefaultParameterMap("bspline")
-        else:
-            raise ValueError("Unknown transform_type: {}".format(transform_type))
-
-        filter.SetParameterMap(parameter_map)
-        filter.Execute()
-
-        # Retrieve the transformation parameters
-        transform_param = filter.GetTransformParameterMap()[0]
-
-        # Convert transformation parameters to pytorch grid
-        grid = convert_to_grid(transform_param, fixed_image)
-
-        return grid
-
-    def groupwise_register(self, list_of_img_paths):
-        # Concatenate the ND images into one (N+1)D image
-        population = list_of_img_paths
-        vectorOfImages = sitk.VectorOfImage()
-
-        for filename in population:
-            vectorOfImages.push_back(sitk.ReadImage(filename))
-
-        image = sitk.JoinSeries(vectorOfImages)
-
-        # Register
-        self.filter.SetFixedImage(image)
-        self.filter.SetMovingImage(image)
-        self.filter.SetParameterMap(sitk.GetDefaultParameterMap("groupwise"))
-        self.filter.Execute()
-
-        # Get transform parameters
-        transform_params = self.filter.GetTransformParameterMap()
-        grids = [self.convert_to_grid(param, images[0]) for param in transform_params]
-        return grids
-
-    def get_transformed_image(self):
-        return self.transformixImageFilter.GetResultImage()
-
-    def get_transformed_points(self, points):
-        transformed_points = []
-        for point in points:
-            transformed_point = self.transformixImageFilter.TransformPoint(point)
-            transformed_points.append(transformed_point)
-        return transformed_points
-
-    def get_transformed_image_and_points(self, points):
-        transformed_image = self.get_transformed_image()
-        transformed_points = self.get_transformed_points(points)
-        return transformed_image, transformed_points

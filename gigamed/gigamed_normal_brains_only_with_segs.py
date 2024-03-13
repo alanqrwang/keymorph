@@ -81,7 +81,7 @@ class SingleSubjectPathDataset(Dataset):
 
 
 class GroupDataset(SingleSubjectDataset):
-    def __init__(self, root_dir, train, transform=None, load_seg=True, group_size=3):
+    def __init__(self, root_dir, train, transform=None, load_seg=True, group_size=4):
         super().__init__(root_dir, train, transform, load_seg)
         self.group_size = group_size
 
@@ -96,7 +96,7 @@ class GroupPathDataset(SingleSubjectPathDataset):
     Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
     won't load the image data into memory."""
 
-    def __init__(self, root_dir, train, load_seg=True, group_size=3):
+    def __init__(self, root_dir, train, load_seg=True, group_size=4):
         super().__init__(root_dir, train, load_seg)
         self.group_size = group_size
 
@@ -119,6 +119,8 @@ class PairedSubjectDataset(Dataset):
     def __getitem__(self, x):
         sub1 = random.sample(self.subject_list, 1)[0]
         sub2 = random.sample(self.subject_list, 1)[0]
+        sub1.load()
+        sub2.load()
         if self.transform:
             sub1 = self.transform(sub1)
             sub2 = self.transform(sub2)
@@ -200,24 +202,21 @@ class GigaMedNames:
 class GigaMedDataset:
     """Convenience class. Handles creating Pytorch Datasets."""
 
-    def __init__(
-        self,
-        data_dir,
-        load_seg=True,
-        transform=None,
-    ):
+    def __init__(self, data_dir, load_seg=True, transform=None, group_size=4):
         self.data_dir = data_dir
         self.load_seg = load_seg
-        if transform is None:
-            self.transform = tio.Compose(
-                [
-                    tio.Lambda(one_hot, include=("seg",)),
-                ]
-            )
-        else:
-            self.transform = transform
+        # if transform is None:
+        #     self.transform = tio.Compose(
+        #         [
+        #             tio.Lambda(one_hot, include=("seg",)),
+        #         ]
+        #     )
+        # else:
+        #     self.transform = transform
+        self.transform = transform
 
         self.gigamed_names = GigaMedNames()
+        self.group_size = group_size
 
     def get_paired_datasets(self, id=True, train=True):
         names = self.gigamed_names.all(id=id)
@@ -257,6 +256,7 @@ class GigaMedDataset:
                 train,
                 self.transform,
                 load_seg=self.load_seg,
+                group_size=self.group_size,
             )
         self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
         return datasets
@@ -270,6 +270,7 @@ class GigaMedDataset:
                 os.path.join(self.data_dir, name),
                 train,
                 load_seg=self.load_seg,
+                group_size=self.group_size,
             )
         self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
         return datasets
@@ -278,11 +279,11 @@ class GigaMedDataset:
         names = self.gigamed_names.with_longitudinal(id=id, train=train)
         datasets = {}
         for name in names:
-            datasets[name] = GroupDataset(
+            datasets[name] = GroupPathDataset(
                 os.path.join(self.data_dir, name),
                 train,
-                self.transform,
                 load_seg=self.load_seg,
+                group_size=self.group_size,
             )
         self.print_dataset_stats(datasets, f"Longitudinal, ID={id}, Train={train}")
         return datasets
@@ -326,7 +327,9 @@ class GigaMed:
     Only samples data if SynthSeg labels are present.
     """
 
-    def __init__(self, batch_size, num_workers, load_seg=True, transform=None):
+    def __init__(
+        self, batch_size, num_workers, load_seg=True, transform=None, group_size=4
+    ):
         noskullstrip_data_dir = "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/"
         skullstrip_data_dir = "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/"
 
@@ -336,11 +339,13 @@ class GigaMed:
             noskullstrip_data_dir,
             load_seg=load_seg,
             transform=transform,
+            group_size=group_size,
         )
         self.gigamed_dataset_skullstrip = GigaMedDataset(
             skullstrip_data_dir,
             load_seg=load_seg,
             transform=transform,
+            group_size=group_size,
         )
 
     def get_train_loader(self):

@@ -11,10 +11,12 @@ import wandb
 import torchio as tio
 import json
 from copy import deepcopy
+import nibabel as nib
 
+from itkelastix.register import ITKElastix
 from keymorph import loss_ops
 from keymorph.net import ConvNet, UNet, RXFM_Net
-from keymorph.model import KeyMorph, SimpleElastix
+from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import (
     ParseKwargs,
@@ -22,12 +24,12 @@ from keymorph.utils import (
     align_img,
     save_summary_json,
 )
-from keymorph.data import ixi, gigamed, synthbrain, gigamed_normal_brains_only_with_segs
+from gigamed import ixi, gigamed, synthbrain, gigamed_normal_brains_only_with_segs
 from keymorph.augmentation import (
     affine_augment,
     random_affine_augment,
 )
-from keymorph.cm_plotter import show_warped, show_warped_vol
+from keymorph.cm_plotter import show_warped, show_warped_vol, plot_groupwise_register
 import gigamed_eval_hyperparameters as gigamed_hps
 import ixi_eval_hyperparameters as ixi_hps
 
@@ -58,7 +60,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--resume_latest", action="store_true", help="Resume latest checkpoint available"
+        "--resume_latest",
+        action="store_true",
+        help="Resume latest checkpoint available",
     )
 
     parser.add_argument("--save_preds", action="store_true", help="Perform evaluation")
@@ -149,6 +153,13 @@ def parse_args():
         help="Whether or not segmentation maps are available for the dataset",
     )
 
+    parser.add_argument(
+        "--group_size",
+        type=int,
+        default=4,
+        help="Group size for groupwise registration evaluation",
+    )
+
     # ML
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
 
@@ -232,10 +243,10 @@ def create_dirs(args):
     arg_dict = vars(deepcopy(args))
 
     # Path to save outputs
-    if args.run_mode == 'eval':
+    if args.run_mode == "eval":
         prefix = "__eval__"
         dataset_str = args.test_dataset
-    elif args.run_mode == 'pretrain':
+    elif args.run_mode == "pretrain":
         prefix = "__pretrain__"
         dataset_str = args.test_dataset
     else:
@@ -297,16 +308,24 @@ def get_data(args):
         train_loader, _ = ixi.get_loaders()
     elif args.train_dataset == "gigamed":
         gigamed_dataset = gigamed.GigaMed(
-            args.batch_size, args.num_workers, load_seg=(args.seg_available and not args.run_mode == 'pretrain') # Only load segs if not pretraining
+            args.batch_size,
+            args.num_workers,
+            load_seg=(
+                args.seg_available and not args.run_mode == "pretrain"
+            ),  # Only load segs if not pretraining
+            group_size=args.group_size,
         )
         train_loader = gigamed_dataset.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
         ref_subject = gigamed_dataset.get_reference_subject()
     elif args.train_dataset == "gigamednb":
         gigamed_dataset = gigamed_normal_brains_only_with_segs.GigaMed(
-            args.batch_size, 
-            args.num_workers, 
-            load_seg=(args.seg_available and not args.run_mode == "pretrain") # Only load segs if not pretraining
+            args.batch_size,
+            args.num_workers,
+            load_seg=(
+                args.seg_available and not args.run_mode == "pretrain"
+            ),  # Only load segs if not pretraining
+            group_size=args.group_size,
         )
         train_loader = gigamed_dataset.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
@@ -436,8 +455,12 @@ def get_model(args):
         )
         registration_model.to(args.device)
         utils.summary(registration_model)
-    elif args.registration_model == "simple-elastix":
-        registration_model = SimpleElastix()
+    elif args.registration_model == "itkelastix":
+        registration_model = ITKElastix()
+    else:
+        raise ValueError(
+            'Invalid registration model "{}"'.format(args.registration_model)
+        )
     return registration_model
 
 
@@ -486,11 +509,17 @@ def run_train(train_loader, registration_model, optimizer, args):
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
-        assert img_f.shape == img_m.shape, f"Fixed and moving images must have same shape:\n --> {fixed['img']['path']}: {img_f.shape}\n --> {moving['img']['path']}: {img_m.shape}"
-        assert img_f.shape[1] == 1, f"Fixed image must have 1 channel:\n --> {fixed['img']['path']}: {img_f.shape}"
-        assert img_m.shape[1] == 1,  f"Moving image must have 1 channel:\n--> {moving['img']['path']}: {img_m.shape}"
         if args.seg_available:
             seg_f, seg_m = fixed["seg"][tio.DATA], moving["seg"][tio.DATA]
+        assert (
+            img_f.shape == img_m.shape
+        ), f"Fixed and moving images must have same shape:\n --> {fixed['img']['path']}: {img_f.shape}\n --> {moving['img']['path']}: {img_m.shape}"
+        assert (
+            img_f.shape[1] == 1
+        ), f"Fixed image must have 1 channel:\n --> {fixed['img']['path']}: {img_f.shape}"
+        assert (
+            img_m.shape[1] == 1
+        ), f"Moving image must have 1 channel:\n--> {moving['img']['path']}: {img_m.shape}"
 
         # Move to device
         img_f = img_f.float().to(args.device)
@@ -523,13 +552,15 @@ def run_train(train_loader, registration_model, optimizer, args):
                 img_m,
                 transform_type=transform_type,
                 return_aligned_points=args.visualize,
-            )
-            grid = registration_results["grid"][0]
-            align_type = registration_results["align_type"][0]
-            tps_lmbda = registration_results["tps_lmbda"][0]
-            points_m = registration_results["points_m"][0]
-            points_f = registration_results["points_f"][0]
-            points_weights = registration_results["points_weights"][0]
+            )[0]
+            grid = registration_results["grid"]
+            align_type = registration_results["align_type"]
+            tps_lmbda = registration_results["tps_lmbda"]
+            points_m = registration_results["points_m"]
+            points_f = registration_results["points_f"]
+            if "points_a" in registration_results:
+                points_a = registration_results["points_a"]
+            points_weights = registration_results["points_weights"]
 
             img_a = align_img(grid, img_m)
             if args.seg_available:
@@ -601,14 +632,15 @@ def run_train(train_loader, registration_model, optimizer, args):
             print(f"-> TPS lambda: {tps_lmbda} ")
             print(f"-> Loss: {args.loss_fn}")
             print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
-            print(f"-> Point shapes: {points_f.shape}, {points_m.shape}")
+            print(
+                f"-> Point shapes: {points_f.shape}, {points_m.shape}, {points_a.shape}"
+            )
             print(f"-> Point weights: {points_weights}")
             print(f"-> Float16: {args.use_amp}")
             if args.seg_available:
                 print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")
 
         if args.visualize and step_idx == 0:
-            points_a = registration_results["points_a"][0]
             if args.dim == 2:
                 show_warped(
                     img_m[0, 0].cpu().detach().numpy(),
@@ -755,14 +787,15 @@ def run_eval(
     list_of_eval_metrics,
     list_of_eval_names,
     list_of_eval_augs,
-    list_of_eval_kp_aligns,
+    list_of_eval_aligns,
     args,
 ):
+
     def _build_metric_dict(names):
         list_of_all_test = []
         for m in list_of_eval_metrics:
             for a in list_of_eval_augs:
-                for k in list_of_eval_kp_aligns:
+                for k in list_of_eval_aligns:
                     for n in names:
                         n1, n2 = n
                         list_of_all_test.append(f"{m}:{n1}:{n2}:{a}:{k}")
@@ -811,28 +844,42 @@ def run_eval(
                         registration_results = registration_model(
                             img_f,
                             img_m,
-                            transform_type=list_of_eval_kp_aligns,
+                            transform_type=list_of_eval_aligns,
                             return_aligned_points=True,
                         )
 
-                    for (
-                        align_type_str,
-                        grid,
-                        points_m,
-                        points_f,
-                        points_a,
-                        points_weights,
-                    ) in zip(
-                        list_of_eval_kp_aligns,
-                        registration_results["grid"],
-                        registration_results["points_m"],
-                        registration_results["points_f"],
-                        registration_results["points_a"],
-                        registration_results["points_weights"],
-                    ):
-                        img_a = align_img(grid, img_m)
+                    for res_dict in registration_results:
+                        align_type_str = res_dict["align_type"]
+                        if "img_a" in res_dict:
+                            img_a = res_dict["img_a"]
+                        elif "grid" in res_dict:
+                            grid = res_dict["grid"]
+                            img_a = align_img(grid, img_m)
+                        else:
+                            raise ValueError("No way to get aligned image")
                         if args.seg_available:
-                            seg_a = align_img(grid, seg_m)
+                            if "seg_a" in res_dict:
+                                seg_a = res_dict["seg_a"]
+                            elif "grid" in res_dict:
+                                grid = res_dict["grid"]
+                                seg_a = align_img(grid, seg_m)
+                            else:
+                                raise ValueError("No way to get aligned segmentation")
+
+                        points_m = (
+                            res_dict["points_m"] if "points_m" in res_dict else None
+                        )
+                        points_f = (
+                            res_dict["points_f"] if "points_f" in res_dict else None
+                        )
+                        points_a = (
+                            res_dict["points_a"] if "points_a" in res_dict else None
+                        )
+                        points_weights = (
+                            res_dict["points_weights"]
+                            if "points_weights" in res_dict
+                            else None
+                        )
 
                         if args.visualize:
                             if args.dim == 2:
@@ -843,20 +890,17 @@ def run_eval(
                                     points_m[0].cpu().detach().numpy(),
                                     points_f[0].cpu().detach().numpy(),
                                     points_a[0].cpu().detach().numpy(),
-                                    weights=points_weights[0].cpu().detach().numpy(),
+                                    weights=points_weights,
                                 )
                                 if args.seg_available:
                                     show_warped(
                                         seg_m[0, 0].cpu().detach().numpy(),
                                         seg_f[0, 0].cpu().detach().numpy(),
                                         seg_a[0, 0].cpu().detach().numpy(),
-                                        points_m[0].cpu().detach().numpy(),
-                                        points_f[0].cpu().detach().numpy(),
-                                        points_a[0].cpu().detach().numpy(),
-                                        weights=points_weights[0]
-                                        .cpu()
-                                        .detach()
-                                        .numpy(),
+                                        points_m.cpu().detach().numpy(),
+                                        points_f.cpu().detach().numpy(),
+                                        points_a.cpu().detach().numpy(),
+                                        weights=points_weights,
                                     )
                             else:
                                 show_warped_vol(
@@ -866,7 +910,7 @@ def run_eval(
                                     points_m[0].cpu().detach().numpy(),
                                     points_f[0].cpu().detach().numpy(),
                                     points_a[0].cpu().detach().numpy(),
-                                    weights=points_weights[0].cpu().detach().numpy(),
+                                    weights=points_weights,
                                     save_path=None,
                                 )
                                 if args.seg_available:
@@ -877,10 +921,7 @@ def run_eval(
                                         points_m[0].cpu().detach().numpy(),
                                         points_f[0].cpu().detach().numpy(),
                                         points_a[0].cpu().detach().numpy(),
-                                        weights=points_weights[0]
-                                        .cpu()
-                                        .detach()
-                                        .numpy(),
+                                        weights=points_weights,
                                         save_path=None,
                                     )
 
@@ -982,19 +1023,20 @@ def run_eval(
                             np.save(img_f_path, img_f[0].cpu().detach().numpy())
                             np.save(img_m_path, img_m[0].cpu().detach().numpy())
                             np.save(img_a_path, img_a[0].cpu().detach().numpy())
-                            np.save(
-                                points_f_path,
-                                points_f[0].cpu().detach().numpy(),
-                            )
-                            np.save(
-                                points_m_path,
-                                points_m[0].cpu().detach().numpy(),
-                            )
-                            np.save(
-                                points_a_path,
-                                points_a[0].cpu().detach().numpy(),
-                            )
                             np.save(grid_path, grid[0].cpu().detach().numpy())
+                            if points_f is not None:
+                                np.save(
+                                    points_f_path,
+                                    points_f[0].cpu().detach().numpy(),
+                                )
+                                np.save(
+                                    points_m_path,
+                                    points_m[0].cpu().detach().numpy(),
+                                )
+                                np.save(
+                                    points_a_path,
+                                    points_a[0].cpu().detach().numpy(),
+                                )
 
                             if args.seg_available:
                                 seg_f_path = (
@@ -1025,10 +1067,11 @@ def run_eval(
                             print(f"-> Alignment: {align_type_str} ")
                             print(f"-> Max random params: {param} ")
                             print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
-                            print(
-                                f"-> Point shapes: {points_f.shape}, {points_m.shape}"
-                            )
-                            print(f"-> Point weights: {points_weights}")
+                            if points_f is not None:
+                                print(
+                                    f"-> Point shapes: {points_f.shape}, {points_m.shape}"
+                                )
+                                print(f"-> Point weights: {points_weights}")
                             print(f"-> Float16: {args.use_amp}")
                             if args.seg_available:
                                 print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")
@@ -1069,6 +1112,18 @@ def run_groupwise_eval(
             raise ValueError('Invalid aggr "{}"'.format(aggr))
         return template
 
+    def _repeat_to_N(batch_of_imgs, N=4):
+        imgs_to_add = N - batch_of_imgs.shape[0]
+        # Create additional volumes by duplicating the first volume
+        first_img = batch_of_imgs[
+            0:1
+        ]  # Extract the first volume (keep its first axis to maintain the 4D shape)
+        additional_imgs = first_img.repeat(
+            imgs_to_add, 1, 1, 1, 1
+        )  # Repeat the first image along the batch axis
+        # Concatenate the original tensor with the additional volumes
+        return torch.cat([batch_of_imgs, additional_imgs], dim=0)
+
     test_metrics = _build_metric_dict(list_of_eval_names)
     for dataset_name in list_of_eval_names:
         for aug in list_of_eval_augs:
@@ -1083,110 +1138,136 @@ def run_groupwise_eval(
                 if args.seg_available:
                     list_of_seg_paths = [subject["seg"]["path"][0] for subject in group]
 
+                # Load images
+                group_imgs_m = []
+                if args.seg_available:
+                    group_segs_m = []
+
+                for i in range(len(list_of_img_paths)):
+                    img_m = torch.tensor(nib.load(list_of_img_paths[i]).get_fdata())[
+                        None, None
+                    ].float()
+                    if args.seg_available:
+                        seg_m = torch.tensor(nib.load(list_of_seg_paths[i]).get_fdata())
+                        seg_m = synthbrain.one_hot(seg_m[None])[None].float()
+                    # For groupwise, we randomly affine augment all images
+                    if aug_params is not None:
+                        if args.seg_available:
+                            img_m, seg_m = random_affine_augment(
+                                img_m, max_random_params=aug_params, seg=seg_m
+                            )
+                        else:
+                            img_m = random_affine_augment(
+                                img_m, max_random_params=aug_params
+                            )
+                    group_imgs_m.append(img_m)
+                    if args.seg_available:
+                        group_segs_m.append(seg_m)
+
+                group_imgs_m = torch.cat(group_imgs_m, dim=0)
+                # If group size < 4, duplicate the first image to make 4.
+                # This is because some groupwise registration packages require
+                # at least 4 images.
+                if group_imgs_m.shape[0] < 4:
+                    group_imgs_m = _repeat_to_N(group_imgs_m, N=4)
+                if args.seg_available:
+                    group_segs_m = torch.cat(group_segs_m, dim=0)
+                    if group_segs_m.shape[0] < 4:
+                        group_segs_m = _repeat_to_N(group_segs_m, N=4)
+
                 with torch.set_grad_enabled(False):
                     registration_results = registration_model.groupwise_register(
-                        list_of_img_paths,
-                        list_of_seg_paths,
+                        group_imgs_m,
                         transform_type=list_of_eval_kp_aligns,
-                        aug_params=aug_params,
                         device=args.device,
                     )
 
-                group_img_m = registration_results["imgs_m"]
-                if args.seg_available:
-                    group_seg_m = registration_results["segs_m"]
-                for (
-                    i,
-                    align_type_str,
-                ) in enumerate(
-                    list_of_eval_kp_aligns,
-                ):
-                    group_grids = registration_results["grids"][i]
-                    group_img_a = []
+                for res_dict in registration_results:
+                    align_type_str = res_dict["align_type"]
+                    group_grids = res_dict["grids"]
+                    group_imgs_a = []
                     if args.seg_available:
-                        group_seg_a = []
+                        group_segs_a = []
                     # Align images and construct template image
-                    for sub_idx, grid in enumerate(group_grids):
-                        group_img_a.append(align_img(grid, group_img_m[sub_idx]))
+                    for i in range(len(group_imgs_m)):
+                        img_m = group_imgs_m[i : i + 1].to(args.device)
+                        grid = group_grids[i : i + 1].to(args.device)
+                        group_imgs_a.append(align_img(grid, img_m))
                         if args.seg_available:
-                            group_seg_a.append(align_img(grid, group_seg_m[sub_idx]))
-
-                    img_template = _construct_template(group_img_a, aggr="mean")
+                            seg_m = group_segs_m[i : i + 1].to(args.device)
+                            group_segs_a.append(align_img(grid, seg_m))
+                    group_imgs_a = torch.cat(group_imgs_a, dim=0)
                     if args.seg_available:
-                        seg_template = _construct_template(group_seg_a, aggr="majority")
+                        group_segs_a = torch.cat(group_segs_a, dim=0)
 
-                    # Compute metrics
-                    if args.seg_available:
-                        group_seg_a = [
-                            synthbrain.one_hot(seg[0]).unsqueeze(0)
-                            for seg in group_seg_a
-                        ]
-                        seg_template = synthbrain.one_hot(seg_template[0]).unsqueeze(0)
-                        # Always compute hard dice once ahead of time
-                        tot_dice = 0
-                        tot_dice_roi = None
-                        for seg_a in group_seg_a:
-                            dice = loss_ops.DiceLoss(hard=True)(
-                                seg_a, seg_template, ign_first_ch=True
+                    if args.visualize:
+                        plot_groupwise_register(
+                            [
+                                img[0, 128].cpu().detach().numpy()
+                                for img in group_imgs_m
+                            ],
+                            [
+                                img[0, 128].cpu().detach().numpy()
+                                for img in group_imgs_a
+                            ],
+                        )
+                        if args.seg_available:
+                            plot_groupwise_register(
+                                [
+                                    seg.argmax(0)[128].cpu().detach().numpy()
+                                    for seg in group_segs_m
+                                ],
+                                [
+                                    seg.argmax(0)[128].cpu().detach().numpy()
+                                    for seg in group_segs_a
+                                ],
                             )
-                            tot_dice += 1 - dice[0].item()
-                            tot_dice_roi = (
-                                1 - dice[1].cpu().detach().numpy()
-                                if tot_dice_roi is None
-                                else tot_dice_roi + 1 - dice[1].cpu().detach().numpy()
-                            )
-                        dice_total = tot_dice / len(group_seg_a)
-                        dice_roi = (tot_dice_roi / len(group_seg_a)).tolist()
 
                     metrics = {}
                     for m in list_of_eval_metrics:
                         if m == "mse":
-                            tot_mse = 0
-                            for img_a in group_img_a:
-                                metrics["mse"] = loss_ops.MSELoss()(img_a, img_template)
-                            metrics["mse"] = tot_mse / len(group_img_a)
+                            metrics["mse"] = loss_ops.MSEPairwiseLoss()(
+                                group_imgs_a
+                            ).item()
                             test_metrics[
                                 f"{m}:{dataset_name}:{aug}:{align_type_str}"
                             ].append(metrics["mse"])
                         elif m == "softdice":
                             assert args.seg_available
-                            tot_softdice = 0
-                            for seg_a in group_seg_a:
-                                tot_softdice += loss_ops.DiceLoss()(
-                                    seg_a, seg_template
-                                ).item()
-                            metrics["softdiceloss"] = tot_softdice / len(group_seg_a)
+                            metrics["softdiceloss"] = loss_ops.SoftDicePairwiseLoss()(
+                                group_segs_a
+                            ).item()
                             metrics["softdice"] = 1 - metrics["softdiceloss"]
                             test_metrics[
                                 f"{m}:{dataset_name}:{aug}:{align_type_str}"
                             ].append(metrics["softdice"])
                         elif m == "harddice":
                             assert args.seg_available
-                            metrics["harddice"] = dice_total
+                            metrics["harddice"] = (
+                                1 - loss_ops.HardDicePairwiseLoss()(group_segs_a).item()
+                            )
                             test_metrics[
                                 f"{m}:{dataset_name}:{aug}:{align_type_str}"
                             ].append(metrics["harddice"])
-                        elif m == "harddiceroi":
-                            # Don't save roi into metric dict, since it's a list
-                            assert args.seg_available
-                            test_metrics[
-                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
-                            ].append(dice_roi)
+                        # elif m == "harddiceroi":
+                        #     # Don't save roi into metric dict, since it's a list
+                        #     assert args.seg_available
+                        #     test_metrics[
+                        #         f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                        #     ].append(dice_roi)
                         elif m == "hausd":
                             assert args.seg_available and args.dim == 3
-                            tot_hausd = 0
-                            for seg_a in group_seg_a:
-                                tot_hausd += loss_ops.hausdorff_distance(
-                                    seg_a, seg_template
-                                )
-                            metrics["hausd"] = tot_hausd / len(group_seg_a)
+                            metrics["hausd"] = loss_ops.HausdorffPairwiseLoss()(
+                                group_segs_a
+                            )
                             test_metrics[
                                 f"{m}:{dataset_name}:{aug}:{align_type_str}"
                             ].append(metrics["hausd"])
                         elif m == "jdstd":
                             assert args.dim == 3
                             tot_jdstd = 0
-                            for grid in group_grids:
+                            for i in range(len(group_grids)):
+                                grid = group_grids[i : i + 1]
                                 grid_permute = grid.permute(0, 4, 1, 2, 3)
                                 tot_jdstd += loss_ops.jdstd(grid_permute)
                             metrics["jdstd"] = tot_jdstd / len(group_grids)
@@ -1196,7 +1277,8 @@ def run_groupwise_eval(
                         elif m == "jdlessthan0":
                             assert args.dim == 3
                             tot_jdlessthan0 = 0
-                            for grid in group_grids:
+                            for i in range(len(group_grids)):
+                                grid = group_grids[i : i + 1]
                                 grid_permute = grid.permute(0, 4, 1, 2, 3)
                                 tot_jdlessthan0 += loss_ops.jdlessthan0(
                                     grid_permute, as_percentage=True
@@ -1277,8 +1359,8 @@ def run_groupwise_eval(
                     #             np.argmax(seg_a.cpu().detach().numpy(), axis=1),
                     #         )
 
+                    print("\nMetrics:")
                     for metric_name, metric in metrics.items():
-                        print("\nMetrics:")
                         if not isinstance(metric, list):
                             print(f"-> {metric_name}: {metric:.5f}")
 
@@ -1314,14 +1396,19 @@ def main():
     registration_model = get_model(args)
 
     # Optimizer
-    optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
+    if isinstance(registration_model, torch.nn.Module):
+        optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
+    else:
+        optimizer = None
 
     # Checkpoint loading
     if args.resume_latest:
         args.resume = True
         args.load_path = utils.get_latest_epoch_file(args.model_ckpt_dir)
         if args.load_path is None:
-            raise ValueError(f"No checkpoint found to resume from: {args.model_ckpt_dir}")
+            raise ValueError(
+                f"No checkpoint found to resume from: {args.model_ckpt_dir}"
+            )
     if args.load_path is not None:
         print(f"Loading checkpoint from {args.load_path}")
         ckpt_state, registration_model, optimizer = utils.load_checkpoint(
@@ -1333,6 +1420,8 @@ def main():
         )
 
     if args.run_mode == "eval":
+        if args.registration_model == "keymorph":
+            assert args.load_path is not None, "Need to load a checkpoint for eval"
         assert args.batch_size == 1, ":("
         registration_model.eval()
 
@@ -1349,7 +1438,14 @@ def main():
         elif args.test_dataset == "gigamed":
             list_of_eval_metrics = gigamed_hps.EVAL_METRICS
             list_of_eval_augs = gigamed_hps.EVAL_AUGS
-            list_of_eval_kp_aligns = gigamed_hps.EVAL_KP_ALIGNS
+            if args.registration_model == "keymorph":
+                list_of_eval_aligns = gigamed_hps.EVAL_KP_ALIGNS
+                list_of_eval_group_aligns = gigamed_hps.EVAL_GROUP_KP_ALIGNS
+                list_of_eval_long_aligns = gigamed_hps.EVAL_LONG_KP_ALIGNS
+            elif args.registration_model == "itkelastix":
+                list_of_eval_aligns = gigamed_hps.EVAL_ITKELASTIX_ALIGNS
+                list_of_eval_group_aligns = gigamed_hps.EVAL_GROUP_ITKELASTIX_ALIGNS
+                list_of_eval_long_aligns = gigamed_hps.EVAL_LONG_ITKELASTIX_ALIGNS
 
             list_of_eval_names = gigamed_hps.EVAL_NAMES
             list_of_eval_lesion_names = gigamed_hps.EVAL_LESION_NAMES
@@ -1367,7 +1463,7 @@ def main():
                     list_of_eval_metrics,
                     list_of_eval_names[dist],
                     list_of_eval_augs,
-                    list_of_eval_kp_aligns,
+                    list_of_eval_aligns,
                     args,
                 )
                 if not args.debug_mode:
@@ -1384,7 +1480,7 @@ def main():
                     list_of_eval_metrics,
                     list_of_eval_lesion_names[dist],
                     list_of_eval_augs,
-                    list_of_eval_kp_aligns,
+                    list_of_eval_aligns,
                     args,
                 )
                 if not args.debug_mode:
@@ -1404,7 +1500,7 @@ def main():
                     list_of_eval_metrics,
                     list_of_eval_group_names[dist],
                     list_of_eval_augs,
-                    list_of_eval_kp_aligns,
+                    list_of_eval_group_aligns,
                     args,
                 )
                 if not args.debug_mode:
@@ -1421,7 +1517,7 @@ def main():
                     list_of_eval_metrics,
                     list_of_eval_long_names[dist],
                     list_of_eval_augs,
-                    list_of_eval_kp_aligns,
+                    list_of_eval_long_aligns,
                     args,
                 )
                 if not args.debug_mode:

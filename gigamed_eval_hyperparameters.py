@@ -79,3 +79,21 @@ EVAL_KP_ALIGNS = [
     "tps_0.01",
     "tps_0",
 ]
+EVAL_GROUP_KP_ALIGNS = [
+    "tps_0",
+]
+EVAL_LONG_KP_ALIGNS = [
+    "rigid",
+]
+
+EVAL_ITKELASTIX_ALIGNS = [
+    "rigid",
+    "affine",
+    "bspline",
+]
+EVAL_GROUP_ITKELASTIX_ALIGNS = [
+    "bspline",
+]
+EVAL_LONG_ITKELASTIX_ALIGNS = [
+    "rigid",
+]
