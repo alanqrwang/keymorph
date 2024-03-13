@@ -90,6 +90,12 @@ def parse_args():
         help="Number of keypoints to subsample TPS, to save memory",
     )
     parser.add_argument(
+        "--max_train_seg_channels",
+        type=int,
+        default=14,
+        help="Number of channels to compute Dice loss, to save memory",
+    )
+    parser.add_argument(
         "--backbone",
         type=str,
         default="conv",
@@ -341,7 +347,6 @@ def get_data(args):
     elif args.train_dataset == "gigamed+synthbrain+randomanistropy":
         transform = tio.Compose(
             [
-                tio.Lambda(synthbrain.one_hot, include=("seg")),
                 tio.RandomAnisotropy(downsampling=(1, 4)),
             ]
         )
@@ -511,6 +516,15 @@ def run_train(train_loader, registration_model, optimizer, args):
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
         if args.seg_available:
             seg_f, seg_m = fixed["seg"][tio.DATA], moving["seg"][tio.DATA]
+            # One-hot encode segmentations
+            if args.max_train_seg_channels is not None:
+                seg_f, seg_m = utils.one_hot_subsampled_pair(
+                    seg_f, seg_m, args.max_train_seg_channels
+                )
+            else:
+                seg_f = utils.one_hot(seg_f)
+                seg_m = utils.one_hot(seg_m)
+
         assert (
             img_f.shape == img_m.shape
         ), f"Fixed and moving images must have same shape:\n --> {fixed['img']['path']}: {img_f.shape}\n --> {moving['img']['path']}: {img_m.shape}"
@@ -826,6 +840,9 @@ def run_eval(
                             fixed["seg"][tio.DATA],
                             moving["seg"][tio.DATA],
                         )
+                        # One-hot encode segmentations
+                        seg_f = utils.one_hot(seg_f)
+                        seg_m = utils.one_hot(seg_m)
 
                     # Move to device
                     img_f = img_f.float().to(args.device)
@@ -1149,7 +1166,9 @@ def run_groupwise_eval(
                     ].float()
                     if args.seg_available:
                         seg_m = torch.tensor(nib.load(list_of_seg_paths[i]).get_fdata())
-                        seg_m = synthbrain.one_hot(seg_m[None])[None].float()
+                        # One-hot encode segmentations
+                        seg_m = utils.one_hot(seg_m)
+
                     # For groupwise, we randomly affine augment all images
                     if aug_params is not None:
                         if args.seg_available:

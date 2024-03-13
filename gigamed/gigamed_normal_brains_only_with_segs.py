@@ -2,7 +2,7 @@ import os
 import torchio as tio
 from torch.utils.data import Dataset, DataLoader
 import random
-from gigamed.synthbrain import SynthBrain, one_hot
+from gigamed.synthbrain import SynthBrain
 import pandas as pd
 
 id_csv_file = "/home/alw4013/keymorph/gigamed/gigamed_normal_brains_id.csv"

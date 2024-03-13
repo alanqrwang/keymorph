@@ -2,7 +2,7 @@ import os
 import torchio as tio
 from torch.utils.data import Dataset, DataLoader
 import random
-from gigamed.synthbrain import SynthBrain, one_hot
+from gigamed.synthbrain import SynthBrain
 import pandas as pd
 
 id_csv_file = "/home/alw4013/keymorph/gigamed/gigamed_id.csv"
@@ -363,14 +363,15 @@ class GigaMedDataset:
     ):
         self.data_dir = data_dir
         self.load_seg = load_seg
-        if transform is None:
-            self.transform = tio.Compose(
-                [
-                    tio.Lambda(one_hot, include=("seg",)),
-                ]
-            )
-        else:
-            self.transform = transform
+        # if transform is None:
+        #     self.transform = tio.Compose(
+        #         [
+        #             tio.Lambda(one_hot, include=("seg",)),
+        #         ]
+        #     )
+        # else:
+        # self.transform = transform
+        self.transform = transform
 
         self.gigamed_names = GigaMedNames()
         self.group_size = group_size

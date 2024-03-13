@@ -2,45 +2,9 @@ import os
 from torch.utils.data import Dataset, DataLoader
 import torchio as tio
 import random
-import torch
+import torch.nn.functional as F
 
 data_dir = "/midtier/sablab/scratch/alw4013/data/synthbrain_clean_MNI"
-
-
-def one_hot(asegs):
-    subset_regs = [
-        [0, 24],  # Background and CSF
-        [13, 52],  # Pallidum
-        [18, 54],  # Amygdala
-        [11, 50],  # Caudate
-        [3, 42],  # Cerebral Cortex
-        [17, 53],  # Hippocampus
-        [10, 49],  # Thalamus
-        [12, 51],  # Putamen
-        [2, 41],  # Cerebral WM
-        [8, 47],  # Cerebellum Cortex
-        [4, 43],  # Lateral Ventricle
-        [7, 46],  # Cerebellum WM
-        [16, 16],
-    ]  # Brain-Stem
-
-    _, dim1, dim2, dim3 = asegs.shape
-    chs = 14
-    one_hot = torch.zeros(chs, dim1, dim2, dim3)
-
-    for i, s in enumerate(subset_regs):
-        combined_vol = (asegs == s[0]) | (asegs == s[1])
-        one_hot[i, :, :, :] = (combined_vol * 1).float()
-
-    mask = one_hot.sum(0).squeeze()
-    ones = torch.ones_like(mask)
-    non_roi = ones - mask
-    one_hot[-1, :, :, :] = non_roi
-
-    assert (
-        one_hot.sum(0).sum() == dim1 * dim2 * dim3
-    ), "One-hot encoding does not add up to 1"
-    return one_hot
 
 
 def read_subjects_from_disk(root_dir: str, load_seg=True):

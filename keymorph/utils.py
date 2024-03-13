@@ -249,3 +249,82 @@ def get_latest_epoch_file(directory_path):
         return os.path.join(directory_path, latest_epoch_file)
     else:
         return None
+
+
+# def one_hot_legacy(asegs):
+# subset_regs = [
+#     [0, 24],  # Background and CSF
+#     [13, 52],  # Pallidum
+#     [18, 54],  # Amygdala
+#     [11, 50],  # Caudate
+#     [3, 42],  # Cerebral Cortex
+#     [17, 53],  # Hippocampus
+#     [10, 49],  # Thalamus
+#     [12, 51],  # Putamen
+#     [2, 41],  # Cerebral WM
+#     [8, 47],  # Cerebellum Cortex
+#     [4, 43],  # Lateral Ventricle
+#     [7, 46],  # Cerebellum WM
+#     [16, 16],
+# ]  # Brain-Stem
+
+# _, dim1, dim2, dim3 = asegs.shape
+# chs = 14
+# one_hot = torch.zeros(chs, dim1, dim2, dim3)
+
+# for i, s in enumerate(subset_regs):
+#     combined_vol = (asegs == s[0]) | (asegs == s[1])
+#     one_hot[i, :, :, :] = (combined_vol * 1).float()
+
+# mask = one_hot.sum(0).squeeze()
+# ones = torch.ones_like(mask)
+# non_roi = ones - mask
+# one_hot[-1, :, :, :] = non_roi
+
+# assert (
+#     one_hot.sum(0).sum() == dim1 * dim2 * dim3
+# ), "One-hot encoding does not add up to 1"
+# return one_hot
+
+
+def one_hot(seg):
+    return F.one_hot(seg.long()).permute(0, 4, 1, 2, 3)
+
+
+def one_hot_subsampled_pair(seg1, seg2, subsample_num=14):
+    # Step 1: Determine the unique integers in both segmentations
+    unique_vals1 = torch.unique(seg1)
+    unique_vals2 = torch.unique(seg2)
+
+    # Check if both segmentations have the same set of unique values
+    if not torch.equal(unique_vals1.sort()[0], unique_vals2.sort()[0]):
+        raise ValueError(
+            "The sets of unique values in both segmentations do not match."
+        )
+
+    # Step 2: Since unique sets match, proceed with subsampling (if more than subsample_num values)
+    if len(unique_vals1) > subsample_num:
+        selected_vals = np.random.choice(
+            unique_vals1.cpu().numpy(), subsample_num, replace=False
+        )
+    else:
+        selected_vals = unique_vals1.cpu().numpy()
+
+    # Step 3: Create a mapping for the selected integers
+    mapping = {val: i for i, val in enumerate(selected_vals)}
+
+    # Step 4: Apply one-hot encoding to both segmentations with the mapping
+    def apply_one_hot(asegs, mapping, subsample_num):
+        one_hot_maps = torch.zeros(
+            (asegs.shape[0], subsample_num, *asegs.shape[2:]),
+            dtype=torch.float32,
+            device=asegs.device,
+        )
+        for val, new_idx in mapping.items():
+            one_hot_maps[:, new_idx] = (asegs == val).float()
+        return one_hot_maps
+
+    one_hot_maps1 = apply_one_hot(seg1, mapping, subsample_num)
+    one_hot_maps2 = apply_one_hot(seg2, mapping, subsample_num)
+
+    return one_hot_maps1, one_hot_maps2
