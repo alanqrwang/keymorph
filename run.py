@@ -15,7 +15,7 @@ import nibabel as nib
 
 from itkelastix.register import ITKElastix
 from keymorph import loss_ops
-from keymorph.net import ConvNet, UNet, RXFM_Net
+from keymorph.net import ConvNet, UNet, RXFM_Net, TruncatedUNet
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import (
@@ -99,8 +99,14 @@ def parse_args():
         "--backbone",
         type=str,
         default="conv",
-        choices=["conv", "unet", "se3cnn", "se3cnn2"],
+        choices=["conv", "unet", "se3cnn", "se3cnn2", "truncatedunet"],
         help="Keypoint extractor module to use",
+    )
+    parser.add_argument(
+        "--num_truncated_layers_for_truncatedunet",
+        type=int,
+        default=2,
+        help="Number of truncated layers for truncated unet",
     )
 
     parser.add_argument(
@@ -442,6 +448,13 @@ def get_model(args):
                 args.dim,
                 1,
                 args.num_keypoints,
+            )
+        elif args.backbone == "truncatedunet":
+            network = TruncatedUNet(
+                args.dim,
+                1,
+                args.num_keypoints,
+                args.num_truncated_layers_for_truncatedunet,
             )
         elif args.backbone == "se3cnn":
             network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)

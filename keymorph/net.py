@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .unet3d.model import UNet2D, UNet3D
+from .unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from . import layers
 
 from se3cnn.image.gated_block import GatedBlock
@@ -112,3 +112,25 @@ class RXFM_Net(nn.Module):
     def forward(self, x):
         x = self.sequence(x)
         return x
+
+
+class TruncatedUNet(nn.Module):
+    def __init__(self, dim, input_ch, out_dim, num_truncated_layers):
+        super(TruncatedUNet, self).__init__()
+        assert dim == 3
+        backbone = TruncatedUNet3D(
+            input_ch,
+            out_dim,
+            num_truncated_layers,
+            final_sigmoid=False,
+            f_maps=32,  # Used by nnUNet
+            layer_order="gcr",
+            num_groups=8,
+            num_levels=4,
+            is_segmentation=False,
+            conv_padding=1,
+        )
+        self.backbone = backbone
+
+    def forward(self, x):
+        return self.backbone(x)
