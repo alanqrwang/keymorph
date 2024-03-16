@@ -102,9 +102,15 @@ class KeyMorph(nn.Module):
         # Return normalized weights
         return weights / weights.sum(dim=1)
 
-    def get_keypoints(self, img):
-        """Convenience method to get keypoints from an image"""
-        return self.keypoint_layer(self.backbone(img))
+    def get_keypoints(self, img, return_feat=False):
+        """Get keypoints from an image"""
+        # Rescale inputs to [0, 1]
+        img = rescale_intensity(img)
+        feat = self.backbone(img)
+        points = self.keypoint_layer(feat)
+        if return_feat:
+            return points, feat
+        return points
 
     @staticmethod
     def _convert_tps_lmbda(num_samples, tps_lmbda):
@@ -159,17 +165,12 @@ class KeyMorph(nn.Module):
         ), "Fixed and moving images must have same shape"
         assert img_f.shape[1] == 1, "Image dimension must be 1"
 
-        # Rescale inputs to [0, 1]. Clone to ensure we don't mess with the original data.
-        img_f = rescale_intensity(img_f.clone())
-        img_m = rescale_intensity(img_m.clone())
-
         with torch.amp.autocast(
             device_type="cuda", enabled=self.use_amp, dtype=torch.float16
         ):
             # Extract keypoints
-            feat_f, feat_m = self.backbone(img_f), self.backbone(img_m)
-            points_f = self.keypoint_layer(feat_f)
-            points_m = self.keypoint_layer(feat_m)
+            points_f, feat_f = self.get_keypoints(img_f, return_feat=True)
+            points_m, feat_m = self.get_keypoints(img_m, return_feat=True)
 
             if self.weight_keypoints == "variance":
                 weights = self.weight_by_variance(feat_f, feat_m)
