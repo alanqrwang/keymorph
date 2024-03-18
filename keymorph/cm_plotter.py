@@ -283,9 +283,9 @@ def show_warped_vol(
     else:
         plot_points = False
     if plot_points:
-        tgt_points = (tgt_points + 1) / 2
-        ctl_points = (ctl_points + 1) / 2
-        warped_points = (warped_points + 1) / 2
+        tgt_points = (tgt_points + 1) / 2 * img_dim
+        ctl_points = (ctl_points + 1) / 2 * img_dim
+        warped_points = (warped_points + 1) / 2 * img_dim
 
         moving_colors = ["r" for _ in range(len(ctl_points))]
         fixed_colors = ["b" for _ in range(len(ctl_points))]
@@ -334,54 +334,78 @@ def show_warped_vol(
         axes[index, 2].imshow(w, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
 
         if plot_points:
-            for k, c, alpha in zip(range(len(ctl_points)), moving_colors, weights):
-                axes[p_index, 0].scatter(
-                    ctl_points[k, i] * img_dim,
-                    ctl_points[k, j] * img_dim,
-                    marker=".",
-                    s=100,
-                    color=c,
-                    alpha=alpha,
-                )
-            for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
-                axes[p_index, 1].scatter(
-                    tgt_points[k, i] * img_dim,
-                    tgt_points[k, j] * img_dim,
-                    marker="+",
-                    s=100,
-                    color="b",
-                    alpha=alpha,
-                )
-            for k, c, alpha in zip(range(len(ctl_points)), warped_colors, weights):
-                axes[p_index, 2].scatter(
-                    warped_points[k, i] * img_dim,
-                    warped_points[k, j] * img_dim,
-                    marker=".",
-                    s=100,
-                    color="r",
-                    alpha=alpha,
-                )
-            for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
-                axes[p_index, 2].scatter(
-                    tgt_points[k, i] * img_dim,
-                    tgt_points[k, j] * img_dim,
-                    marker="+",
-                    s=100,
-                    color="b",
-                    alpha=alpha,
-                )
+            axes[p_index, 0].scatter(
+                ctl_points[:, i],
+                ctl_points[:, j],
+                marker=".",
+                s=100,
+                color=moving_colors,
+                alpha=weights,
+            )
+            axes[p_index, 1].scatter(
+                tgt_points[:, i],
+                tgt_points[:, j],
+                marker="+",
+                s=100,
+                color=fixed_colors,
+                alpha=weights,
+            )
+            axes[p_index, 2].scatter(
+                warped_points[:, i],
+                warped_points[:, j],
+                marker=".",
+                s=100,
+                color=warped_colors,
+                alpha=weights,
+            )
+            axes[p_index, 2].scatter(
+                tgt_points[:, i],
+                tgt_points[:, j],
+                marker="+",
+                s=100,
+                color=fixed_colors,
+                alpha=weights,
+            )
+            # for k, c, alpha in zip(range(len(ctl_points)), moving_colors, weights):
+            #     axes[p_index, 0].scatter(
+            #         ctl_points[:, i],
+            #         ctl_points[:, j],
+            #         marker=".",
+            #         s=100,
+            #         color=c,
+            #         alpha=alpha,
+            #     )
+            # for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
+            #     axes[p_index, 1].scatter(
+            #         tgt_points[k, i],
+            #         tgt_points[k, j],
+            #         marker="+",
+            #         s=100,
+            #         color="b",
+            #         alpha=alpha,
+            #     )
+            # for k, c, alpha in zip(range(len(ctl_points)), warped_colors, weights):
+            #     axes[p_index, 2].scatter(
+            #         warped_points[k, i],
+            #         warped_points[k, j],
+            #         marker=".",
+            #         s=100,
+            #         color="r",
+            #         alpha=alpha,
+            #     )
+            # for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
+            #     axes[p_index, 2].scatter(
+            #         tgt_points[k, i],
+            #         tgt_points[k, j],
+            #         marker="+",
+            #         s=100,
+            #         color="b",
+            #         alpha=alpha,
+            #     )
 
     axes[0, 0].set_title("Moving")
     axes[0, 1].set_title("Fixed")
     axes[0, 2].set_title("Warped")
-    axes[0, 0].set_ylabel("y")
-    axes[0, 0].set_xlabel("x")
-
-    axes[1, 0].set_xlabel("x")
-    axes[1, 0].set_ylabel("z")
-
-    axes[2, 0].set_xlabel("y")
-    axes[2, 0].set_ylabel("z")
     if save_path is not None:
         fig.savefig(
             save_path,
