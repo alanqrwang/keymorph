@@ -1,354 +1,53 @@
 import os
 import torchio as tio
 from torch.utils.data import Dataset, DataLoader
-import random
 from gigamed.synthbrain import SynthBrain
 import pandas as pd
+from pprint import pprint
+
+from .utils import (
+    read_subjects_from_disk,
+    SSSMPairedDataset,
+    DSSMPairedDataset,
+    PairedDataset,
+    SingleSubjectDataset,
+    GroupDataset,
+    LongitudinalGroupDataset,
+    AggregatedFamilyDataset,
+)
 
 id_csv_file = "/home/alw4013/keymorph/gigamed/gigamed_id.csv"
 ood_csv_file = "/home/alw4013/keymorph/gigamed/gigamed_ood.csv"
 
 
-def read_subjects_from_disk(root_dir: str, train: bool, load_seg=True):
-    """Creates dictionary of TorchIO subjects.
-    Keys are each unique modality in the dataset, values are list of all paths with that modality.
-    Ignores timepoints.
-    """
-    if train:
-        split_folder_img, split_folder_seg = "imagesTr", "synthSeglabelsTr"
-    else:
-        split_folder_img, split_folder_seg = "imagesTs", "synthSeglabelsTs"
-    img_data_folder = os.path.join(root_dir, split_folder_img)
-    seg_data_folder = os.path.join(root_dir, split_folder_seg)
-
-    img_data_paths = sorted(
-        [
-            os.path.join(img_data_folder, name)
-            for name in os.listdir(img_data_folder)
-            if ("mask" not in name and name.endswith(".nii.gz"))
-        ]
-    )
-
-    # First, run through and get all unique modalities
-    all_modalities = set()
-    for img_path in img_data_paths:
-        basename = os.path.basename(img_path)
-        _, modality_id = (
-            basename.split(".")[0][:-5],
-            basename.split(".")[0][-5:],
-        )
-        all_modalities.add(modality_id)
-
-    # Now, load all subjects, separated by modality
-    subject_dict = {mod: [] for mod in all_modalities}
-    for img_path in img_data_paths:
-        subject_kwargs = {"img": tio.ScalarImage(img_path)}
-        basename = os.path.basename(img_path)
-        _, modality_id = (
-            basename.split(".")[0][:-5],
-            basename.split(".")[0][-5:],
-        )
-        if load_seg:
-            seg_path = os.path.join(seg_data_folder, basename)
-            subject_kwargs["seg"] = tio.LabelMap(seg_path)
-        subject = tio.Subject(**subject_kwargs)
-        subject_dict[modality_id].append(subject)
-
-    first_list_length = len(list(subject_dict.values())[0])
-    for list_value in list(subject_dict.values()):
-        assert (
-            len(list_value) == first_list_length
-        ), f"All lists in the dictionary must be of the same length, {img_data_folder}"
-    return subject_dict
-
-
-def read_longitudinal_subjects_from_disk(root_dir: str, train: bool, load_seg=True):
-    """Creates dictionary of TorchIO subjects.
-    Keys are each unique subject and modality, values are list of all paths with that subject and modality.
-    Should be 3 or 4 different timepoints.
-
-    Assumes pathnames are of the form: "<dataset>-time<time_id>_<sub_id>_<mod_id>.nii.gz."
-    """
-    if train:
-        split_folder_img, split_folder_seg = "imagesTr", "synthSeglabelsTr"
-    else:
-        split_folder_img, split_folder_seg = "imagesTs", "synthSeglabelsTs"
-    img_data_folder = os.path.join(root_dir, split_folder_img)
-    seg_data_folder = os.path.join(root_dir, split_folder_seg)
-
-    img_data_paths = sorted(
-        [
-            os.path.join(img_data_folder, name)
-            for name in os.listdir(img_data_folder)
-            if ("mask" not in name and name.endswith(".nii.gz"))
-        ]
-    )
-
-    # First, run through and get all unique modalities
-    all_keys = set()
-    for img_path in img_data_paths:
-        basename = os.path.basename(img_path)
-        name = basename.split(".")[0]
-        dataset_name, sub_id, modality_id = name.split("_")
-        timepoint = dataset_name.split("-")[-1]
-        all_keys.add(f"{sub_id}_{modality_id}")
-
-    # Now, load all subjects, separated by modality
-    subject_dict = {mod: [] for mod in all_keys}
-    for img_path in img_data_paths:
-        subject_kwargs = {"img": tio.ScalarImage(img_path)}
-        basename = os.path.basename(img_path)
-        name = basename.split(".")[0]
-        dataset_name, sub_id, modality_id = name.split("_")
-        if load_seg:
-            seg_path = os.path.join(seg_data_folder, basename)
-            subject_kwargs["seg"] = tio.LabelMap(seg_path)
-        subject = tio.Subject(**subject_kwargs)
-        subject_dict[f"{sub_id}_{modality_id}"].append(subject)
-
-    assert all(
-        len(v) > 1 for _, v in subject_dict.items()
-    ), "All subjects must have at least 2 timepoints"
-    return subject_dict
-
-
-class SingleSubjectDataset(Dataset):
-    def __init__(self, root_dir, train, transform=None, load_seg=True):
-        self.subject_dict = read_subjects_from_disk(root_dir, train, load_seg=load_seg)
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.subject_dict[list(self.subject_dict.keys())[0]])
-
-    def __getitem__(self, x):
-        mult_mod_list = list(self.subject_dict.values())
-        single_mod_list1 = random.sample(mult_mod_list, 1)[0]
-        sub1 = random.sample(single_mod_list1, 1)[0]
-        if self.transform:
-            sub1 = self.transform(sub1)
-        return sub1
-
-
-class SingleSubjectPathDataset(Dataset):
-    """Same as SingleSubjectDataset, but only returns paths.
-    Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
-    won't load the image data into memory."""
-
-    def __init__(self, root_dir, train, load_seg=True):
-        self.subject_dict = read_subjects_from_disk(root_dir, train, load_seg=load_seg)
-
-    def __len__(self):
-        return len(self.subject_dict[list(self.subject_dict.keys())[0]])
-
-    def __getitem__(self, x):
-        mult_mod_list = list(self.subject_dict.values())
-        single_mod_list1 = random.sample(mult_mod_list, 1)[0]
-        sub1 = random.sample(single_mod_list1, 1)[0]
-        return sub1
-
-
-class GroupDataset(SingleSubjectDataset):
-    def __init__(self, root_dir, train, transform=None, load_seg=True, group_size=4):
-        super().__init__(root_dir, train, transform, load_seg)
-        self.group_size = group_size
-
-    def __getitem__(self, x):
-        return [
-            super(GroupDataset, self).__getitem__(x) for _ in range(self.group_size)
-        ]
-
-
-class GroupPathDataset(SingleSubjectPathDataset):
-    """Same as GroupDataset, but only returns paths.
-    Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
-    won't load the image data into memory."""
-
-    def __init__(self, root_dir, train, load_seg=True, group_size=4):
-        super().__init__(root_dir, train, load_seg)
-        self.group_size = group_size
-
-    def __getitem__(self, x):
-        return [
-            super(GroupPathDataset, self).__getitem__(x) for _ in range(self.group_size)
-        ]
-
-
-class LongPathDataset(SingleSubjectPathDataset):
-    """Same as GroupDataset, but only returns paths.
-    Samples longitudinal; i.e. only within the same subject.
-    Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
-    won't load the image data into memory."""
-
-    def __init__(self, root_dir, train, load_seg=True, group_size=4):
-        super().__init__(root_dir, train, load_seg)
-        self.subject_dict = read_longitudinal_subjects_from_disk(
-            root_dir, train, load_seg=load_seg
-        )
-        self.group_size = group_size
-
-    def __len__(self):
-        return len(self.subject_dict)
-
-    def __getitem__(self, x):
-        all_sub_mod_list = list(self.subject_dict.values())
-        single_sub_mod_list = random.sample(all_sub_mod_list, 1)[0]
-        return random.sample(
-            single_sub_mod_list, min(len(single_sub_mod_list), self.group_size)
-        )
-
-
-class SameSubjectSameModalityDataset(Dataset):
-    """Longitudinal."""
-
-    def __init__(self, root_dir, train, transform=None, load_seg=True):
-        self.subject_dict = read_longitudinal_subjects_from_disk(
-            root_dir, train, load_seg=load_seg
-        )
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.subject_dict)
-
-    def __getitem__(self, x):
-        all_sub_mod_list = list(self.subject_dict.values())
-        single_sub_mod_list = random.sample(all_sub_mod_list, 1)[0]
-        sub1, sub2 = random.sample(single_sub_mod_list, 2)
-        if self.transform:
-            sub1 = self.transform(sub1)
-            sub2 = self.transform(sub2)
-        return sub1, sub2, "same_sub_same_mod"
-
-
-class SameSubjectDiffModalityDataset(Dataset):
-    def __init__(self, root_dir, train, transform=None, load_seg=True):
-        self.subject_dict = read_subjects_from_disk(root_dir, train, load_seg=load_seg)
-        assert (
-            len(self.subject_dict) > 1
-        ), f"Must have at least 2 modalities: {root_dir}"
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.subject_dict[list(self.subject_dict.keys())[0]])
-
-    def __getitem__(self, i):
-        mult_mod_list = list(self.subject_dict.values())
-        single_mod_list1, single_mod_list2 = random.sample(mult_mod_list, 2)
-        sub_id = random.choice(range(len(single_mod_list1)))
-        sub1, sub2 = single_mod_list1[sub_id], single_mod_list2[sub_id]
-        if self.transform:
-            sub1 = self.transform(sub1)
-            sub2 = self.transform(sub2)
-        return sub1, sub2, "same_sub_diff_mod"
-
-
-class DiffSubjectSameModalityDataset(Dataset):
-    def __init__(self, root_dir, train, transform=None, load_seg=True):
-        self.subject_dict = read_subjects_from_disk(root_dir, train, load_seg=load_seg)
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.subject_dict[list(self.subject_dict.keys())[0]])
-
-    def __getitem__(self, x):
-        mult_mod_list = list(self.subject_dict.values())
-        single_mod_list = random.sample(mult_mod_list, 1)[0]
-        sub1, sub2 = random.sample(single_mod_list, 2)
-        if self.transform:
-            sub1 = self.transform(sub1)
-            sub2 = self.transform(sub2)
-        return sub1, sub2, "diff_sub_same_mod"
-
-
-class DiffSubjectDiffModalityDataset(Dataset):
-    def __init__(self, root_dir, train, transform=None, load_seg=True):
-        self.subject_dict = read_subjects_from_disk(root_dir, train, load_seg=load_seg)
-        assert (
-            len(self.subject_dict) > 1
-        ), f"Must have at least 2 modalities: {root_dir}"
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.subject_dict[list(self.subject_dict.keys())[0]])
-
-    def __getitem__(self, x):
-        mult_mod_list = list(self.subject_dict.values())
-        single_mod_list1, single_mod_list2 = random.sample(mult_mod_list, 2)
-        sub1 = random.sample(single_mod_list1, 1)[0]
-        sub2 = random.sample(single_mod_list2, 1)[0]
-        if self.transform:
-            sub1 = self.transform(sub1)
-            sub2 = self.transform(sub2)
-        return sub1, sub2, "diff_sub_diff_mod"
-
-
-class ConcatDataset(Dataset):
-    """Samples uniformly over list of datasets.
-    Then, samples uniformly within that list."""
-
-    def __init__(self, *datasets):
-        self.all_datasets = [
-            *datasets,
-        ]
-
-    def __getitem__(self, i):
-        dataset_list = random.choice(self.all_datasets)
-        dataset = random.choice(dataset_list)
-        return dataset[i]
-
-    def __len__(self):
-        l = 0
-        for d in self.all_datasets:
-            for sub_ds in d:
-                l += len(sub_ds)
-        return l
-
-
-class GigaMedNames:
+class GigaMedPaths:
     """Convenience class. Handles all dataset names in GigaMed."""
 
     def __init__(self):
         self.gigamed_id_df = pd.read_csv(id_csv_file, header=0)
         self.gigamed_ood_df = pd.read_csv(ood_csv_file, header=0)
 
-    def all(self, id=True, train=True):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        if train:
-            mask = df["has_train"]
-        else:
-            mask = df["has_test"]
-        return df.loc[mask]["name"].tolist()
+    @staticmethod
+    def get_filtered_ds_paths(df, conditions):
+        """
+        Returns a list of ds_path values that satisfy the given conditions.
 
-    def with_longitudinal(self, id=True, train=True):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        if train:
-            mask = df["has_longitudinal"] & df["has_train"]
-        else:
-            mask = df["has_longitudinal"] & df["has_test"]
-        return df.loc[mask]["name"].tolist()
+        Parameters:
+        - file_path: The path to the CSV file.
+        - conditions: A dictionary where keys are column names and values are the conditions those columns must satisfy.
 
-    def with_multiple_modalities(self, id=True, train=True):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        if train:
-            mask = df["has_multiple_modalities"] & df["has_train"]
-        else:
-            mask = df["has_multiple_modalities"] & df["has_test"]
-        return df.loc[mask]["name"].tolist()
+        Returns:
+        - A list of ds_path values that meet the conditions.
+        """
+        # Apply each condition in the conditions dictionary
+        for column, value in conditions.items():
+            df = df[df[column] == value]
+        # Extract the list of ds_path that satisfy the conditions
+        return df["ds_path"].tolist()
 
-    def with_one_modality(self, id=True, train=True):
+    def get_ds_dirs(self, conditions, id=True):
         df = self.gigamed_id_df if id else self.gigamed_ood_df
-        if train:
-            mask = ~df["has_multiple_modalities"] & df["has_train"]
-        else:
-            mask = ~df["has_multiple_modalities"] & df["has_test"]
-        return df.loc[mask]["name"].tolist()
-
-    def with_lesion_seg(self, id=True, train=True):
-        df = self.gigamed_id_df if id else self.gigamed_ood_df
-        if train:
-            mask = df["has_lesion_seg"] & df["has_train"]
-        else:
-            mask = df["has_lesion_seg"] & df["has_test"]
-        return df.loc[mask]["name"].tolist()
+        return self.get_filtered_ds_paths(df, conditions)
 
 
 class GigaMedDataset:
@@ -356,217 +55,242 @@ class GigaMedDataset:
 
     def __init__(
         self,
-        data_dir,
-        load_seg=True,
+        include_seg=True,
         transform=None,
         group_size=4,
     ):
-        self.data_dir = data_dir
-        self.load_seg = load_seg
-        # if transform is None:
-        #     self.transform = tio.Compose(
-        #         [
-        #             tio.Lambda(one_hot, include=("seg",)),
-        #         ]
-        #     )
-        # else:
-        # self.transform = transform
+        self.include_seg = include_seg
         self.transform = transform
-
-        self.gigamed_names = GigaMedNames()
         self.group_size = group_size
+        self.gigamed_paths = GigaMedPaths()
 
-    def get_sssm_datasets(self, id=True, train=True):
-        """Single subject, single modality (Longitudinal)"""
-        names = self.gigamed_names.with_longitudinal(id=id)
+    def get_dataset_family(self, conditions, DatasetType, id=True, **dataset_kwargs):
+        ds_dirs = self.gigamed_paths.get_ds_dirs(conditions, id=id)
+        train = conditions.get("has_train", False)
         datasets = {}
-        for name in names:
-            datasets[name] = SameSubjectSameModalityDataset(
-                os.path.join(self.data_dir, name),
+        for ds_dir in ds_dirs:
+            datasets[ds_dir] = DatasetType(
+                ds_dir,
                 train,
                 self.transform,
-                load_seg=self.load_seg,
+                include_seg=self.include_seg,
+                **dataset_kwargs,
             )
-        self.print_dataset_stats(datasets, f"SSSM, ID={id}, Train={train}")
         return datasets
-
-    def get_ssdm_datasets(self, id=True, train=True):
-        """Single subject, different modality (SSDM) must have multiple modalities for a single subject"""
-        names = self.gigamed_names.with_multiple_modalities(id=id)
-        datasets = {}
-        for name in names:
-            datasets[name] = SameSubjectDiffModalityDataset(
-                os.path.join(self.data_dir, name),
-                train,
-                self.transform,
-                load_seg=self.load_seg,
-            )
-        self.print_dataset_stats(datasets, f"SSDM, ID={id}, Train={train}")
-        return datasets
-
-    def get_dssm_datasets(self, id=True, train=True):
-        """Different subject, same modality (DSSM) can have one or multiple modalities for a single subject"""
-        names = self.gigamed_names.with_one_modality(
-            id=id
-        ) + self.gigamed_names.with_multiple_modalities(id=id)
-        datasets = {}
-        for name in names:
-            datasets[name] = DiffSubjectSameModalityDataset(
-                os.path.join(self.data_dir, name),
-                train,
-                self.transform,
-                load_seg=self.load_seg,
-            )
-        self.print_dataset_stats(datasets, f"DSSM, ID={id}, Train={train}")
-        return datasets
-
-    def get_dsdm_datasets(self, id=True, train=True):
-        """Different subject, different modality (DSDM) must have multiple modalities for a single subject"""
-        names = self.gigamed_names.with_multiple_modalities(id=id)
-        datasets = {}
-        for name in names:
-            datasets[name] = DiffSubjectDiffModalityDataset(
-                os.path.join(self.data_dir, name),
-                train,
-                self.transform,
-                load_seg=self.load_seg,
-            )
-
-        self.print_dataset_stats(datasets, f"DSDM, ID={id}, Train={train}")
-        return datasets
-
-    def get_datasets(self, id=True, train=True):
-        names = self.gigamed_names.all(id=id, train=train)
-        datasets = {}
-        for name in names:
-            datasets[name] = SingleSubjectDataset(
-                os.path.join(self.data_dir, name),
-                train,
-                self.transform,
-                load_seg=self.load_seg,
-            )
-
-        self.print_dataset_stats(datasets, f"All datasets, ID={id}, Train={train}")
-        return datasets
-
-    def get_group_datasets(self, id=True, train=True):
-        """Group datasets can be from any dataset"""
-        names = self.gigamed_names.all(id=id, train=train)
-        datasets = {}
-        for name in names:
-            datasets[name] = GroupDataset(
-                os.path.join(self.data_dir, name),
-                train,
-                self.transform,
-                load_seg=self.load_seg,
-                group_size=self.group_size,
-            )
-        self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
-        return datasets
-
-    def get_group_path_datasets(self, id=True, train=True):
-        """Group datasets can be from any dataset"""
-        names = self.gigamed_names.all(id=id, train=train)
-        datasets = {}
-        for name in names:
-            datasets[name] = GroupPathDataset(
-                os.path.join(self.data_dir, name),
-                train,
-                load_seg=self.load_seg,
-                group_size=self.group_size,
-            )
-        self.print_dataset_stats(datasets, f"Group, ID={id}, Train={train}")
-        return datasets
-
-    def get_longitudinal_path_datasets(self, id=True, train=True):
-        names = self.gigamed_names.with_longitudinal(id=id, train=train)
-        datasets = {}
-        for name in names:
-            datasets[name] = LongPathDataset(
-                os.path.join(self.data_dir, name),
-                train,
-                load_seg=self.load_seg,
-                group_size=self.group_size,
-            )
-        self.print_dataset_stats(datasets, f"Longitudinal, ID={id}, Train={train}")
-        return datasets
-
-    def get_lesion_datasets(self, id=True, train=True):
-        names = self.gigamed_names.with_lesion_seg(id=id, train=train)
-        datasets = {}
-        for name in names:
-            datasets[name] = SingleSubjectDataset(
-                os.path.join(self.data_dir, name),
-                False,
-                self.transform,
-                load_seg=self.load_seg,
-            )
-        self.print_dataset_stats(datasets, f"Lesion, ID={id}, Train={train}")
-        return datasets
-
-    def print_dataset_stats(self, datasets, prefix=""):
-        print(f"\n{prefix} dataset has {len(datasets)} datasets.")
-        tot = 0
-        for name, ds in datasets.items():
-            tot += len(ds)
-            print(f"-> {name} has {len(ds)} subjects")
-        print("Total: ", tot)
 
     def get_reference_subject(self):
-        ds_name = self.gigamed_names.all(id=True, train=True)[0]
-        root_dir = os.path.join(self.data_dir, ds_name)
-        subject_dict = read_subjects_from_disk(root_dir, True, load_seg=False)
-        return subject_dict[list(subject_dict.keys())[0]][0]
+        conditions = {}
+        ds_name = self.gigamed_paths.get_ds_dirs(conditions, id=True)[0]
+        root_dir = os.path.join(ds_name)
+        _, subject_list = read_subjects_from_disk(root_dir, True, include_seg=False)
+        return subject_list[0]
+
+
+GIGAMED_FAMILY_TRAIN_PARAMS = {
+    "same_sub_same_mod": {
+        "transform_type": "rigid",
+        "loss_fn": "mse",
+        "max_random_params": (0, 0.15, 3.1416, 0),
+    },
+    "diff_sub_same_mod": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "mse",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "synthbrain": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "dice",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "normal_skullstripped": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "dice",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "normal_nonskullstripped": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "dice",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+}
 
 
 class GigaMed:
-    """Top-level class. Handles creating Pytorch dataloaders."""
+    """Top-level class. Handles creating Pytorch dataloaders.
+
+    Reads data from:
+      1) /midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/
+      2) /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/
+      3) /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/
+
+    Data from all directories are nnUNet-like in structure.
+    Data from 2) are not skull-stripped. Data from 1) and 3) are skull-stripped using HD-BET.
+    Data from 1) have (extreme) lesions. Data from 3) do not have lesions.
+
+    Our data is split along 2 dimensions: skullstripped vs. non-skullstripped, and normal brains vs. brains with (extreme) lesions.
+    ---------------------------------------------------------
+    | Skullstripped, normal     | Skullstripped, lesion     |
+    | Dice Loss or MSE Loss     | MSE Loss                  |
+    | Any transform             | Rigid or Affine           |
+    ---------------------------------------------------------
+    | Non-skullstripped, normal | Non-skullstripped, lesion |
+    | Dice Loss                 | -----                     |
+    | Any transform             | -----                     |
+    ---------------------------------------------------------
+
+    Rules:
+        1) If Dice loss, sample pairs without restriction.
+        2) If MSE loss, sample same-modality pairs.
+            a) If longitudinal pairs, use rigid transformation.
+            b) If cross-subject with lesions, use affine transformation.
+            c) If cross-subject with normal, use TPS_logunif.
+
+    If data is skullstripped and normal, then we:
+        1) Loss: can generate segmentations using SynthSeg and minimize Dice loss
+            (we can use MSE loss on images directly, but won't for simplicity. Also Dice loss is more robust to noise).
+        3) Transformation: can use a more flexible transformation (i.e. TPS) during training.
+
+    If data is not skullstripped and normal, then we:
+        1) Loss: cannot use MSE loss and must use Dice loss, because skull and neck are highly variable.
+        2) Transformation: can use a more flexible transformation (i.e. TPS) during training.
+
+    If data is skullstripped and has lesions, then we:
+        1) Loss: cannot rely on the quality of SynthSeg labels and must use MSE loss.
+        3) Transformation: must use a restrictive transformation (i.e. rigid and affine) during training.
+
+    If data is not skullstripped and has lesions, then we:
+        1) Loss: cannot use MSE loss or Dice loss
+
+
+    In summary, there are 3 settings at training:
+      1) Skullstripped and normal: Dice loss or MSE loss, TPS_logunif
+      2) Skullstripped and lesion: MSE loss, rigid or affine
+      3) Non-skullstripped and normal: Dice loss, TPS_logunif
+    """
 
     def __init__(
         self,
         batch_size,
         num_workers,
-        load_seg=True,
-        sample_same_mod_only=True,
+        include_seg=True,
         transform=None,
         use_raw_data=False,
         group_size=4,
+        normal_brains_only=False,
     ):
-        proc_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
-        raw_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base"
+        # proc_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
+        # raw_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base"
+
+        # noskullstrip_data_dir = "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/"
+        # skullstrip_data_dir = "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/"
 
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.sample_same_mod_only = sample_same_mod_only
-        if use_raw_data:
-            root_data_dir = raw_data_dir
-        else:
-            root_data_dir = proc_data_dir
-        self.gigamed_dataset = GigaMedDataset(
-            root_data_dir, load_seg=load_seg, transform=transform, group_size=group_size
+        self.normal_brains_only = normal_brains_only
+        self.use_raw_data = use_raw_data
+
+        self.dataset = GigaMedDataset(
+            include_seg=include_seg, transform=transform, group_size=group_size
         )
 
-    def get_train_loader(self):
-        sssm_datasets = list(
-            self.gigamed_dataset.get_sssm_datasets(id=True, train=True).values()
-        )
-        dssm_datasets = list(
-            self.gigamed_dataset.get_dssm_datasets(id=True, train=True).values()
-        )
-        ssdm_datasets = list(
-            self.gigamed_dataset.get_ssdm_datasets(id=True, train=True).values()
-        )
-        dsdm_datasets = list(
-            self.gigamed_dataset.get_dsdm_datasets(id=True, train=True).values()
-        )
-        if self.sample_same_mod_only:
-            final_dataset = ConcatDataset(sssm_datasets, dssm_datasets)
-        else:
-            final_dataset = (
-                ConcatDataset(
-                    sssm_datasets, ssdm_datasets, dssm_datasets, dsdm_datasets
-                ),
+    def print_dataset_stats(self, datasets, prefix=""):
+        print(f"\n\n{prefix} dataset family has {len(datasets)} datasets.")
+        # print("Conditions:")
+        # pprint(conditions)
+        # print(str(DatasetType))
+        tot_sub = 0
+        tot_img = 0
+        for name, ds in datasets.items():
+            tot_sub += len(ds)
+            tot_img += ds.get_total_images()
+            print(
+                f"-> {name} has {len(ds)} subjects and {ds.get_total_images()} images."
             )
+        print("Total subjects: ", tot_sub)
+        print("Total images: ", tot_img)
+
+    def get_train_loader(self):
+        # MSE loss families
+        skullstripped_lesion_sssm_datasets = self.dataset.get_dataset_family(
+            {
+                "has_train": True,
+                "has_lesion": True,
+                "is_skullstripped": True,
+                "has_longitudinal": True,
+            },
+            SSSMPairedDataset,
+            id=True,
+        )
+        skullstripped_normal_sssm_datasets = self.dataset.get_dataset_family(
+            {
+                "has_train": True,
+                "has_lesion": False,
+                "is_skullstripped": True,
+                "has_longitudinal": True,
+            },
+            SSSMPairedDataset,
+            id=True,
+        )
+        skullstripped_lesion_dssm_datasets = self.dataset.get_dataset_family(
+            {
+                "has_train": True,
+                "has_lesion": True,
+                "is_skullstripped": True,
+                "has_multiple_modalities": True,
+            },
+            DSSMPairedDataset,
+            id=True,
+        )
+        # skullstripped_normal_dssm_datasets = ... # This is not used because DSSM is subsumed by skullstrip_paired_datasets
+        sssm_datasets = (
+            skullstripped_lesion_sssm_datasets | skullstripped_normal_sssm_datasets
+        )
+        dssm_datasets = skullstripped_lesion_dssm_datasets
+
+        # Dice loss families
+        nonskullstrip_paired_datasets = self.dataset.get_dataset_family(
+            {"has_lesion": False, "is_skullstripped": False, "has_train": True},
+            PairedDataset,
+            id=True,
+        )
+        skullstrip_paired_datasets = self.dataset.get_dataset_family(
+            {"has_lesion": False, "is_skullstripped": True, "has_train": True},
+            PairedDataset,
+            id=True,
+        )
+
+        # Print some stats
+        self.print_dataset_stats(sssm_datasets, "TRAIN: SSSM")
+        self.print_dataset_stats(dssm_datasets, "TRAIN: Lesion DSSM")
+        self.print_dataset_stats(
+            nonskullstrip_paired_datasets, "TRAIN: Normal nonskullstripped"
+        )
+        self.print_dataset_stats(
+            skullstrip_paired_datasets, "TRAIN: Normal skullstripped"
+        )
+
+        if self.normal_brains_only:
+            family_datasets = [
+                list(nonskullstrip_paired_datasets.values()),
+                list(skullstrip_paired_datasets.values()),
+            ]
+            family_names = ["normal_nonskullstripped", "normal_skullstripped"]
+            final_dataset = AggregatedFamilyDataset(family_datasets, family_names)
+        else:
+
+            family_datasets = [
+                list(sssm_datasets.values()),
+                list(dssm_datasets.values()),
+                list(nonskullstrip_paired_datasets.values()),
+                list(skullstrip_paired_datasets.values()),
+            ]
+            family_names = [
+                "same_sub_same_mod",
+                "diff_sub_same_mod",
+                "normal_nonskullstripped",
+                "normal_skullstripped",
+            ]
+            final_dataset = AggregatedFamilyDataset(family_datasets, family_names)
 
         train_loader = DataLoader(
             final_dataset,
@@ -577,7 +301,14 @@ class GigaMed:
         return train_loader
 
     def get_eval_loaders(self, id):
-        datasets = self.gigamed_dataset.get_datasets(id=id, train=False)
+        datasets = self.dataset.get_dataset_family(
+            {"has_lesion": False, "is_skullstripped": True, "has_test": True},
+            SingleSubjectDataset,
+            id=id,
+        )
+
+        self.print_dataset_stats(datasets, f"EVAL {id}: Normal skullstripped")
+
         loaders = {}
         for name, ds in datasets.items():
             loaders[name] = DataLoader(
@@ -589,7 +320,14 @@ class GigaMed:
         return loaders
 
     def get_eval_group_loaders(self, id):
-        datasets = self.gigamed_dataset.get_group_path_datasets(id=id, train=False)
+        datasets = self.dataset.get_dataset_family(
+            {"has_lesion": False, "is_skullstripped": True, "has_test": True},
+            GroupDataset,
+            id=id,
+        )
+
+        self.print_dataset_stats(datasets, f"EVAL {id}: Normal group skullstripped")
+
         loaders = {}
         for name, ds in datasets.items():
             loaders[name] = DataLoader(
@@ -601,9 +339,21 @@ class GigaMed:
         return loaders
 
     def get_eval_longitudinal_loaders(self, id):
-        datasets = self.gigamed_dataset.get_longitudinal_path_datasets(
-            id=id, train=False
+        datasets = self.dataset.get_dataset_family(
+            {
+                "has_lesion": False,
+                "is_skullstripped": True,
+                "has_longitudinal": True,
+                "has_test": True,
+            },
+            GroupDataset,
+            id=id,
         )
+
+        self.print_dataset_stats(
+            datasets, f"EVAL {id}: Normal longitudinal group skullstripped"
+        )
+
         loaders = {}
         for name, ds in datasets.items():
             loaders[name] = DataLoader(
@@ -615,7 +365,18 @@ class GigaMed:
         return loaders
 
     def get_eval_lesion_loaders(self, id):
-        datasets = self.gigamed_dataset.get_lesion_datasets(id=id, train=False)
+        datasets = self.dataset.get_dataset_family(
+            {
+                "has_lesion": True,
+                "is_skullstripped": True,
+                "has_test": True,
+            },
+            SingleSubjectDataset,
+            id=id,
+        )
+
+        self.print_dataset_stats(datasets, f"EVAL {id}: Lesion skullstripped")
+
         loaders = {}
         for name, ds in datasets.items():
             loaders[name] = DataLoader(
@@ -627,9 +388,19 @@ class GigaMed:
         return loaders
 
     def get_pretrain_loader(self):
-        datasets = list(self.gigamed_dataset.get_datasets(id=True, train=True).values())
+        """Pretrain on all datasets."""
+        datasets = self.dataset.get_dataset_family(
+            {
+                "has_train": True,
+            },
+            SingleSubjectDataset,
+            id=True,
+        )
+
+        self.print_dataset_stats(datasets, "PRETRAIN:")
+
         train_loader = DataLoader(
-            ConcatDataset(datasets),
+            AggregatedFamilyDataset([list(datasets.values())], ["all_datasets"]),
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
@@ -638,7 +409,7 @@ class GigaMed:
         return train_loader
 
     def get_reference_subject(self):
-        return self.gigamed_dataset.get_reference_subject()
+        return self.dataset.get_reference_subject()
 
 
 class GigaMedSynthBrain(GigaMed):
@@ -650,7 +421,7 @@ class GigaMedSynthBrain(GigaMed):
         ssdm_datasets = list(self.gigamed_dataset.get_ssdm_datasets().values())
         dsdm_datasets = list(self.gigamed_dataset.get_dsdm_datasets().values())
         sb_dataset = SynthBrain(
-            self.batch_size, self.num_workers, load_seg=True
+            self.batch_size, self.num_workers, include_seg=True
         ).get_paired_dataset()
         if self.sample_same_mod_only:
             final_dataset = ConcatDataset(sssm_datasets, dssm_datasets, [sb_dataset])
@@ -675,7 +446,7 @@ class GigaMedSynthBrain(GigaMed):
     def get_pretrain_loader(self):
         datasets = self.gigamed_dataset.get_datasets()
         sb_dataset = SynthBrain(
-            self.batch_size, self.num_workers, load_seg=True
+            self.batch_size, self.num_workers, include_seg=True
         ).get_single_dataset()
         train_loader = DataLoader(
             ConcatDataset(datasets, [sb_dataset]),
@@ -744,9 +515,6 @@ if __name__ == "__main__":
     list_of_test_datasets = list_of_id_test_datasets + list_of_ood_test_datasets
 
     gigamed = GigaMedDataset()
-    print(gigamed.get_dataset_names_with_longitudinal(id=True))
-    print(gigamed.get_dataset_names_with_multiple_modalities(id=True))
-    print(gigamed.get_dataset_names_with_one_modality(id=True))
     assert (
         gigamed.get_dataset_names_with_longitudinal(id=True)
         == datasets_with_longitudinal
@@ -759,3 +527,46 @@ if __name__ == "__main__":
         gigamed.get_dataset_names_with_one_modality(id=True)
         == datasets_with_one_modality
     )
+
+
+# if __name__ == "__main__":
+#     train_dataset_names = [
+#         "Dataset4999_IXIAllModalities",
+#         "Dataset1000_PPMI",
+#         "Dataset1001_PACS2019",
+#         "Dataset1002_AIBL",
+#         "Dataset1004_OASIS2",
+#         "Dataset1005_OASIS1",
+#         "Dataset1006_OASIS3",
+#         "Dataset1007_ADNI",
+#     ]
+
+#     list_of_id_test_datasets = [
+#         # "Dataset4999_IXIAllModalities",
+#         "Dataset5083_IXIT1",
+#         "Dataset5084_IXIT2",
+#         "Dataset5085_IXIPD",
+#     ]
+
+#     list_of_ood_test_datasets = [
+#         "Dataset6003_AIBL",
+#     ]
+
+#     list_of_test_datasets = list_of_id_test_datasets + list_of_ood_test_datasets
+
+#     gigamed = GigaMedDataset()
+#     # print(gigamed.get_dataset_names_with_longitudinal(id=True))
+#     # print(gigamed.get_dataset_names_with_multiple_modalities(id=True))
+#     # print(gigamed.get_dataset_names_with_one_modality(id=True))
+#     # assert (
+#     #     gigamed.get_dataset_names_with_longitudinal(id=True)
+#     #     == datasets_with_longitudinal
+#     # )
+#     # assert (
+#     #     gigamed.get_dataset_names_with_multiple_modalities(id=True)
+#     #     == datasets_with_multiple_modalities
+#     # )
+#     # assert (
+#     #     gigamed.get_dataset_names_with_one_modality(id=True)
+#     #     == datasets_with_one_modality
+#     # )

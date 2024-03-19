@@ -1,4 +1,4 @@
-name,has_train,has_test,has_lesion_seg,has_longitudinal,has_multiple_modalities,desc
-Dataset6003_AIBL,False,True,False,True,False,aging
-Dataset7000_openneuro-ds004791,False,True,False,False,False,--
-Dataset7001_openneuro-ds004848,False,True,False,False,False,--
+ds_path,has_train,has_test,has_lesion,has_lesion_seg,has_synthseg,has_longitudinal,has_multiple_modalities,is_skullstripped,desc
+/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6003_AIBL,False,True,False,False,True,True,False,True,aging
+/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7000_openneuro-ds004791,False,True,False,False,True,False,False,True,--
+/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7001_openneuro-ds004848,False,True,False,False,True,False,False,True,--

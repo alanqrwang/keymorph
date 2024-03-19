@@ -1,3 +1,3 @@
-name,has_train,has_test,has_lesion_seg,has_longitudinal,has_multiple_modalities,desc
-Dataset1005_OASIS1,True,True,False,True,True,reorienting to MNI space is messed up and synthseg doesn't work
-Dataset1006_OASIS3,True,True,False,True,True,Some reorientations are messed up
+name,has_train,has_test,has_lesion,has_lesion_seg,has_synthseg,has_longitudinal,has_multiple_modalities,desc
+Dataset1005_OASIS1,True,True,False,False,True,True,reorienting to MNI space is messed up and synthseg doesn't work
+Dataset1006_OASIS3,True,True,False,False,True,True,Some reorientations are messed up

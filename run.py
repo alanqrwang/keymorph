@@ -24,7 +24,7 @@ from keymorph.utils import (
     align_img,
     save_summary_json,
 )
-from gigamed import ixi, gigamed, synthbrain, gigamed_normal_brains_only_with_segs
+from gigamed import ixi, gigamed, synthbrain
 from keymorph.augmentation import (
     affine_augment,
     random_affine_augment,
@@ -105,7 +105,7 @@ def parse_args():
     parser.add_argument(
         "--num_truncated_layers_for_truncatedunet",
         type=int,
-        default=2,
+        default=1,
         help="Number of truncated layers for truncated unet",
     )
 
@@ -186,8 +186,6 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=3e-6, help="Learning rate")
 
     parser.add_argument("--transform", type=str, default="none")
-
-    parser.add_argument("--loss_fn", type=str, default="mse")
 
     parser.add_argument("--epochs", type=int, default=2000, help="Training Epochs")
 
@@ -322,24 +320,34 @@ def get_data(args):
         gigamed_dataset = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
-            load_seg=(
-                args.seg_available and not args.run_mode == "pretrain"
-            ),  # Only load segs if not pretraining
+            include_seg=False,
             group_size=args.group_size,
         )
-        train_loader = gigamed_dataset.get_train_loader()
+        gigamed_dataset_with_seg = gigamed.GigaMed(
+            args.batch_size,
+            args.num_workers,
+            include_seg=True,
+            group_size=args.group_size,
+        )
+        train_loader = gigamed_dataset_with_seg.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
         ref_subject = gigamed_dataset.get_reference_subject()
     elif args.train_dataset == "gigamednb":
-        gigamed_dataset = gigamed_normal_brains_only_with_segs.GigaMed(
+        gigamed_dataset = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
-            load_seg=(
-                args.seg_available and not args.run_mode == "pretrain"
-            ),  # Only load segs if not pretraining
+            include_seg=False,
             group_size=args.group_size,
+            normal_brains_only=True,
         )
-        train_loader = gigamed_dataset.get_train_loader()
+        gigamed_dataset_with_seg = gigamed.GigaMed(
+            args.batch_size,
+            args.num_workers,
+            include_seg=True,
+            group_size=args.group_size,
+            normal_brains_only=True,
+        )
+        train_loader = gigamed_dataset_with_seg.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
         ref_subject = gigamed_dataset.get_reference_subject()
     elif args.train_dataset == "synthbrain":
@@ -347,7 +355,7 @@ def get_data(args):
         train_loader = synth_dataset.get_train_loader()
     elif args.train_dataset == "gigamed+synthbrain":
         gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
-            args.batch_size, args.num_workers, load_seg=args.seg_available
+            args.batch_size, args.num_workers, include_seg=args.seg_available
         )
         train_loader = gigamed_synthbrain_dataset.get_train_loader()
     elif args.train_dataset == "gigamed+synthbrain+randomanistropy":
@@ -359,7 +367,7 @@ def get_data(args):
         gigamed_synthbrain_dataset = gigamed.GigaMedSynthBrain(
             args.batch_size,
             args.num_workers,
-            load_seg=args.seg_available,
+            include_seg=args.seg_available,
             transform=transform,
         )
         train_loader = gigamed_synthbrain_dataset.get_train_loader()
@@ -375,12 +383,12 @@ def get_data(args):
         }
     elif args.test_dataset == "gigamed":
         gigamed_proc_dataset = gigamed.GigaMed(
-            args.batch_size, args.num_workers, load_seg=args.seg_available
+            args.batch_size, args.num_workers, include_seg=args.seg_available
         )
         gigamed_raw_dataset = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
-            load_seg=args.seg_available,
+            include_seg=args.seg_available,
             use_raw_data=True,
         )
         id_eval_loaders = gigamed_proc_dataset.get_eval_loaders(id=True)
@@ -501,29 +509,18 @@ def run_train(train_loader, registration_model, optimizer, args):
 
     res = []
 
-    for step_idx, (fixed, moving, task_type) in enumerate(train_loader):
-        task_type = task_type[0]
+    for step_idx, (subjects, family_name) in enumerate(train_loader):
+        fixed, moving = subjects
+        family_name = family_name[0]
         if step_idx == args.steps_per_epoch:
             break
 
-        if task_type == "same_sub_same_mod":
-            transform_type = "rigid"
-            args.loss_fn = "mse"
-            max_random_params = (0, 0.15, 3.1416, 0)
-        elif task_type == "diff_sub_same_mod":
-            transform_type = "tps_loguniform"
-            args.loss_fn = "mse"
-            max_random_params = (0.2, 0.15, 3.1416, 0.1)
-        elif task_type == "synthbrain":
-            transform_type = "tps_loguniform"
-            args.loss_fn = "dice"
-            max_random_params = (0.2, 0.15, 3.1416, 0.1)
-        elif task_type == "same_sub_diff_mod":
-            raise NotImplementedError()
-        elif task_type == "diff_sub_diff_mod":
-            raise NotImplementedError()
-        else:
-            raise ValueError('Invalid task_type "{}"'.format(task_type))
+        # Get training parameters given family name
+        train_params = gigamed.GIGAMED_FAMILY_TRAIN_PARAMS
+        transform_type = train_params[family_name]["transform_type"]
+        loss_fn = train_params[family_name]["loss_fn"]
+        max_random_params = train_params[family_name]["max_random_params"]
+        transform_type = train_params[family_name]["transform_type"]
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
@@ -532,11 +529,11 @@ def run_train(train_loader, registration_model, optimizer, args):
             # One-hot encode segmentations
             if args.max_train_seg_channels is not None:
                 seg_f, seg_m = utils.one_hot_subsampled_pair(
-                    seg_f, seg_m, args.max_train_seg_channels
+                    seg_f.long(), seg_m.long(), args.max_train_seg_channels
                 )
             else:
-                seg_f = utils.one_hot(seg_f)
-                seg_m = utils.one_hot(seg_m)
+                seg_f = utils.one_hot(seg_f.long())
+                seg_m = utils.one_hot(seg_m.long())
 
         assert (
             img_f.shape == img_m.shape
@@ -591,7 +588,9 @@ def run_train(train_loader, registration_model, optimizer, args):
 
             img_a = align_img(grid, img_m)
             if args.seg_available:
-                seg_a = align_img(grid, seg_m)
+                seg_a = align_img(
+                    grid, seg_m
+                )  # Note we use bilinear interpolation here so that backprop works
 
             # Compute metrics
             metrics = {}
@@ -602,12 +601,12 @@ def run_train(train_loader, registration_model, optimizer, args):
                 metrics["softdice"] = 1 - metrics["softdiceloss"]
 
             # Compute loss
-            if args.loss_fn == "mse":
+            if loss_fn == "mse":
                 loss = metrics["mse"]
-            elif args.loss_fn == "dice":
+            elif loss_fn == "dice":
                 loss = metrics["softdiceloss"]
             else:
-                raise ValueError('Invalid loss function "{}"'.format(args.loss_fn))
+                raise ValueError('Invalid loss function "{}"'.format(loss_fn))
             metrics["loss"] = loss
 
         # Perform backward pass
@@ -653,11 +652,11 @@ def run_train(train_loader, registration_model, optimizer, args):
 
         if args.debug_mode:
             print("\nDebugging info:")
-            print(f"-> Task type: {task_type}")
+            print(f"-> Family name: {family_name}")
             print(f"-> Alignment: {align_type} ")
             print(f"-> Max random params: {max_random_params} ")
             print(f"-> TPS lambda: {tps_lmbda} ")
-            print(f"-> Loss: {args.loss_fn}")
+            print(f"-> Loss: {loss_fn}")
             print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
             print(
                 f"-> Point shapes: {points_f.shape}, {points_m.shape}, {points_a.shape}"
@@ -667,7 +666,7 @@ def run_train(train_loader, registration_model, optimizer, args):
             if args.seg_available:
                 print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")
 
-        if args.visualize and step_idx == 0:
+        if args.visualize:
             if args.dim == 2:
                 show_warped(
                     img_m[0, 0].cpu().detach().numpy(),
@@ -733,7 +732,7 @@ def run_pretrain(loader, random_points, keymorph_model, optimizer, args):
     res = []
 
     random_points = random_points.to(args.device)
-    for step_idx, subject in enumerate(loader):
+    for step_idx, (subject, _) in enumerate(loader):
         if step_idx == args.steps_per_epoch:
             break
         x_fixed = subject["img"][tio.DATA].float().to(args.device)
@@ -854,8 +853,8 @@ def run_eval(
                             moving["seg"][tio.DATA],
                         )
                         # One-hot encode segmentations
-                        seg_f = utils.one_hot(seg_f)
-                        seg_m = utils.one_hot(seg_m)
+                        seg_f = utils.one_hot_eval(seg_f)
+                        seg_m = utils.one_hot_eval(seg_m)
 
                     # Move to device
                     img_f = img_f.float().to(args.device)
@@ -1180,7 +1179,7 @@ def run_groupwise_eval(
                     if args.seg_available:
                         seg_m = torch.tensor(nib.load(list_of_seg_paths[i]).get_fdata())
                         # One-hot encode segmentations
-                        seg_m = utils.one_hot(seg_m)
+                        seg_m = utils.one_hot_eval(seg_m)
 
                     # For groupwise, we randomly affine augment all images
                     if aug_params is not None:
@@ -1401,8 +1400,6 @@ def run_groupwise_eval(
 
 def main():
     args = parse_args()
-    if args.loss_fn == "mse":
-        assert not args.mix_modalities, "MSE loss can't mix modalities"
     if args.debug_mode:
         args.steps_per_epoch = 3
     pprint(vars(args))

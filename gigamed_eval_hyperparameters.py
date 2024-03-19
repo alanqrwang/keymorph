@@ -1,3 +1,39 @@
+SYNTHSEG_LABEL_NAMES = {
+    0: "background",
+    2: "left cerebral white matter",
+    3: "left cerebral cortex",
+    4: "left lateral ventricle",
+    5: "left inferior lateral ventricle",
+    7: "left cerebellum white matter",
+    8: "left cerebellum cortex",
+    10: "left thalamus",
+    11: "left caudate",
+    12: "left putamen",
+    13: "left pallidum",
+    14: "3rd ventricle",
+    15: "4th ventricle",
+    16: "brain-stem",
+    17: "left hippocampus",
+    18: "left amygdala",
+    24: "CSF",
+    26: "left accumbens area",
+    28: "left ventral DC",
+    41: "right cerebral white matter",
+    42: "right cerebral cortex",
+    43: "right lateral ventricle",
+    44: "right inferior lateral ventricle",
+    46: "right cerebellum white matter",
+    47: "right cerebellum cortex",
+    49: "right thalamus",
+    50: "right caudate",
+    51: "right putamen",
+    52: "right pallidum",
+    53: "right hippocampus",
+    54: "right amygdala",
+    58: "right accumbens area",
+    60: "right ventral DC",
+}
+
 EVAL_METRICS = [
     "mse",
     "softdice",
@@ -9,28 +45,40 @@ EVAL_METRICS = [
 
 EVAL_NAMES = {
     "id": [
-        ("Dataset5083_IXIT1", "Dataset5083_IXIT1"),
-        ("Dataset5084_IXIT2", "Dataset5084_IXIT2"),
-        ("Dataset5085_IXIPD", "Dataset5085_IXIPD"),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
+        ),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5084_IXIT2",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5084_IXIT2",
+        ),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5085_IXIPD",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5085_IXIPD",
+        ),
     ],
     "ood": [
         (
-            "Dataset7000_openneuro-ds004791",
-            "Dataset7000_openneuro-ds004791",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7000_openneuro-ds004791",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7000_openneuro-ds004791",
         ),
         (
-            "Dataset7001_openneuro-ds004848",
-            "Dataset7001_openneuro-ds004848",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7001_openneuro-ds004848",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7001_openneuro-ds004848",
         ),
     ],
     "raw": [
-        "Dataset7000_openneuro-ds004791",
-        "Dataset7001_openneuro-ds004848",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7000_openneuro-ds004791",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7001_openneuro-ds004848",
     ],
 }
 EVAL_LESION_NAMES = {
     "id": [
-        ("Dataset5000_BraTS-GLI_2023", "Dataset5000_BraTS-GLI_2023"),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5000_BraTS-GLI_2023",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5000_BraTS-GLI_2023",
+        ),
     ],
     "ood": [
         #
@@ -39,25 +87,25 @@ EVAL_LESION_NAMES = {
 }
 EVAL_GROUP_NAMES = {
     "id": [
-        "Dataset5083_IXIT1",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
     ],
     "ood": [
-        "Dataset7000_openneuro-ds004791",
-        "Dataset7001_openneuro-ds004848",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7000_openneuro-ds004791",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7001_openneuro-ds004848",
     ],
     "raw": [
-        "Dataset7000_openneuro-ds004791",
-        "Dataset7001_openneuro-ds004848",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7000_openneuro-ds004791",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7001_openneuro-ds004848",
     ],
 }
 EVAL_LONG_NAMES = {
     "id": [
-        "Dataset6000_PPMI-T1-3T-PreProc",
-        "Dataset6001_ADNI-group-T1-3T-PreProc",
-        "Dataset6002_OASIS3",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6000_PPMI-T1-3T-PreProc",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6001_ADNI-group-T1-3T-PreProc",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6002_OASIS3",
     ],
     "ood": [
-        "Dataset6003_AIBL",
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6003_AIBL",
     ],
     "raw": [],
 }
