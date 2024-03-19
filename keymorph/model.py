@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from skimage import morphology
 from scipy.stats import loguniform
-import nibabel as nib
+import time
 
 from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
 from keymorph.layers import (
@@ -148,6 +148,7 @@ class KeyMorph(nn.Module):
 
         :return res: Dictionary of results
         """
+        start_time = time.time()
         return_aligned_points = kwargs["return_aligned_points"]
 
         if not isinstance(transform_type, (list, tuple)):
@@ -179,10 +180,13 @@ class KeyMorph(nn.Module):
             else:
                 weights = None
 
+        keypoint_extract_time = time.time() - start_time
+
         # List of results
         result_list = []
 
         for align_type_str in transform_type:
+            start_time = time.time()
             if align_type_str.startswith("tps"):
                 align_type = "tps"
                 tps_lmbda = self._convert_tps_lmbda(
@@ -224,6 +228,7 @@ class KeyMorph(nn.Module):
                 compute_on_subgrids=False if self.training else True,
             )
 
+            align_time = time.time() - start_time
             res = {
                 "grid": grid,
                 "points_f": points_f,
@@ -231,6 +236,9 @@ class KeyMorph(nn.Module):
                 "points_weights": weights,
                 "align_type": align_type_str,
                 "tps_lmbda": tps_lmbda,
+                "keypoint_extract_time": keypoint_extract_time,
+                "align_time": align_time,
+                "time": keypoint_extract_time + align_time,
             }
             if return_aligned_points:
                 points_a = keypoint_aligner.points_from_points(
