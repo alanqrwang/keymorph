@@ -1,6 +1,7 @@
 import itk
 import numpy as np
 import torch
+import time
 
 
 class ITKElastix:
@@ -29,6 +30,7 @@ class ITKElastix:
         num_resolutions = 1
         for ttype in transform_type:
             print(ttype)
+            start_time = time.time()
             parameter_object = itk.ParameterObject.New()
             if ttype == "rigid":
                 default_parameter_map = parameter_object.GetDefaultParameterMap(
@@ -98,9 +100,11 @@ class ITKElastix:
             # Step 3: Add the displacement field to the original grid to get the transformed coordinates
             grid = coords + displacement_field
 
+            register_time = time.time() - start_time
             res = {
                 "align_type": ttype,
                 "grid": grid.permute(0, 2, 3, 4, 1).to(original_device),
+                "time": register_time,
             }
             result_list.append(res)
 
@@ -118,6 +122,7 @@ class ITKElastix:
 
         num_resolutions = 1
         for ttype in transform_type:
+            start_time = time.time()
             # Create Groupwise Parameter Object
             parameter_object = itk.ParameterObject.New()
             groupwise_parameter_map = parameter_object.GetDefaultParameterMap(
@@ -194,9 +199,12 @@ class ITKElastix:
             # Step 3: Add the displacement field to the original grid to get the transformed coordinates
             grid = coords + displacement_field
 
+            register_time = time.time() - start_time
+
             res = {
                 "align_type": ttype,
                 "grids": grid.permute(0, 2, 3, 4, 1),
+                "time": register_time,
             }
             result_list.append(res)
 
