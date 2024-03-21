@@ -96,6 +96,12 @@ def read_subjects_from_disk(
                 del data_structure[
                     subject
                 ]  # Remove subject if it has no valid modalities
+    if len(data_structure) == 0 and must_have_longitudinal:
+        raise ValueError(
+            f"No subjects with longitudinal data found in {root_dir}. Do you have time- information in your paths?"
+        )
+    if len(data_structure) == 0:
+        raise ValueError(f"No subjects found in {root_dir}.")
 
     # Convert defaultdicts back to regular dicts for cleaner output or further processing
     subject_dict = {k: dict(v) for k, v in data_structure.items()}
