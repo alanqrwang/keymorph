@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#SBATCH --job-name=eval # give your job a name
+#SBATCH --job-name=eval_itkelastix # give your job a name
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --time=120:00:00 # set this time according to your need
@@ -24,8 +24,7 @@ python run.py \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --max_train_keypoints 32 \
-    --loss_fn mse \
-    --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/ \
+    --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/baselines/ \
     --train_dataset gigamed \
     --test_dataset gigamed \
     --num_workers 1 \
@@ -33,5 +32,5 @@ python run.py \
     --batch_size 1 \
     --backbone conv \
     --early_stop_eval_subjects 3 \
-    --save_preds \
+    --save_eval_to_disk \
     --seg_available
