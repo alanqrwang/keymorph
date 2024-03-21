@@ -107,17 +107,7 @@ def load_checkpoint(
 ):
     state = torch.load(checkpoint_path, map_location=torch.device(device))
     state_dict = state["state_dict"]
-    if "keypoint_extractor" in list(state_dict.keys())[-1]:
-        # Rename any keypoint_extractor keys to backbone
-        new_state_dict = {
-            k.replace("keypoint_extractor", "backbone"): v
-            for k, v in state_dict.items()
-        }
-        missing_keys, _ = model.load_state_dict(new_state_dict, strict=False)
-    elif "backbone" in list(state_dict.keys())[-1]:
-        missing_keys, _ = model.load_state_dict(state_dict, strict=False)
-    else:
-        missing_keys, _ = model.backbone.load_state_dict(state_dict, strict=True)
+    missing_keys, _ = model.backbone.load_state_dict(state_dict, strict=True)
     print("Missing keys when loading checkpoint: ", missing_keys)
 
     if resume:
@@ -220,8 +210,7 @@ def summary(network):
     print("")
 
 
-def save_summary_json(dict, save_path):
-    print("Saving summary to", save_path)
+def save_dict_as_json(dict, save_path):
     with open(save_path, "w") as outfile:
         json.dump(dict, outfile, sort_keys=True, indent=4)
 
@@ -307,7 +296,8 @@ def one_hot_subsampled_pair(seg1, seg2, subsample_num=14):
     if len(unique_vals) > subsample_num:
         selected_vals = np.random.choice(unique_vals, subsample_num, replace=False)
     else:
-        selected_vals = unique_vals1
+        selected_vals = unique_vals
+        subsample_num = len(unique_vals)
 
     # Step 3: Create a mapping for the selected integers
     mapping = {val: i for i, val in enumerate(selected_vals)}
