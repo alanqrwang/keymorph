@@ -177,6 +177,7 @@ class GigaMed:
         use_raw_data=False,
         group_size=4,
         normal_brains_only=False,
+        include_synthetic_brains=False,
     ):
         # proc_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
         # raw_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base"
@@ -188,6 +189,7 @@ class GigaMed:
         self.num_workers = num_workers
         self.normal_brains_only = normal_brains_only
         self.use_raw_data = use_raw_data
+        self.include_synthetic_brains = include_synthetic_brains
 
         self.dataset = GigaMedDataset(
             include_seg=include_seg, transform=transform, group_size=group_size
@@ -214,6 +216,7 @@ class GigaMed:
         skullstripped_lesion_sssm_datasets = self.dataset.get_dataset_family(
             {
                 "has_train": True,
+                "is_synthetic": False,
                 "has_lesion": True,
                 "is_skullstripped": True,
                 "has_longitudinal": True,
@@ -224,6 +227,7 @@ class GigaMed:
         skullstripped_normal_sssm_datasets = self.dataset.get_dataset_family(
             {
                 "has_train": True,
+                "is_synthetic": False,
                 "has_lesion": False,
                 "is_skullstripped": True,
                 "has_longitudinal": True,
@@ -234,6 +238,7 @@ class GigaMed:
         skullstripped_lesion_dssm_datasets = self.dataset.get_dataset_family(
             {
                 "has_train": True,
+                "is_synthetic": False,
                 "has_lesion": True,
                 "is_skullstripped": True,
                 "has_multiple_modalities": True,
@@ -249,15 +254,35 @@ class GigaMed:
 
         # Dice loss families
         nonskullstrip_paired_datasets = self.dataset.get_dataset_family(
-            {"has_lesion": False, "is_skullstripped": False, "has_train": True},
+            {
+                "has_train": True,
+                "is_synthetic": False,
+                "has_lesion": False,
+                "is_skullstripped": False,
+            },
             PairedDataset,
             id=True,
         )
         skullstrip_paired_datasets = self.dataset.get_dataset_family(
-            {"has_lesion": False, "is_skullstripped": True, "has_train": True},
+            {
+                "has_train": True,
+                "is_synthetic": False,
+                "has_lesion": False,
+                "is_skullstripped": True,
+            },
             PairedDataset,
             id=True,
         )
+        if self.include_synthetic_brains:
+            synthbrain_datasets = self.dataset.get_dataset_family(
+                {
+                    "has_train": True,
+                    "is_synthetic": True,
+                },
+                PairedDataset,
+                id=True,
+            )
+            self.print_dataset_stats(synthbrain_datasets, "TRAIN: Synthbrain")
 
         # Print some stats
         self.print_dataset_stats(sssm_datasets, "TRAIN: SSSM")
@@ -275,7 +300,22 @@ class GigaMed:
                 list(skullstrip_paired_datasets.values()),
             ]
             family_names = ["normal_nonskullstripped", "normal_skullstripped"]
-            final_dataset = AggregatedFamilyDataset(family_datasets, family_names)
+        elif self.include_synthetic_brains:
+            family_datasets = [
+                list(sssm_datasets.values()),
+                list(dssm_datasets.values()),
+                list(nonskullstrip_paired_datasets.values()),
+                list(skullstrip_paired_datasets.values()),
+                list(synthbrain_datasets.values()),
+            ]
+            family_names = [
+                "same_sub_same_mod",
+                "diff_sub_same_mod",
+                "normal_nonskullstripped",
+                "normal_skullstripped",
+                "synthbrain",
+            ]
+
         else:
 
             family_datasets = [
@@ -290,7 +330,8 @@ class GigaMed:
                 "normal_nonskullstripped",
                 "normal_skullstripped",
             ]
-            final_dataset = AggregatedFamilyDataset(family_datasets, family_names)
+
+        final_dataset = AggregatedFamilyDataset(family_datasets, family_names)
 
         train_loader = DataLoader(
             final_dataset,
@@ -302,7 +343,12 @@ class GigaMed:
 
     def get_eval_loaders(self, id):
         datasets = self.dataset.get_dataset_family(
-            {"has_lesion": False, "is_skullstripped": True, "has_test": True},
+            {
+                "has_test": True,
+                "is_synthetic": False,
+                "has_lesion": False,
+                "is_skullstripped": True,
+            },
             SingleSubjectDataset,
             id=id,
         )
@@ -321,7 +367,12 @@ class GigaMed:
 
     def get_eval_group_loaders(self, id):
         datasets = self.dataset.get_dataset_family(
-            {"has_lesion": False, "is_skullstripped": True, "has_test": True},
+            {
+                "has_test": True,
+                "is_synthetic": False,
+                "has_lesion": False,
+                "is_skullstripped": True,
+            },
             GroupDataset,
             id=id,
         )
@@ -341,10 +392,11 @@ class GigaMed:
     def get_eval_longitudinal_loaders(self, id):
         datasets = self.dataset.get_dataset_family(
             {
+                "has_test": True,
+                "is_synthetic": False,
                 "has_lesion": False,
                 "is_skullstripped": True,
                 "has_longitudinal": True,
-                "has_test": True,
             },
             GroupDataset,
             id=id,
@@ -367,9 +419,10 @@ class GigaMed:
     def get_eval_lesion_loaders(self, id):
         datasets = self.dataset.get_dataset_family(
             {
+                "has_test": True,
+                "is_synthetic": False,
                 "has_lesion": True,
                 "is_skullstripped": True,
-                "has_test": True,
             },
             SingleSubjectDataset,
             id=id,
@@ -390,17 +443,44 @@ class GigaMed:
     def get_pretrain_loader(self):
         """Pretrain on all datasets."""
         datasets = self.dataset.get_dataset_family(
-            {
-                "has_train": True,
-            },
+            {"has_train": True, "is_synthetic": False},
             SingleSubjectDataset,
             id=True,
         )
-
         self.print_dataset_stats(datasets, "PRETRAIN:")
+        if self.include_synthetic_brains:
+            synthbrain_datasets = self.dataset.get_dataset_family(
+                {
+                    "has_train": True,
+                    "is_synthetic": True,
+                },
+                SingleSubjectDataset,
+                id=True,
+            )
+            self.print_dataset_stats(synthbrain_datasets, "PRETRAIN synthetic:")
+
+        if self.include_synthetic_brains:
+            family_datasets = [
+                list(datasets.values()),
+                list(synthbrain_datasets.values()),
+            ]
+            family_names = [
+                "all_datasets",
+                "synthbrain",
+            ]
+
+        else:
+            family_datasets = [
+                list(datasets.values()),
+            ]
+            family_names = [
+                "all_datasets",
+            ]
+
+        final_dataset = AggregatedFamilyDataset(family_datasets, family_names)
 
         train_loader = DataLoader(
-            AggregatedFamilyDataset([list(datasets.values())], ["all_datasets"]),
+            final_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
@@ -410,52 +490,6 @@ class GigaMed:
 
     def get_reference_subject(self):
         return self.dataset.get_reference_subject()
-
-
-class GigaMedSynthBrain(GigaMed):
-    """Combination of GigaMed + SynthBrain."""
-
-    def get_train_loader(self):
-        sssm_datasets = list(self.gigamed_dataset.get_sssm_datasets().values())
-        dssm_datasets = list(self.gigamed_dataset.get_dssm_datasets().values())
-        ssdm_datasets = list(self.gigamed_dataset.get_ssdm_datasets().values())
-        dsdm_datasets = list(self.gigamed_dataset.get_dsdm_datasets().values())
-        sb_dataset = SynthBrain(
-            self.batch_size, self.num_workers, include_seg=True
-        ).get_paired_dataset()
-        if self.sample_same_mod_only:
-            final_dataset = ConcatDataset(sssm_datasets, dssm_datasets, [sb_dataset])
-        else:
-            final_dataset = (
-                ConcatDataset(
-                    sssm_datasets,
-                    ssdm_datasets,
-                    dssm_datasets,
-                    dsdm_datasets,
-                    [sb_dataset],
-                ),
-            )
-        train_loader = DataLoader(
-            final_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-        )
-        return train_loader
-
-    def get_pretrain_loader(self):
-        datasets = self.gigamed_dataset.get_datasets()
-        sb_dataset = SynthBrain(
-            self.batch_size, self.num_workers, include_seg=True
-        ).get_single_dataset()
-        train_loader = DataLoader(
-            ConcatDataset(datasets, [sb_dataset]),
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-        )
-
-        return train_loader
 
 
 if __name__ == "__main__":
