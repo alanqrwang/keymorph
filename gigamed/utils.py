@@ -1,8 +1,7 @@
 import os
 import torchio as tio
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import random
-from gigamed.synthbrain import SynthBrain
 import re
 from collections import defaultdict
 
@@ -122,7 +121,7 @@ class SingleSubjectDataset(Dataset):
         self.transform = transform
 
     def get_total_subjects(self):
-        return len(self.subject_list)
+        return len(self.subject_dict)
 
     def get_total_images(self):
         return len(self.subject_list)
@@ -149,7 +148,7 @@ class PairedDataset(Dataset):
         self.transform = transform
 
     def get_total_subjects(self):
-        return len(self.subject_list)
+        return len(self.subject_dict)
 
     def get_total_images(self):
         return len(self.subject_list)
@@ -179,7 +178,7 @@ class SSSMPairedDataset(Dataset):
         self.transform = transform
 
     def get_total_subjects(self):
-        return len(self.subject_list)
+        return len(self.subject_dict)
 
     def get_total_images(self):
         return len(self.subject_list)
@@ -235,7 +234,7 @@ class DSSMPairedDataset(Dataset):
         self.transform = transform
 
     def get_total_subjects(self):
-        return len(self.subject_list)
+        return len(self.subject_dict)
 
     def get_total_images(self):
         return len(self.subject_list)
@@ -255,30 +254,24 @@ class DSSMPairedDataset(Dataset):
         return sub1, sub2
 
 
-class GroupDataset(SingleSubjectDataset):
-    def __init__(self, root_dir, train, transform=None, include_seg=True, group_size=4):
-        super().__init__(root_dir, train, transform, include_seg)
-        self.group_size = group_size
-
-    def __getitem__(self, x):
-        return [
-            super(GroupDataset, self).__getitem__(x) for _ in range(self.group_size)
-        ]
-
-
-class LongitudinalGroupDataset(SingleSubjectDataset):
-    """Same as GroupDataset, but only returns paths.
-    Samples longitudinal; i.e. only within the same subject.
+class LongitudinalPathDataset:
+    """At every iteration, returns all paths associated with the same subject and same modality.
     Relies on TorchIO's lazy loading. If no transform is performed, then TorchIO
     won't load the image data into memory."""
 
     def __init__(self, root_dir, train, transform=None, include_seg=True, group_size=4):
-        super().__init__(root_dir, train, include_seg)
-        self.subject_dict = read_subjects_from_disk(
-            root_dir, train, include_seg=include_seg
+        # super().__init__(root_dir, train, include_seg)
+        self.subject_dict, self.subject_list = read_subjects_from_disk(
+            root_dir, train, include_seg=include_seg, must_have_longitudinal=True
         )
-        self.transform = transform
+        self.transform = transform  # This is hardcoded to None
         self.group_size = group_size
+
+    def get_total_subjects(self):
+        return len(self.subject_dict)
+
+    def get_total_images(self):
+        return len(self.subject_list)
 
     def __len__(self):
         return len(self.subject_dict)
@@ -293,9 +286,9 @@ class LongitudinalGroupDataset(SingleSubjectDataset):
         subs = random.sample(
             single_sub_mod_list, min(len(single_sub_mod_list), self.group_size)
         )
-        if self.transform:
-            subs = [self.transform(sub) for sub in subs]
-        return subs
+        from torchio.data import SubjectsDataset as TioSubjectsDataset
+
+        return SimpleDatasetIterator(TioSubjectsDataset(subs, transform=self.transform))
 
 
 class AggregatedFamilyDataset(Dataset):
@@ -331,3 +324,28 @@ class AggregatedFamilyDataset(Dataset):
             for sub_ds in d:
                 l += len(sub_ds)
         return l
+
+
+class SimpleDatasetIterator:
+    """Simple replacement to DataLoader"""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+        self.index = 0
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __iter__(self):
+        # Reset the index each time iter is called.
+        self.index = 0
+        return self
+
+    def __next__(self):
+        if self.index < len(self.dataset):
+            item = self.dataset[self.index]
+            self.index += 1
+            return item
+        else:
+            # No more data, stop the iteration.
+            raise StopIteration
