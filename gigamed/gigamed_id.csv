@@ -34,7 +34,7 @@ ds_path,has_train,has_test,has_lesion,has_lesion_seg,has_synthseg,has_longitudin
 /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1001_PACS2019,True,True,False,False,True,False,False,False,False,--
 /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1002_AIBL,True,True,False,False,True,False,False,False,False,--
 /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1004_OASIS2,True,True,False,False,True,True,False,False,False,--
-/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1007_ADNI,True,True,False,False,True,True,True,False,False,--
+/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1007_ADNI,True,True,False,False,True,False,True,False,False,--
 /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1008_OASIS1deepsurfercorrected,True,True,False,False,True,True,False,False,False,fixed version of Dataset1005_OASIS1 with corrected matrix using deepsurfer 
 /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1009_OASIS3deepsurfercorrected,True,True,False,False,True,True,True,False,False,fixed version of Dataset1006_OASIS3 with corrected matrix using deepsurfer 
 /midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset4999_IXIAllModalities,True,True,False,False,True,False,True,True,False,healthy
