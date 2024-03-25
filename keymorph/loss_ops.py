@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import scipy
 from scipy.ndimage import morphology
 import numpy as np
+import nibabel as nib
 
 
 class MSELoss(torch.nn.Module):
@@ -25,9 +26,10 @@ class DiceLoss(torch.nn.Module):
 
     """
 
-    def __init__(self, hard=False):
+    def __init__(self, hard=False, return_regions=False):
         super(DiceLoss, self).__init__()
         self.hard = hard
+        self.return_regions = return_regions
 
     def forward(self, pred, target, ign_first_ch=False):
         eps = 1
@@ -56,10 +58,58 @@ class DiceLoss(torch.nn.Module):
         total_avg = torch.mean(dice_loss)
         regions_avg = torch.mean(dice_loss, 0)
 
-        if not self.hard:
-            return total_avg
-        else:
+        if self.return_regions:
             return total_avg, regions_avg, ind_avg
+        else:
+            return total_avg
+
+
+def fast_dice(x, y):
+    """Fast implementation of Dice scores.
+    :param x: input label map
+    :param y: input label map of the same size as x
+    :param labels: numpy array of labels to evaluate on
+    :return: numpy array with Dice scores in the same order as labels.
+    """
+
+    x = x.argmax(1)
+    y = y.argmax(1)
+    labels = np.unique(np.concatenate([np.unique(x), np.unique(y)]))
+    assert (
+        x.shape == y.shape
+    ), "both inputs should have same size, had {} and {}".format(x.shape, y.shape)
+
+    if len(labels) > 1:
+        # sort labels
+        labels_sorted = np.sort(labels)
+
+        # build bins for histograms
+        label_edges = np.sort(
+            np.concatenate([labels_sorted - 0.1, labels_sorted + 0.1])
+        )
+        label_edges = np.insert(
+            label_edges,
+            [0, len(label_edges)],
+            [labels_sorted[0] - 0.1, labels_sorted[-1] + 0.1],
+        )
+
+        # compute Dice and re-arrange scores in initial order
+        hst = np.histogram2d(x.flatten(), y.flatten(), bins=label_edges)[0]
+        idx = np.arange(start=1, stop=2 * len(labels_sorted), step=2)
+        dice_score = (
+            2 * np.diag(hst)[idx] / (np.sum(hst, 0)[idx] + np.sum(hst, 1)[idx] + 1e-5)
+        )
+        dice_score = dice_score[np.searchsorted(labels_sorted, labels)]
+
+    else:
+        dice_score = dice(x == labels[0], y == labels[0])
+
+    return np.mean(dice_score)  # Remove mean to get region-level scores
+
+
+def dice(x, y):
+    """Implementation of dice scores for 0/1 numpy array"""
+    return 2 * np.sum(x * y) / (np.sum(x) + np.sum(y))
 
 
 def _check_type(t):
@@ -354,6 +404,15 @@ class ImageLC2(torch.nn.Module):
 #         return F.mse_loss(gt, weights)
 
 
+def _load_file(path):
+    if path.endswith(".nii") or path.endswith(".nii.gz"):
+        return torch.tensor(nib.load(path).get_fdata())
+    elif path.endswith(".npy"):
+        return torch.tensor(np.load(path))
+    else:
+        raise ValueError("File format not supported")
+
+
 class _AvgPairwiseLoss(torch.nn.Module):
     """Pairwise loss."""
 
@@ -365,12 +424,15 @@ class _AvgPairwiseLoss(torch.nn.Module):
         loss = 0
         num = 0
         for i in range(len(batch_of_imgs)):
-            for j in range(len(batch_of_imgs)):
-                if i != j:
+            for j in range(i + 1, len(batch_of_imgs)):
+                if isinstance(batch_of_imgs[0], str):
+                    img1 = _load_file(batch_of_imgs[i])
+                    img2 = _load_file(batch_of_imgs[j])
+                else:
                     img1 = batch_of_imgs[i : i + 1]
                     img2 = batch_of_imgs[j : j + 1]
-                    loss += self.metric_fn(img1, img2)
-                    num += 1
+                loss += self.metric_fn(img1, img2)
+                num += 1
         return loss / num
 
 
@@ -388,6 +450,13 @@ class SoftDicePairwiseLoss(_AvgPairwiseLoss):
         super().__init__(DiceLoss().forward)
 
 
+class HardDicePairwiseLoss(_AvgPairwiseLoss):
+    """Hard Dice pairwise loss."""
+
+    def __init__(self):
+        super().__init__(DiceLoss(hard=True).forward)
+
+
 class HausdorffPairwiseLoss(_AvgPairwiseLoss):
     """Hausdorff pairwise loss."""
 
@@ -395,66 +464,90 @@ class HausdorffPairwiseLoss(_AvgPairwiseLoss):
         super().__init__(hausdorff_distance)
 
 
-class HardDicePairwiseLoss(torch.nn.Module):
-    """Pairwise loss."""
+class _AvgGridMetric(torch.nn.Module):
+    """Aggregated average metric for grids."""
+
+    def __init__(self, metric_fn):
+        super().__init__()
+        self.metric_fn = metric_fn
+
+    def forward(self, batch_of_grids):
+        tot_jdstd = 0
+        for i in range(len(batch_of_grids)):
+            if isinstance(batch_of_grids[i], str):
+                grid = _load_file(batch_of_grids[i])
+            else:
+                grid = batch_of_grids[i : i + 1]
+            grid_permute = grid.permute(0, 4, 1, 2, 3)
+            tot_jdstd += self.metric_fn(grid_permute)
+        return tot_jdstd / len(batch_of_grids)
+
+
+class AvgJDStd(_AvgGridMetric):
+    """Soft Dice pairwise loss."""
+
+    def __init__(self):
+        super().__init__(jdstd)
+
+
+class AvgJDLessThan0(_AvgGridMetric):
+    """Soft Dice pairwise loss."""
+
+    def __init__(self):
+        super().__init__(jdlessthan0)
+
+
+class MultipleAvgSegPairwiseMetric(torch.nn.Module):
+    """Evaluate multiple pairwise losses on a batch of images, mostly
+    so that we don't need to load them into memory multiple times."""
 
     def __init__(self):
         super().__init__()
-        self.hard_dice = DiceLoss(hard=True)
+        self.name2fn = {
+            "dice": fast_dice,
+            "harddice": DiceLoss(hard=True).forward,
+            "hausd": hausdorff_distance,
+        }
 
-    def forward(self, batch_of_imgs):
-        loss = 0
+    def forward(self, batch_of_imgs, fn_names):
+        res = {name: 0 for name in fn_names}
         num = 0
         for i in range(len(batch_of_imgs)):
-            for j in range(len(batch_of_imgs)):
-                if i != j:
+            for j in range(i + 1, len(batch_of_imgs)):
+                if isinstance(batch_of_imgs[0], str):
+                    print(batch_of_imgs[i])
+                    print(batch_of_imgs[j])
+                    img1 = _load_file(batch_of_imgs[i])
+                    img2 = _load_file(batch_of_imgs[j])
+                else:
                     img1 = batch_of_imgs[i : i + 1]
                     img2 = batch_of_imgs[j : j + 1]
-                    loss += self.hard_dice(img1, img2)[0]
-                    num += 1
-        return loss / num
+                for name in fn_names:
+                    print(name)
+                    res[name] += self.name2fn[name](img1, img2)
+                num += 1
+        return {name: res[name] / num for name in fn_names}
 
 
-def fast_dice(x, y, labels):
-    """Fast implementation of Dice scores.
-    :param x: input label map
-    :param y: input label map of the same size as x
-    :param labels: numpy array of labels to evaluate on
-    :return: numpy array with Dice scores in the same order as labels.
-    """
+class MultipleAvgGridMetric(torch.nn.Module):
+    """Evaluate multiple grid metrics on a batch of grids, mostly
+    so that we don't need to load them into memory multiple times."""
 
-    assert (
-        x.shape == y.shape
-    ), "both inputs should have same size, had {} and {}".format(x.shape, y.shape)
+    def __init__(self):
+        super().__init__()
+        self.name2fn = {
+            "jdstd": jdstd,
+            "jdlessthan0": jdlessthan0,
+        }
 
-    if len(labels) > 1:
-        # sort labels
-        labels_sorted = np.sort(labels)
-
-        # build bins for histograms
-        label_edges = np.sort(
-            np.concatenate([labels_sorted - 0.1, labels_sorted + 0.1])
-        )
-        label_edges = np.insert(
-            label_edges,
-            [0, len(label_edges)],
-            [labels_sorted[0] - 0.1, labels_sorted[-1] + 0.1],
-        )
-
-        # compute Dice and re-arrange scores in initial order
-        hst = np.histogram2d(x.flatten(), y.flatten(), bins=label_edges)[0]
-        idx = np.arange(start=1, stop=2 * len(labels_sorted), step=2)
-        dice_score = (
-            2 * np.diag(hst)[idx] / (np.sum(hst, 0)[idx] + np.sum(hst, 1)[idx] + 1e-5)
-        )
-        dice_score = dice_score[np.searchsorted(labels_sorted, labels)]
-
-    else:
-        dice_score = dice(x == labels[0], y == labels[0])
-
-    return dice_score
-
-
-def dice(x, y):
-    """Implementation of dice scores for 0/1 numpy array"""
-    return 2 * np.sum(x * y) / (np.sum(x) + np.sum(y))
+    def forward(self, batch_of_grids, fn_names):
+        res = {name: 0 for name in fn_names}
+        for i in range(len(batch_of_grids)):
+            if isinstance(batch_of_grids[i], str):
+                grid = _load_file(batch_of_grids[i])
+            else:
+                grid = batch_of_grids[i : i + 1]
+            grid_permute = grid.permute(0, 4, 1, 2, 3)
+            for name in fn_names:
+                res[name] += self.name2fn[name](grid_permute)
+        return {name: res[name] / len(batch_of_grids) for name in fn_names}
