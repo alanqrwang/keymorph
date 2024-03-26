@@ -36,14 +36,13 @@ SYNTHSEG_LABEL_NAMES = {
 
 EVAL_METRICS = [
     "mse",
-    "softdice",
     "harddice",
     "hausd",
     "jdstd",
     "jdlessthan0",
 ]
 
-EVAL_NAMES = {
+EVAL_UNI_NAMES = {
     "id": [
         (
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
@@ -60,17 +59,43 @@ EVAL_NAMES = {
     ],
     "ood": [
         (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7000_openneuro-ds004791",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7000_openneuro-ds004791",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7000_openneuro-ds004791",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7000_openneuro-ds004791",
         ),
         (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7001_openneuro-ds004848",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7001_openneuro-ds004848",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7001_openneuro-ds004848",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7001_openneuro-ds004848",
         ),
     ],
-    "raw": [
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7000_openneuro-ds004791",
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7001_openneuro-ds004848",
+}
+EVAL_MULTI_NAMES = {
+    "id": [
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5084_IXIT2",
+        ),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5085_IXIPD",
+        ),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5084_IXIT2",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5085_IXIPD",
+        ),
+    ],
+    "ood": [
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5084_IXIT2",
+        ),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5085_IXIPD",
+        ),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5084_IXIT2",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5085_IXIPD",
+        ),
     ],
 }
 EVAL_LESION_NAMES = {
@@ -81,19 +106,17 @@ EVAL_LESION_NAMES = {
         ),
     ],
     "ood": [
-        #
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5000_BraTS-GLI_2023",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5000_BraTS-GLI_2023",
+        ),
     ],
-    "raw": [],
 }
 EVAL_GROUP_NAMES = {
     "id": [
         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
     ],
     "ood": [
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7000_openneuro-ds004791",
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset7001_openneuro-ds004848",
-    ],
-    "raw": [
         "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7000_openneuro-ds004791",
         "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7001_openneuro-ds004848",
     ],
@@ -105,9 +128,8 @@ EVAL_LONG_NAMES = {
         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6002_OASIS3",
     ],
     "ood": [
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6003_AIBL",
+        "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_raw_data_base/Dataset1006_OASIS3",
     ],
-    "raw": [],
 }
 
 EVAL_AUGS = [

@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from skimage import morphology
 from scipy.stats import loguniform
 import time
+import os
+import nibabel as nib
 
 from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
 from keymorph.layers import (
@@ -182,8 +184,8 @@ class KeyMorph(nn.Module):
 
         keypoint_extract_time = time.time() - start_time
 
-        # List of results
-        result_list = []
+        # Dictionary of results
+        result_dict = {}
 
         for align_type_str in transform_type:
             start_time = time.time()
@@ -234,10 +236,9 @@ class KeyMorph(nn.Module):
                 "points_f": points_f,
                 "points_m": points_m,
                 "points_weights": weights,
-                "align_type": align_type_str,
                 "tps_lmbda": tps_lmbda,
-                "keypoint_extract_time": keypoint_extract_time,
-                "align_time": align_time,
+                "time_keypoint_extract": keypoint_extract_time,
+                "time_align": align_time,
                 "time": keypoint_extract_time + align_time,
             }
             if return_aligned_points:
@@ -245,8 +246,8 @@ class KeyMorph(nn.Module):
                     points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
                 )
                 res["points_a"] = points_a
-            result_list.append(res)
-        return result_list
+            result_dict[align_type_str] = res
+        return result_dict
 
     def pairwise_register(self, *args, **kwargs):
         """Alias for forward()."""
@@ -258,23 +259,25 @@ class KeyMorph(nn.Module):
         transform_type="affine",
         device="cuda",
         num_iters=1,
+        save_results_to_disk=False,
     ):
-        """Perform groupwise registration.
-
-        Args:
-            group_points: list of tensors of shape (num_subjects, num_points, dim)
-            keypoint_aligner: Keypoint aligner object
-            lmbda: Lambda value for TPS
-            grid_shape: Grid on which to resample
-
-        Returns:
-            grids: All grids for each subject in the group
-            points: All transformed points for each subject in the group
-        """
+        """group_imgs_m: directory of moving images, tensor of moving images, or list of moving image paths"""
 
         def _groupwise_register_step(
             group_points, keypoint_aligner, grid_shape, lmbda, weights=None
         ):
+            """One step of groupwise registration.
+
+            Args:
+                group_points: list of tensors of shape (num_subjects, num_points, dim)
+                keypoint_aligner: Keypoint aligner object
+                lmbda: Lambda value for TPS
+                grid_shape: Grid on which to resample
+
+            Returns:
+                grids: All grids for each subject in the group
+                points: All transformed points for each subject in the group
+            """
             # Compute mean of points, to be used as fixed points
             mean_points = torch.mean(group_points, dim=0, keepdim=True)
 
@@ -306,9 +309,18 @@ class KeyMorph(nn.Module):
 
         # Load images and segmentations
         group_points = []
+        if isinstance(group_imgs_m, str):
+            group_imgs_m = [
+                path for path in os.listdir(group_imgs_m) if path.endswith(".nii.gz")
+            ]
         for i in range(len(group_imgs_m)):
-            img_m = group_imgs_m[i : i + 1]
-            img_m = rescale_intensity(img_m.clone()).to(device)
+            if isinstance(group_imgs_m[i], str):
+                img_m = torch.tensor(nib.load(group_imgs_m[i]).get_fdata())[
+                    None, None
+                ].float()
+            else:
+                img_m = group_imgs_m[i : i + 1]
+            img_m = img_m.to(device)
             points = self.get_keypoints(img_m)
 
             # if args.weighted_kp_align == "variance":
@@ -354,9 +366,9 @@ class KeyMorph(nn.Module):
 
             res = {
                 "align_type": align_type_str,
-                "grids": torch.cat(grids, dim=0),
-                "points_m": group_points,
-                "points_a": curr_points,
+                "groupgrids": torch.cat(grids, dim=0),
+                "grouppoints_m": group_points,
+                "grouppoints_a": curr_points,
             }
             result_list.append(res)
 

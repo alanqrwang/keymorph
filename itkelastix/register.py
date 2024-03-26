@@ -2,6 +2,8 @@ import itk
 import numpy as np
 import torch
 import time
+import os
+import nibabel as nib
 
 
 class ITKElastix:
@@ -24,8 +26,8 @@ class ITKElastix:
         fixed_image = itk.image_view_from_array(fixed)
         moving_image = itk.image_view_from_array(moving)
 
-        # List of results
-        result_list = []
+        # Dictionary of results
+        result_dict = {}
 
         num_resolutions = 1
         for ttype in transform_type:
@@ -106,19 +108,43 @@ class ITKElastix:
                 "grid": grid.permute(0, 2, 3, 4, 1).to(original_device),
                 "time": register_time,
             }
-            result_list.append(res)
+            result_dict[ttype] = res
 
-        return result_list
+        return result_dict
 
-    def groupwise_register(self, group_imgs_m, transform_type="rigid", **kwargs):
+    def groupwise_register(self, inputs, transform_type="rigid", **kwargs):
+        """Groupwise register.
+
+        inputs can be:
+         - directories of images, looks for files img_*.npy
+         - list of image paths
+         - stack of images (N, 1, D, H, W)"""
+        # Load images and segmentations
+        if isinstance(inputs, str):
+            save_dir = kwargs["save_dir"]
+            inputs = sorted(
+                [
+                    os.path.join(inputs, f)
+                    for f in os.listdir(inputs)
+                    if f.endswith(".npy")
+                ]
+            )
+        else:
+            save_dir = None
+        if isinstance(inputs[0], str):
+            group_imgs_m = [np.load(p)[0, 0] for p in inputs]
+            for img in group_imgs_m:
+                print(img.shape)
+            group_imgs_m = np.stack(group_imgs_m)
+        elif isinstance(inputs, torch.Tensor):
+            group_imgs_m = inputs[:, 0].cpu().detach().numpy()
+
         # Ensure the stacked array is contiguous in memory
-        group_imgs_m = group_imgs_m.cpu().detach().numpy()[:, 0]
         group_imgs_m = np.ascontiguousarray(group_imgs_m).astype(np.float32)
-        print(group_imgs_m.shape)
         itk_group_imgs = itk.image_view_from_array(group_imgs_m)
 
         # List of results
-        result_list = []
+        result_dict = {}
 
         num_resolutions = 1
         for ttype in transform_type:
@@ -144,7 +170,7 @@ class ITKElastix:
                     itk_group_imgs,
                     itk_group_imgs,
                     parameter_object=parameter_object,
-                    log_to_console=True,
+                    log_to_console=False,
                 )
             )
 
@@ -157,16 +183,16 @@ class ITKElastix:
                 itk.array_view_from_image(displacement_field)
             )[..., :3].permute(0, 4, 1, 2, 3)
 
-            # result_images = torch.tensor(
-            #     itk.array_view_from_image(result_images)
-            # )  # .permute(3, 0, 1, 2)[None]
-            # print(result_images.shape)
-            # # plot result_images
-            # import matplotlib.pyplot as plt
+            if kwargs["plot"]:
+                result_images = torch.tensor(
+                    itk.array_view_from_image(result_images)
+                )  # .permute(3, 0, 1, 2)[None]
+                # plot result_images
+                import matplotlib.pyplot as plt
 
-            # for i in range(result_images.shape[0]):
-            #     plt.imshow(result_images[i, 128, :, :])
-            #     plt.show()
+                for i in range(result_images.shape[0]):
+                    plt.imshow(result_images[i, 128, :, :])
+                    plt.show()
 
             # Convert displacement to grid
             group_size, D, H, W = group_imgs_m.shape
@@ -198,14 +224,23 @@ class ITKElastix:
 
             # Step 3: Add the displacement field to the original grid to get the transformed coordinates
             grid = coords + displacement_field
+            grid = grid.permute(0, 2, 3, 4, 1)
 
             register_time = time.time() - start_time
 
             res = {
                 "align_type": ttype,
-                "grids": grid.permute(0, 2, 3, 4, 1),
                 "time": register_time,
             }
-            result_list.append(res)
+            save_results_to_disk = kwargs["save_results_to_disk"]
+            if save_results_to_disk and save_dir:
+                for i in range(len(grid)):
+                    np.save(
+                        f"{save_dir}/{ttype}_grid_{i:03}.npy",
+                        grid[i : i + 1].cpu().detach().numpy(),
+                    )
+            else:
+                res["groupgrids"] = grid
+            result_dict[ttype] = res
 
-        return result_list
+        return result_dict

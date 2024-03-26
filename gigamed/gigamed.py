@@ -11,9 +11,9 @@ from .utils import (
     DSSMPairedDataset,
     PairedDataset,
     SingleSubjectDataset,
-    GroupDataset,
-    LongitudinalGroupDataset,
+    LongitudinalPathDataset,
     AggregatedFamilyDataset,
+    SimpleDatasetIterator,
 )
 
 id_csv_file = "/home/alw4013/keymorph/gigamed/gigamed_id.csv"
@@ -174,21 +174,13 @@ class GigaMed:
         num_workers,
         include_seg=True,
         transform=None,
-        use_raw_data=False,
         group_size=4,
         normal_brains_only=False,
         include_synthetic_brains=False,
     ):
-        # proc_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed"
-        # raw_data_dir = "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base"
-
-        # noskullstrip_data_dir = "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/"
-        # skullstrip_data_dir = "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/"
-
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.normal_brains_only = normal_brains_only
-        self.use_raw_data = use_raw_data
         self.include_synthetic_brains = include_synthetic_brains
 
         self.dataset = GigaMedDataset(
@@ -373,7 +365,7 @@ class GigaMed:
                 "has_lesion": False,
                 "is_skullstripped": True,
             },
-            GroupDataset,
+            SingleSubjectDataset,
             id=id,
         )
 
@@ -395,10 +387,10 @@ class GigaMed:
                 "has_test": True,
                 "is_synthetic": False,
                 "has_lesion": False,
-                "is_skullstripped": True,
+                # "is_skullstripped": True,
                 "has_longitudinal": True,
             },
-            GroupDataset,
+            LongitudinalPathDataset,
             id=id,
         )
 
@@ -408,11 +400,8 @@ class GigaMed:
 
         loaders = {}
         for name, ds in datasets.items():
-            loaders[name] = DataLoader(
+            loaders[name] = SimpleDatasetIterator(
                 ds,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
             )
         return loaders
 
