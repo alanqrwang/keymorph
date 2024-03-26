@@ -333,102 +333,6 @@ class GigaMed:
         )
         return train_loader
 
-    def get_eval_loaders(self, id):
-        datasets = self.dataset.get_dataset_family(
-            {
-                "has_test": True,
-                "is_synthetic": False,
-                "has_lesion": False,
-                "is_skullstripped": True,
-            },
-            SingleSubjectDataset,
-            id=id,
-        )
-
-        self.print_dataset_stats(datasets, f"EVAL {id}: Normal skullstripped")
-
-        loaders = {}
-        for name, ds in datasets.items():
-            loaders[name] = DataLoader(
-                ds,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-            )
-        return loaders
-
-    def get_eval_group_loaders(self, id):
-        datasets = self.dataset.get_dataset_family(
-            {
-                "has_test": True,
-                "is_synthetic": False,
-                "has_lesion": False,
-                "is_skullstripped": True,
-            },
-            SingleSubjectDataset,
-            id=id,
-        )
-
-        self.print_dataset_stats(datasets, f"EVAL {id}: Normal group skullstripped")
-
-        loaders = {}
-        for name, ds in datasets.items():
-            loaders[name] = DataLoader(
-                ds,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-            )
-        return loaders
-
-    def get_eval_longitudinal_loaders(self, id):
-        datasets = self.dataset.get_dataset_family(
-            {
-                "has_test": True,
-                "is_synthetic": False,
-                "has_lesion": False,
-                # "is_skullstripped": True,
-                "has_longitudinal": True,
-            },
-            LongitudinalPathDataset,
-            id=id,
-        )
-
-        self.print_dataset_stats(
-            datasets, f"EVAL {id}: Normal longitudinal group skullstripped"
-        )
-
-        loaders = {}
-        for name, ds in datasets.items():
-            loaders[name] = SimpleDatasetIterator(
-                ds,
-            )
-        return loaders
-
-    def get_eval_lesion_loaders(self, id):
-        datasets = self.dataset.get_dataset_family(
-            {
-                "has_test": True,
-                "is_synthetic": False,
-                "has_lesion": True,
-                "is_skullstripped": True,
-            },
-            SingleSubjectDataset,
-            id=id,
-        )
-
-        self.print_dataset_stats(datasets, f"EVAL {id}: Lesion skullstripped")
-
-        loaders = {}
-        for name, ds in datasets.items():
-            loaders[name] = DataLoader(
-                ds,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-            )
-        return loaders
-
     def get_pretrain_loader(self):
         """Pretrain on all datasets."""
         datasets = self.dataset.get_dataset_family(
@@ -468,14 +372,110 @@ class GigaMed:
 
         final_dataset = AggregatedFamilyDataset(family_datasets, family_names)
 
-        train_loader = DataLoader(
+        pretrain_loader = DataLoader(
             final_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
         )
 
-        return train_loader
+        return pretrain_loader
+
+    def get_eval_loaders(self, ss):
+        datasets = self.dataset.get_dataset_family(
+            {
+                "has_test": True,
+                "is_synthetic": False,
+                "has_lesion": False,
+                "is_skullstripped": ss,
+            },
+            SingleSubjectDataset,
+            id=id,
+        )
+
+        self.print_dataset_stats(datasets, f"EVAL, skullstripped={ss}, Normal")
+
+        loaders = {}
+        for name, ds in datasets.items():
+            loaders[name] = DataLoader(
+                ds,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return loaders
+
+    def get_eval_group_loaders(self, ss):
+        datasets = self.dataset.get_dataset_family(
+            {
+                "has_test": True,
+                "is_synthetic": False,
+                "has_lesion": False,
+                "is_skullstripped": ss,
+            },
+            SingleSubjectDataset,
+            id=id,
+        )
+
+        self.print_dataset_stats(datasets, f"EVAL, skullstripped={ss}, Normal group")
+
+        loaders = {}
+        for name, ds in datasets.items():
+            loaders[name] = DataLoader(
+                ds,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return loaders
+
+    def get_eval_longitudinal_loaders(self, ss):
+        datasets = self.dataset.get_dataset_family(
+            {
+                "has_test": True,
+                "is_synthetic": False,
+                "has_lesion": False,
+                "is_skullstripped": ss,
+                "has_longitudinal": True,
+            },
+            LongitudinalPathDataset,
+            id=id,
+        )
+
+        self.print_dataset_stats(
+            datasets, f"EVAL, skullstripped={ss}, Normal longitudinal"
+        )
+
+        loaders = {}
+        for name, ds in datasets.items():
+            loaders[name] = SimpleDatasetIterator(
+                ds,
+            )
+        return loaders
+
+    def get_eval_lesion_loaders(self, ss):
+        datasets = self.dataset.get_dataset_family(
+            {
+                "has_test": True,
+                "is_synthetic": False,
+                "has_lesion": True,
+                "is_skullstripped": ss,
+            },
+            SingleSubjectDataset,
+            id=id,
+        )
+
+        self.print_dataset_stats(datasets, f"EVAL, skullstripped={ss}, Lesion")
+
+        loaders = {}
+        for name, ds in datasets.items():
+            loaders[name] = DataLoader(
+                ds,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return loaders
 
     def get_reference_subject(self):
         return self.dataset.get_reference_subject()
