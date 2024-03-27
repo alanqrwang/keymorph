@@ -57,11 +57,9 @@ class GigaMedDataset:
         self,
         include_seg=True,
         transform=None,
-        group_size=4,
     ):
         self.include_seg = include_seg
         self.transform = transform
-        self.group_size = group_size
         self.gigamed_paths = GigaMedPaths()
 
     def get_dataset_family(self, conditions, DatasetType, id=True, **dataset_kwargs):
@@ -174,7 +172,6 @@ class GigaMed:
         num_workers,
         include_seg=True,
         transform=None,
-        group_size=4,
         normal_brains_only=False,
         include_synthetic_brains=False,
     ):
@@ -183,9 +180,7 @@ class GigaMed:
         self.normal_brains_only = normal_brains_only
         self.include_synthetic_brains = include_synthetic_brains
 
-        self.dataset = GigaMedDataset(
-            include_seg=include_seg, transform=transform, group_size=group_size
-        )
+        self.dataset = GigaMedDataset(include_seg=include_seg, transform=transform)
 
     def print_dataset_stats(self, datasets, prefix=""):
         print(f"\n\n{prefix} dataset family has {len(datasets)} datasets.")
@@ -381,7 +376,7 @@ class GigaMed:
 
         return pretrain_loader
 
-    def get_eval_loaders(self, ss):
+    def get_eval_loaders(self, ss, id=True):
         datasets = self.dataset.get_dataset_family(
             {
                 "has_test": True,
@@ -405,7 +400,7 @@ class GigaMed:
             )
         return loaders
 
-    def get_eval_group_loaders(self, ss):
+    def get_eval_group_loaders(self, ss, id=True):
         datasets = self.dataset.get_dataset_family(
             {
                 "has_test": True,
@@ -429,7 +424,7 @@ class GigaMed:
             )
         return loaders
 
-    def get_eval_longitudinal_loaders(self, ss):
+    def get_eval_longitudinal_loaders(self, ss, id=True):
         datasets = self.dataset.get_dataset_family(
             {
                 "has_test": True,
@@ -453,7 +448,7 @@ class GigaMed:
             )
         return loaders
 
-    def get_eval_lesion_loaders(self, ss):
+    def get_eval_lesion_loaders(self, ss, id=True):
         datasets = self.dataset.get_dataset_family(
             {
                 "has_test": True,

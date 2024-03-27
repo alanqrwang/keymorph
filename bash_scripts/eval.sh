@@ -18,25 +18,27 @@ source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="gigamednb-keymorph"
+JOB_NAME="gigamed-weighted-ACTUALLYWEIGHTED-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}"
 python run.py \
     --run_mode eval \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \
     --max_train_keypoints 32 \
     --registration_model keymorph \
-    --loss_fn mse \
-    --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/ \
-    --train_dataset gigamednb \
+    --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/truncatedunet1/ \
+    --train_dataset gigamed \
     --test_dataset gigamed \
     --num_workers 1 \
     --use_amp \
     --batch_size 1 \
-    --backbone conv \
+    --backbone truncatedunet \
     --early_stop_eval_subjects 3 \
-    --save_preds \
+    --save_eval_to_disk \
     --seg_available \
-    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__training__gigamednb-keymorph_datasetgigamednb_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch2250_trained_model.pth.tar \
+    --weighted_kp_align power \
+    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/truncatedunet1/__training__gigamed-weighted-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch5000_trained_model.pth.tar
+
+    # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__training__gigamednb-keymorph_datasetgigamednb_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch2250_trained_model.pth.tar \
 
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/conv/__training__gigamed-synthbrain-keymorph_datasetgigamed+synthbrain_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch2000_trained_model.pth.tar
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/__training__gigamed-keymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch2000_trained_model.pth.tar \

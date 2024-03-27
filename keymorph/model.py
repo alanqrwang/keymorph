@@ -253,23 +253,45 @@ class KeyMorph(nn.Module):
         """Alias for forward()."""
         return self.forward(self, args, kwargs)
 
-    def groupwise_register(
-        self,
-        group_imgs_m=None,
-        transform_type="affine",
-        device="cuda",
-        num_iters=1,
-        save_results_to_disk=False,
-    ):
-        """group_imgs_m: directory of moving images, tensor of moving images, or list of moving image paths"""
+    def groupwise_register(self, inputs, transform_type="affine", **kwargs):
+        """Groupwise registration.
+
+        Steps:
+            1. Extract keypoints from each image
+            2. Find mean keypoints by repeating for num_iters:
+                b. Compute mean keypoints
+                c. Register each image to the mean keypoints
+            3. Compute grids for each image from original extracted keypoints to mean keypoints
+
+        inputs can be:
+           - directories of images, looks for files img_*.npy
+           - list of image paths
+           - Torch Tensor stack of images (N, 1, D, H, W)"""
+
+        device = kwargs["device"]
+        num_iters = kwargs["num_iters"]
+        log_to_console = kwargs["log_to_console"]
+
+        # Load images and segmentations
+        if isinstance(inputs, str):
+            save_dir = kwargs["save_dir"]
+            inputs = sorted(
+                [
+                    os.path.join(inputs, f)
+                    for f in os.listdir(inputs)
+                    if f.endswith(".npy")
+                ]
+            )
+        else:
+            save_dir = None
 
         def _groupwise_register_step(
-            group_points, keypoint_aligner, grid_shape, lmbda, weights=None
+            group_points, keypoint_aligner, lmbda, weights=None
         ):
             """One step of groupwise registration.
 
             Args:
-                group_points: list of tensors of shape (num_subjects, num_points, dim)
+                group_points: tensor of shape (num_subjects, num_points, dim)
                 keypoint_aligner: Keypoint aligner object
                 lmbda: Lambda value for TPS
                 grid_shape: Grid on which to resample
@@ -278,22 +300,13 @@ class KeyMorph(nn.Module):
                 grids: All grids for each subject in the group
                 points: All transformed points for each subject in the group
             """
-            # Compute mean of points, to be used as fixed points
+            # Compute mean points, to be used as fixed points
             mean_points = torch.mean(group_points, dim=0, keepdim=True)
 
-            # Register each point to the mean
-            grids = []
-            new_points = []
+            # Register each subject's points to the mean points
+            new_points = torch.zeros_like(group_points, device=group_points.device)
             for i in range(len(group_points)):
                 points_m = group_points[i : i + 1]
-                grid = keypoint_aligner.grid_from_points(
-                    points_m,
-                    mean_points,
-                    grid_shape,
-                    lmbda=lmbda,
-                    weights=weights,
-                    compute_on_subgrids=True,
-                )
                 points_a = keypoint_aligner.points_from_points(
                     points_m,
                     mean_points,
@@ -301,25 +314,18 @@ class KeyMorph(nn.Module):
                     lmbda=lmbda,
                     weights=weights,
                 )
-                grids.append(grid)
-                new_points.append(points_a)
-
-            new_points = torch.cat(new_points, dim=0)
-            return grids, new_points
+                new_points[i : i + 1] = points_a
+            return new_points, mean_points
 
         # Load images and segmentations
         group_points = []
-        if isinstance(group_imgs_m, str):
-            group_imgs_m = [
-                path for path in os.listdir(group_imgs_m) if path.endswith(".nii.gz")
-            ]
-        for i in range(len(group_imgs_m)):
-            if isinstance(group_imgs_m[i], str):
-                img_m = torch.tensor(nib.load(group_imgs_m[i]).get_fdata())[
-                    None, None
-                ].float()
+        if log_to_console:
+            print("Extracting keypoints...")
+        for i in range(len(inputs)):
+            if isinstance(inputs[i], str):
+                img_m = torch.tensor(np.load(inputs[i])).float()
             else:
-                img_m = group_imgs_m[i : i + 1]
+                img_m = inputs[i : i + 1]
             img_m = img_m.to(device)
             points = self.get_keypoints(img_m)
 
@@ -331,11 +337,16 @@ class KeyMorph(nn.Module):
             #     weights = None
             weights = None  # TODO: support weighted groupwise registration??
             group_points.append(points.detach())
+            if log_to_console:
+                print(f"-> Extracted keypoints from subject {i+1}/{len(inputs)}")
 
         group_points = torch.cat(group_points, dim=0)
 
-        result_list = []
+        result_dict = {}
         for align_type_str in transform_type:
+            if log_to_console:
+                print(f"\nAligning keypoints via {align_type_str}...")
+            start_time = time.time()
             if align_type_str.startswith("tps"):
                 align_type = "tps"
                 tps_lmbda = self._convert_tps_lmbda(
@@ -354,25 +365,66 @@ class KeyMorph(nn.Module):
                 keypoint_aligner = self.tps_aligner
 
             curr_points = group_points.clone()
-            for _ in range(num_iters):
-                grids, next_points = _groupwise_register_step(
+            for j in range(num_iters):
+                next_points, mean_points = _groupwise_register_step(
                     curr_points,
                     keypoint_aligner,
-                    img_m.shape,
                     tps_lmbda,
                     weights=weights,
                 )
-                curr_points = next_points
+                curr_points = next_points.clone()
+                if log_to_console:
+                    print(f"-> Iteration {j+1}/{num_iters}")
 
+            register_time = time.time() - start_time
             res = {
-                "align_type": align_type_str,
-                "groupgrids": torch.cat(grids, dim=0),
+                "time": register_time,
                 "grouppoints_m": group_points,
                 "grouppoints_a": curr_points,
             }
-            result_list.append(res)
 
-        return result_list
+            save_results_to_disk = kwargs["save_results_to_disk"]
+            if save_results_to_disk and save_dir:
+                # Compute grid and save to disk, one at a time
+                for i in range(len(group_points)):
+                    points_m = group_points[i : i + 1]
+                    grid = keypoint_aligner.grid_from_points(
+                        points_m,
+                        mean_points,
+                        img_m.shape,
+                        lmbda=tps_lmbda,
+                        weights=weights,
+                        compute_on_subgrids=True,
+                    )
+                    grid_save_path = f"{save_dir}/{align_type_str}_grid_{i:03}.npy"
+                    if log_to_console:
+                        print(
+                            f"-> Saving grid {i+1}/{len(curr_points)} to {grid_save_path}"
+                        )
+                    np.save(
+                        grid_save_path,
+                        grid.cpu().detach().numpy(),
+                    )
+            else:
+                # Compute all grids and return them all in the result dictionary
+                grids = []
+                for i in range(len(group_points)):
+                    points_m = group_points[i : i + 1]
+                    grid = keypoint_aligner.grid_from_points(
+                        points_m,
+                        mean_points,
+                        img_m.shape,
+                        lmbda=tps_lmbda,
+                        weights=weights,
+                        compute_on_subgrids=True,
+                    )
+                    grids.append(grid)
+                res["groupgrids"] = torch.cat(grids, dim=0)
+            result_dict[align_type_str] = res
+
+        if log_to_console:
+            print("Groupwise registration complete!")
+        return result_dict
 
 
 class Simple_Unet(nn.Module):

@@ -170,13 +170,6 @@ def parse_args():
         help="Whether or not segmentation maps are available for the dataset",
     )
 
-    parser.add_argument(
-        "--group_size",
-        type=int,
-        default=4,
-        help="Group size for groupwise registration evaluation",
-    )
-
     # ML
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
 
@@ -323,13 +316,11 @@ def get_data(args):
             args.batch_size,
             args.num_workers,
             include_seg=False,
-            group_size=args.group_size,
         )
         gigamed_dataset_with_seg = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
             include_seg=True,
-            group_size=args.group_size,
         )
         train_loader = gigamed_dataset_with_seg.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
@@ -339,14 +330,12 @@ def get_data(args):
             args.batch_size,
             args.num_workers,
             include_seg=False,
-            group_size=args.group_size,
             normal_brains_only=True,
         )
         gigamed_dataset_with_seg = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
             include_seg=True,
-            group_size=args.group_size,
             normal_brains_only=True,
         )
         train_loader = gigamed_dataset_with_seg.get_train_loader()
@@ -360,14 +349,12 @@ def get_data(args):
             args.batch_size,
             args.num_workers,
             include_seg=False,
-            group_size=args.group_size,
             include_synthetic_brains=True,
         )
         gigamed_synthbrain_dataset_with_seg = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
             include_seg=True,
-            group_size=args.group_size,
             include_synthetic_brains=True,
         )
         train_loader = gigamed_synthbrain_dataset_with_seg.get_train_loader()
@@ -384,7 +371,6 @@ def get_data(args):
             args.num_workers,
             include_seg=False,
             transform=transform,
-            group_size=args.group_size,
             include_synthetic_brains=True,
         )
         gigamed_synthbrain_dataset_with_seg = gigamed.GigaMed(
@@ -392,7 +378,6 @@ def get_data(args):
             args.num_workers,
             include_seg=True,
             transform=transform,
-            group_size=args.group_size,
             include_synthetic_brains=True,
         )
         train_loader = gigamed_synthbrain_dataset_with_seg.get_train_loader()
@@ -409,7 +394,7 @@ def get_data(args):
             "id": id_eval_loaders,
         }
     elif args.test_dataset == "gigamed":
-        test_transform = tio.Compose(
+        eval_transform = tio.Compose(
             [
                 tio.ToCanonical(),
                 tio.Resample(1),
@@ -419,44 +404,27 @@ def get_data(args):
             ],
             include=("img", "seg"),
         )
-        gigamed_dataset_with_seg = gigamed.GigaMed(
+        eval_dataset = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
             include_seg=True,
-            transform=test_transform,
-            group_size=args.group_size,
-        )
-        id_eval_loaders = gigamed_dataset_with_seg.get_eval_loaders(id=True)
-        id_eval_lesion_loaders = gigamed_dataset_with_seg.get_eval_lesion_loaders(
-            id=True
-        )
-        id_eval_group_loaders = gigamed_dataset_with_seg.get_eval_group_loaders(id=True)
-        id_eval_long_loaders = gigamed_dataset_with_seg.get_eval_longitudinal_loaders(
-            id=True
-        )
-        ood_eval_loaders = gigamed_dataset_with_seg.get_eval_loaders(id=False)
-        ood_eval_lesion_loaders = gigamed_dataset_with_seg.get_eval_lesion_loaders(
-            id=False
-        )
-        ood_eval_group_loaders = gigamed_dataset_with_seg.get_eval_group_loaders(
-            id=False
-        )
-        ood_eval_long_loaders = gigamed_dataset_with_seg.get_eval_longitudinal_loaders(
-            id=False
+            transform=eval_transform,
         )
 
         return {
             "pretrain": pretrain_loader,
             "train": train_loader,
             "eval": {
-                "id": id_eval_loaders,
-                "id_lesion": id_eval_lesion_loaders,
-                "id_group": id_eval_group_loaders,
-                "id_long": id_eval_long_loaders,
-                "ood": ood_eval_loaders,
-                "ood_lesion": ood_eval_lesion_loaders,
-                "ood_group": ood_eval_group_loaders,
-                "ood_long": ood_eval_long_loaders,
+                "ss_unimodal": eval_dataset.get_eval_loaders(ss=True),
+                "ss_multimodal": eval_dataset.get_eval_loaders(ss=True),
+                "ss_lesion": eval_dataset.get_eval_lesion_loaders(ss=True),
+                "ss_group": eval_dataset.get_eval_group_loaders(ss=True),
+                "ss_long": eval_dataset.get_eval_longitudinal_loaders(ss=True),
+                "nss_unimodal": eval_dataset.get_eval_loaders(ss=False),
+                "nss_multimodal": eval_dataset.get_eval_loaders(ss=False),
+                "nss_lesion": eval_dataset.get_eval_lesion_loaders(ss=False),
+                "nss_group": eval_dataset.get_eval_group_loaders(ss=False),
+                "nss_long": eval_dataset.get_eval_longitudinal_loaders(ss=False),
             },
             "ref_subject": ref_subject,
         }
@@ -1045,7 +1013,7 @@ def run_eval(
                         metrics = {}
                         if args.seg_available:
                             # Always compute hard dice once ahead of time
-                            dice = loss_ops.DiceLoss(hard=True)(
+                            dice = loss_ops.DiceLoss(hard=True, return_regions=True)(
                                 seg_a, seg_f, ign_first_ch=True
                             )
                             dice_total = 1 - dice[0].item()
@@ -1107,8 +1075,8 @@ def run_eval(
                         if args.save_eval_to_disk and not args.debug_mode:
                             assert args.batch_size == 1  # TODO: fix this
                             # Create directory to save images, segs, points, metrics
-                            mod1_str = mod1.split("/")[-2:].join("-")
-                            mod2_str = mod2.split("/")[-2:].join("-")
+                            mod1_str = "-".join(mod1.split("/")[-2:])
+                            mod2_str = "-".join(mod2.split("/")[-2:])
                             save_dir = (
                                 args.model_eval_dir
                                 / save_dir_prefix
@@ -1361,6 +1329,7 @@ def run_group_eval(
     list_of_eval_names,
     list_of_eval_augs,
     list_of_eval_kp_aligns,
+    list_of_group_sizes,
     args,
     save_dir_prefix="group_eval",
 ):
@@ -1376,7 +1345,8 @@ def run_group_eval(
             for a in list_of_eval_augs:
                 for k in list_of_eval_kp_aligns:
                     for n in dataset_names:
-                        list_of_all_test.append(f"{m}:{n}:{a}:{k}")
+                        for g in list_of_group_sizes:
+                            list_of_all_test.append(f"{m}:{n}:{a}:{k}:{g}")
         _metrics = {}
         _metrics.update({key: [] for key in list_of_all_test})
         return _metrics
@@ -1385,51 +1355,58 @@ def run_group_eval(
     assert args.save_eval_to_disk and args.batch_size == 1  # Must save to disk
     for dataset_name in list_of_eval_names:
         for aug in list_of_eval_augs:
-            if not args.debug_mode:
-                # Create directory to save images, segs, points, metrics
-                dataset_name_str = "-".join(dataset_name.split("/")[-2:])
-                group_dir = (
-                    args.model_eval_dir / save_dir_prefix / f"{dataset_name_str}_{aug}"
-                )
-                groupimg_m_dir = os.path.join(group_dir, "img_m")
-                groupseg_m_dir = os.path.join(group_dir, "seg_m")
-                if not os.path.exists(groupimg_m_dir):
-                    os.makedirs(groupimg_m_dir)
-                if not os.path.exists(groupseg_m_dir):
-                    os.makedirs(groupseg_m_dir)
-
-            aug_params = utils.parse_test_aug(aug)
-            print(f"Running groupwise test: dataset {dataset_name}, aug {aug}")
-            for i, subject in enumerate(group_loader[dataset_name]):
-                if i == args.group_size:
-                    break
-
-                img_m = subject["img"][tio.DATA].float()
-                if args.seg_available:
-                    seg_m = subject["seg"][tio.DATA].float()
-                    # One-hot encode segmentations
-                    seg_m = utils.one_hot_eval(seg_m)
-
-                # Randomly affine augment all images
-                if aug_params is not None:
-                    if args.seg_available:
-                        img_m, seg_m = random_affine_augment(
-                            img_m, max_random_params=aug_params, seg=seg_m
-                        )
-                    else:
-                        img_m = random_affine_augment(
-                            img_m, max_random_params=aug_params
-                        )
-
-                # Save subject to group directory
+            for group_size in list_of_group_sizes:
                 if not args.debug_mode:
-                    img_m_path = os.path.join(groupimg_m_dir, f"img_m_{i:03}.npy")
-                    np.save(img_m_path, img_m)
-                    print("saving:", img_m_path)
+                    # Create directory to save images, segs, points, metrics
+                    dataset_name_str = "-".join(dataset_name.split("/")[-2:])
+                    group_dir = (
+                        args.model_eval_dir
+                        / save_dir_prefix
+                        / f"{dataset_name_str}_{aug}_{group_size}"
+                    )
+                    groupimg_m_dir = os.path.join(group_dir, "img_m")
+                    groupseg_m_dir = os.path.join(group_dir, "seg_m")
+                    if not os.path.exists(groupimg_m_dir):
+                        os.makedirs(groupimg_m_dir)
+                    if not os.path.exists(groupseg_m_dir):
+                        os.makedirs(groupseg_m_dir)
+
+                aug_params = utils.parse_test_aug(aug)
+                print(
+                    f"Running groupwise test: dataset {dataset_name}, aug {aug}, group size {group_size}"
+                )
+                for i, subject in enumerate(group_loader[dataset_name]):
+                    if i == group_size:
+                        break
+
+                    img_m = subject["img"][tio.DATA].float()
                     if args.seg_available:
-                        seg_m_path = os.path.join(groupseg_m_dir, f"seg_m_{i:03}.npy")
-                        np.save(seg_m_path, seg_m)
-                        print("saving:", seg_m_path)
+                        seg_m = subject["seg"][tio.DATA].float()
+                        # One-hot encode segmentations
+                        seg_m = utils.one_hot_eval(seg_m)
+
+                    # Randomly affine augment all images
+                    if aug_params is not None:
+                        if args.seg_available:
+                            img_m, seg_m = random_affine_augment(
+                                img_m, max_random_params=aug_params, seg=seg_m
+                            )
+                        else:
+                            img_m = random_affine_augment(
+                                img_m, max_random_params=aug_params
+                            )
+
+                    # Save subject to group directory
+                    if not args.debug_mode:
+                        img_m_path = os.path.join(groupimg_m_dir, f"img_m_{i:03}.npy")
+                        np.save(img_m_path, img_m)
+                        print("saving:", img_m_path)
+                        if args.seg_available:
+                            seg_m_path = os.path.join(
+                                groupseg_m_dir, f"seg_m_{i:03}.npy"
+                            )
+                            np.save(seg_m_path, seg_m)
+                            print("saving:", seg_m_path)
 
                 # Run groupwise registration on group_dir
                 registration_results = _run_group_eval_dir(
@@ -1445,17 +1422,17 @@ def run_group_eval(
                     for m in list_of_eval_metrics:
                         if m == "mse":
                             test_metrics[
-                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
                             ].append(res_dict["metrics"]["mse"])
                         elif m == "softdice":
                             assert args.seg_available
                             test_metrics[
-                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
                             ].append(res_dict["metrics"]["softdice"])
                         elif m == "harddice":
                             assert args.seg_available
                             test_metrics[
-                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
                             ].append(res_dict["metrics"]["harddice"])
                         # elif m == "harddiceroi":
                         #     # Don't save roi into metric dict, since it's a list
@@ -1466,17 +1443,17 @@ def run_group_eval(
                         elif m == "hausd":
                             assert args.seg_available and args.dim == 3
                             test_metrics[
-                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
                             ].append(res_dict["metrics"]["hausd"])
                         elif m == "jdstd":
                             assert args.dim == 3
                             test_metrics[
-                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
                             ].append(res_dict["metrics"]["jdstd"])
                         elif m == "jdlessthan0":
                             assert args.dim == 3
                             test_metrics[
-                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
                             ].append(res_dict["metrics"]["jdlessthan0"])
                         else:
                             raise ValueError('Invalid metric "{}"'.format(m))
@@ -1521,7 +1498,9 @@ def _run_group_eval_dir(
 
             # Duplicate the first file until there are 4 files in total
             while len(files) < 4:
-                new_file_path = os.path.join(directory, f"copy_{len(files)}_{files[0]}")
+                new_file_path = os.path.join(
+                    directory, f"{files[0][:3]}_m_{len(files):03}.npy"
+                )
                 shutil.copy(first_file_path, new_file_path)
                 files.append(new_file_path)  # Update the files list
 
@@ -1540,6 +1519,14 @@ def _run_group_eval_dir(
         os.makedirs(groupseg_a_dir)
     if not os.path.exists(registration_results_dir):
         os.makedirs(registration_results_dir)
+    # If number of files in group directory is less than 4, duplicate the first image to make 4.
+    # This is because some groupwise registration packages require
+    # at least 4 images.
+    if not args.debug_mode:
+        _duplicate_files_to_N(groupimg_m_dir, N=4)
+        if args.seg_available:
+            _duplicate_files_to_N(groupseg_m_dir, N=4)
+
     groupimg_m_paths = sorted(
         [os.path.join(groupimg_m_dir, f) for f in os.listdir(groupimg_m_dir)]
     )
@@ -1549,14 +1536,6 @@ def _run_group_eval_dir(
     groupimg_a_paths = []
     groupseg_a_paths = []
 
-    # If number of files in group directory is less than 4, duplicate the first image to make 4.
-    # This is because some groupwise registration packages require
-    # at least 4 images.
-    if not args.debug_mode:
-        _duplicate_files_to_N(groupimg_m_dir, N=4)
-        if args.seg_available:
-            _duplicate_files_to_N(groupseg_m_dir, N=4)
-
     with torch.set_grad_enabled(False):
         registration_results = registration_model.groupwise_register(
             groupimg_m_dir,
@@ -1565,6 +1544,8 @@ def _run_group_eval_dir(
             save_results_to_disk=True,
             save_dir=registration_results_dir,
             plot=args.visualize,
+            num_iters=gigamed_hps.NUM_ITERS_KP,
+            log_to_console=True,
         )
         # registration_results = {"bspline": {}}
 
@@ -1679,7 +1660,6 @@ def _run_group_eval_dir(
         )
 
         metrics = metrics | seg_metrics | grid_metrics
-        print(metrics)
         res_dict["metrics"] = metrics
 
         # Save registration results and metrics
@@ -1711,7 +1691,7 @@ def _run_group_eval_dir(
             print("\nDebugging info:")
             print(f"-> Alignment: {align_type_str} ")
             # print(f"-> Max random params: {aug_params} ")
-            print(f"-> Group size: {args.group_size}")
+            print(f"-> Group size: {len(groupimg_m_paths)}")
             print(f"-> Float16: {args.use_amp}")
 
         print("\nMetrics:")
@@ -1792,10 +1772,12 @@ def main():
                 list_of_eval_aligns = gigamed_hps.EVAL_KP_ALIGNS
                 list_of_eval_group_aligns = gigamed_hps.EVAL_GROUP_KP_ALIGNS
                 list_of_eval_long_aligns = gigamed_hps.EVAL_LONG_KP_ALIGNS
+                list_of_eval_group_sizes = gigamed_hps.EVAL_GROUP_KP_SIZES
             elif args.registration_model == "itkelastix":
                 list_of_eval_aligns = gigamed_hps.EVAL_ITKELASTIX_ALIGNS
                 list_of_eval_group_aligns = gigamed_hps.EVAL_GROUP_ITKELASTIX_ALIGNS
                 list_of_eval_long_aligns = gigamed_hps.EVAL_LONG_ITKELASTIX_ALIGNS
+                list_of_eval_group_sizes = gigamed_hps.EVAL_GROUP_ITKELASTIX_SIZES
 
             list_of_eval_unimodal_names = gigamed_hps.EVAL_UNI_NAMES
             list_of_eval_multimodal_names = gigamed_hps.EVAL_MULTI_NAMES
@@ -1803,69 +1785,69 @@ def main():
             list_of_eval_group_names = gigamed_hps.EVAL_GROUP_NAMES
             list_of_eval_long_names = gigamed_hps.EVAL_LONG_NAMES
 
-        # for dist in ["id", "ood"]:
-        for dist in ["ood"]:
+        print("\n\nStarting evaluation...")
+        for dist in ["ss", "nss"]:
             print("Perform eval on", dist)
 
-            # # Pairwise Unimodal
-            # experiment_name = f"{dist}_unimodal"
-            # json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            # if not os.path.exists(json_path):
-            #     eval_metrics = run_eval(
-            #         loaders["eval"][experiment_name],
-            #         registration_model,
-            #         list_of_eval_metrics,
-            #         list_of_eval_unimodal_names[dist],
-            #         list_of_eval_augs,
-            #         list_of_eval_aligns,
-            #         args,
-            #         save_dir_prefix=experiment_name,
-            #     )
-            #     if not args.debug_mode:
-            #         save_dict_as_json(eval_metrics, json_path)
-            # else:
-            #     print("Skipping eval on", experiment_name)
+            # Pairwise Unimodal
+            experiment_name = f"{dist}_unimodal"
+            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
+            if not os.path.exists(json_path):
+                eval_metrics = run_eval(
+                    loaders["eval"][experiment_name],
+                    registration_model,
+                    list_of_eval_metrics,
+                    list_of_eval_unimodal_names[dist],
+                    list_of_eval_augs,
+                    list_of_eval_aligns,
+                    args,
+                    save_dir_prefix=experiment_name,
+                )
+                if not args.debug_mode:
+                    save_dict_as_json(eval_metrics, json_path)
+            else:
+                print("Skipping eval on", experiment_name)
 
-            # # Pairwise Multimodal
-            # experiment_name = f"{dist}_multimodal"
-            # json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            # if not os.path.exists(json_path):
-            #     eval_metrics = run_eval(
-            #         loaders["eval"][experiment_name],
-            #         registration_model,
-            #         list_of_eval_metrics,
-            #         list_of_eval_multimodal_names[dist],
-            #         list_of_eval_augs,
-            #         list_of_eval_aligns,
-            #         args,
-            #         save_dir_prefix=experiment_name,
-            #     )
-            #     if not args.debug_mode:
-            #         save_dict_as_json(eval_metrics, json_path)
-            # else:
-            #     print("Skipping eval on", experiment_name)
+            # Pairwise Multimodal
+            experiment_name = f"{dist}_multimodal"
+            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
+            if not os.path.exists(json_path):
+                eval_metrics = run_eval(
+                    loaders["eval"][experiment_name],
+                    registration_model,
+                    list_of_eval_metrics,
+                    list_of_eval_multimodal_names[dist],
+                    list_of_eval_augs,
+                    list_of_eval_aligns,
+                    args,
+                    save_dir_prefix=experiment_name,
+                )
+                if not args.debug_mode:
+                    save_dict_as_json(eval_metrics, json_path)
+            else:
+                print("Skipping eval on", experiment_name)
 
-            # # Lesions
-            # experiment_name = f"{dist}_lesion"
-            # json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            # if not os.path.exists(json_path) and list_of_eval_lesion_names is not None:
-            #     lesion_metrics = run_eval(
-            #         loaders["eval"][experiment_name],
-            #         registration_model,
-            #         list_of_eval_metrics,
-            #         list_of_eval_lesion_names[dist],
-            #         list_of_eval_augs,
-            #         list_of_eval_aligns,
-            #         args,
-            #         save_dir_prefix=experiment_name,
-            #     )
-            #     if not args.debug_mode:
-            #         save_dict_as_json(
-            #             lesion_metrics,
-            #             json_path,
-            #         )
-            # else:
-            #     print("Skipping eval on", experiment_name)
+            # Lesions
+            experiment_name = f"{dist}_lesion"
+            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
+            if not os.path.exists(json_path) and list_of_eval_lesion_names is not None:
+                lesion_metrics = run_eval(
+                    loaders["eval"][experiment_name],
+                    registration_model,
+                    list_of_eval_metrics,
+                    list_of_eval_lesion_names[dist],
+                    list_of_eval_augs,
+                    list_of_eval_aligns,
+                    args,
+                    save_dir_prefix=experiment_name,
+                )
+                if not args.debug_mode:
+                    save_dict_as_json(
+                        lesion_metrics,
+                        json_path,
+                    )
+            else:
+                print("Skipping eval on", experiment_name)
 
             # Longitudinal
             experiment_name = f"{dist}_long"
@@ -1886,7 +1868,9 @@ def main():
             else:
                 print("Skipping eval on", experiment_name)
 
-            # Groupwise
+        # Groupwise: do this last since it takes the longest
+        for dist in ["ss", "nss"]:
+            print("Perform groupwise eval on", dist)
             experiment_name = f"{dist}_group"
             json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
             if not os.path.exists(json_path) and list_of_eval_group_names is not None:
@@ -1897,6 +1881,7 @@ def main():
                     list_of_eval_group_names[dist],
                     list_of_eval_augs,
                     list_of_eval_group_aligns,
+                    list_of_eval_group_sizes,
                     args,
                     save_dir_prefix=experiment_name,
                 )
@@ -1904,6 +1889,7 @@ def main():
                     save_dict_as_json(group_metrics, json_path)
             else:
                 print("Skipping eval on", experiment_name)
+        print("\nEvaluation done!")
 
     elif args.run_mode == "pretrain":
         assert args.registration_model == "keymorph"

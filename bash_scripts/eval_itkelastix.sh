@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --time=120:00:00 # set this time according to your need
-#SBATCH --mem=64GB # how much RAM will your notebook consume? 
+#SBATCH --mem=512GB # how much RAM will your notebook consume? 
 #SBATCH --exclude=ai-gpu06 # if you need to use a GPU
 #SBATCH -p sablab-cpu # specify partition
 #SBATCH -o ./job_out/%j-eval.out

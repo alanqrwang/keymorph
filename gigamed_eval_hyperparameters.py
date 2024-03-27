@@ -43,7 +43,7 @@ EVAL_METRICS = [
 ]
 
 EVAL_UNI_NAMES = {
-    "id": [
+    "ss": [
         (
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
@@ -57,19 +57,23 @@ EVAL_UNI_NAMES = {
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5085_IXIPD",
         ),
     ],
-    "ood": [
+    "nss": [
         (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7000_openneuro-ds004791",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7000_openneuro-ds004791",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5083_IXIT1",
         ),
         (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7001_openneuro-ds004848",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset7001_openneuro-ds004848",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5084_IXIT2",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5084_IXIT2",
+        ),
+        (
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5085_IXIPD",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5085_IXIPD",
         ),
     ],
 }
 EVAL_MULTI_NAMES = {
-    "id": [
+    "ss": [
         (
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5084_IXIT2",
@@ -83,52 +87,44 @@ EVAL_MULTI_NAMES = {
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5085_IXIPD",
         ),
     ],
-    "ood": [
+    "nss": [
         (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5083_IXIT1",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5084_IXIT2",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5084_IXIT2",
         ),
         (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5083_IXIT1",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5085_IXIPD",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5083_IXIT1",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5085_IXIPD",
         ),
         (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5084_IXIT2",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5085_IXIPD",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5084_IXIT2",
+            "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5085_IXIPD",
         ),
     ],
 }
 EVAL_LESION_NAMES = {
-    "id": [
+    "ss": [
         (
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5000_BraTS-GLI_2023",
             "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5000_BraTS-GLI_2023",
         ),
     ],
-    "ood": [
-        (
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5000_BraTS-GLI_2023",
-            "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base/Dataset5000_BraTS-GLI_2023",
-        ),
-    ],
+    "nss": [],
 }
 EVAL_GROUP_NAMES = {
-    "id": [
+    "ss": [
         "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset5083_IXIT1",
     ],
-    "ood": [
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7000_openneuro-ds004791",
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_raw_data_base_preprocessed/Dataset7001_openneuro-ds004848",
+    "nss": [
+        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset5083_IXIT1",
     ],
 }
 EVAL_LONG_NAMES = {
-    "id": [
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6000_PPMI-T1-3T-PreProc",
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6001_ADNI-group-T1-3T-PreProc",
-        "/midtier/sablab/scratch/alw4013/data/nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset6002_OASIS3",
+    "ss": [
+        "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_HD-BET_preprocessed/Dataset1009_OASIS3deepsurfercorrected",
     ],
-    "ood": [
-        "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_raw_data_base/Dataset1006_OASIS3",
+    "nss": [
+        "/midtier/sablab/scratch/alw4013/data/brain_nolesions_nnUNet_1mmiso_256x256x256_MNI_preprocessed/Dataset1009_OASIS3deepsurfercorrected",
     ],
 }
 
@@ -140,6 +136,7 @@ EVAL_AUGS = [
     "rot180",
 ]
 
+# Transform types
 EVAL_KP_ALIGNS = [
     "rigid",
     "affine",
@@ -167,3 +164,10 @@ EVAL_GROUP_ITKELASTIX_ALIGNS = [
 EVAL_LONG_ITKELASTIX_ALIGNS = [
     "rigid",
 ]
+
+# Group sizes
+EVAL_GROUP_ITKELASTIX_SIZES = [4, 8, 16, 32, 64, 128]
+EVAL_GROUP_KP_SIZES = [4, 8, 16, 32, 64, 128]
+
+# Num iterations for Keymorph groupwise algorithm
+NUM_ITERS_KP = 5

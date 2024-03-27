@@ -3,7 +3,6 @@ import numpy as np
 import torch
 import time
 import os
-import nibabel as nib
 
 
 class ITKElastix:
@@ -118,7 +117,9 @@ class ITKElastix:
         inputs can be:
          - directories of images, looks for files img_*.npy
          - list of image paths
-         - stack of images (N, 1, D, H, W)"""
+         - Torch Tensor stack of images (N, 1, D, H, W)"""
+        log_to_console = kwargs["log_to_console"]
+
         # Load images and segmentations
         if isinstance(inputs, str):
             save_dir = kwargs["save_dir"]
@@ -170,7 +171,7 @@ class ITKElastix:
                     itk_group_imgs,
                     itk_group_imgs,
                     parameter_object=parameter_object,
-                    log_to_console=False,
+                    log_to_console=log_to_console,
                 )
             )
 
@@ -229,7 +230,6 @@ class ITKElastix:
             register_time = time.time() - start_time
 
             res = {
-                "align_type": ttype,
                 "time": register_time,
             }
             save_results_to_disk = kwargs["save_results_to_disk"]
