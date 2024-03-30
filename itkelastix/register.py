@@ -17,6 +17,7 @@ class ITKElastix:
 
     def pairwise_register(self, fixed, moving, transform_type="rigid", **kwargs):
         original_device = fixed.device
+        save_dir = kwargs["save_dir"]
         assert len(fixed) == 1, "Fixed image should be a single image"
         assert len(moving) == 1, "Moving image should be a single image"
 
@@ -62,6 +63,7 @@ class ITKElastix:
                 moving_image,
                 parameter_object=parameter_object,
                 log_to_console=False,
+                output_directory=save_dir,
             )
 
             # Get deformation field
@@ -172,6 +174,7 @@ class ITKElastix:
                     itk_group_imgs,
                     parameter_object=parameter_object,
                     log_to_console=log_to_console,
+                    output_directory=save_dir,
                 )
             )
 
