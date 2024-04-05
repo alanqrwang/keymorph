@@ -36,7 +36,9 @@ SYNTHSEG_LABEL_NAMES = {
 
 EVAL_METRICS = [
     "mse",
+    "softdice",
     "harddice",
+    "harddiceroi",
     "hausd",
     "jdstd",
     "jdlessthan0",
@@ -136,38 +138,66 @@ EVAL_AUGS = [
     "rot180",
 ]
 
-# Transform types
-EVAL_KP_ALIGNS = [
-    "rigid",
-    "affine",
-    "tps_10",
-    "tps_1",
-    "tps_0.1",
-    "tps_0.01",
-    "tps_0",
-]
-EVAL_GROUP_KP_ALIGNS = [
-    "tps_0",
-]
-EVAL_LONG_KP_ALIGNS = [
-    "rigid",
-]
-
-EVAL_ITKELASTIX_ALIGNS = [
-    "rigid",
-    "affine",
-    "bspline",
-]
-EVAL_GROUP_ITKELASTIX_ALIGNS = [
-    "bspline",
-]
-EVAL_LONG_ITKELASTIX_ALIGNS = [
-    "rigid",
-]
-
-# Group sizes
-EVAL_GROUP_ITKELASTIX_SIZES = [4, 8, 16, 32, 64, 128]
-EVAL_GROUP_KP_SIZES = [4, 8, 16, 32, 64, 128]
-
-# Num iterations for Keymorph groupwise algorithm
-NUM_ITERS_KP = 5
+MODEL_HPS = {
+    "keymorph": {
+        "aligns": [
+            "rigid",
+            "affine",
+            "tps_10",
+            "tps_1",
+            "tps_0.1",
+            "tps_0.01",
+            "tps_0",
+        ],
+        "group_aligns": [
+            "tps_0",
+        ],
+        "long_aligns": [
+            "rigid",
+        ],
+        "perform_groupwise_experiments": True,
+        "group_sizes": [4, 8, 16, 32, 64, 128],
+        "num_iters_groupwise": 5,
+    },
+    "itkelastix": {
+        "aligns": [
+            "rigid",
+            "affine",
+            "bspline",
+        ],
+        "group_aligns": [
+            "bspline",
+        ],
+        "long_aligns": [
+            "rigid",
+        ],
+        "perform_groupwise_experiments": True,
+        "group_sizes": [4, 8, 16, 32, 64, 128],
+    },
+    "synthmorph": {
+        "aligns": [
+            "dense",
+        ],
+        "group_aligns": [
+            "dense",
+        ],
+        "long_aligns": [
+            "dense",
+        ],
+        "perform_groupwise_experiments": False,
+    },
+    "ants": {
+        "aligns": [
+            "rigid",
+            "affine",
+            "syn",
+        ],
+        "group_aligns": [
+            "syn",
+        ],
+        "long_aligns": [
+            "rigid",
+        ],
+        "perform_groupwise_experiments": False,
+    },
+}
