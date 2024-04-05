@@ -4,6 +4,8 @@ import torch
 import time
 import os
 
+from keymorph.utils import utils
+
 
 class ITKElastix:
     def __init__(self):
@@ -18,6 +20,7 @@ class ITKElastix:
     def pairwise_register(self, fixed, moving, transform_type="rigid", **kwargs):
         original_device = fixed.device
         save_dir = kwargs["save_dir"]
+        num_resolutions = kwargs["num_resolutions_for_itkelastix"]
         assert len(fixed) == 1, "Fixed image should be a single image"
         assert len(moving) == 1, "Moving image should be a single image"
 
@@ -29,7 +32,6 @@ class ITKElastix:
         # Dictionary of results
         result_dict = {}
 
-        num_resolutions = 1
         for ttype in transform_type:
             print(ttype)
             start_time = time.time()
@@ -58,12 +60,13 @@ class ITKElastix:
                 parameter_object.AddParameterMap(default_bspline_parameter_map)
 
             # Call registration function
+            print("SAVE DIR", save_dir)
             _, result_transform_parameters = itk.elastix_registration_method(
                 fixed_image,
                 moving_image,
                 parameter_object=parameter_object,
                 log_to_console=False,
-                output_directory=save_dir,
+                # output_directory=save_dir,
             )
 
             # Get deformation field
@@ -72,41 +75,15 @@ class ITKElastix:
             )
             displacement_field = torch.tensor(
                 itk.array_view_from_image(displacement_field)
-            ).permute(3, 0, 1, 2)[None]
+            )[None]
 
             # Convert displacement to grid
-            D, H, W = moving.shape
-
-            # Step 1: Create the original grid for 3D
-            coords_x, coords_y, coords_z = torch.meshgrid(
-                torch.linspace(-1, 1, W),
-                torch.linspace(-1, 1, H),
-                torch.linspace(-1, 1, D),
-                indexing="ij",
-            )
-            coords = torch.stack(
-                [coords_z, coords_y, coords_x], dim=0
-            )  # Shape: (3, D, H, W)
-            coords = coords.unsqueeze(0)  # Shape: (N, 3, D, H, W), N=1
-
-            # Step 2: Normalize the displacement field
-            # Convert physical displacement values to the [-1, 1] range
-            # Assuming the displacement field is given in voxel units (physical coordinates)
-            for i, dim_size in enumerate(
-                [W, H, D]
-            ):  # Note the order matches x, y, z as per the displacement_field
-                # Normalize such that the displacement of 1 full dimension length corresponds to a move from -1 to 1
-                displacement_field[:, i, ...] = (
-                    2 * displacement_field[:, i, ...] / (dim_size - 1)
-                )
-
-            # Step 3: Add the displacement field to the original grid to get the transformed coordinates
-            grid = coords + displacement_field
+            grid = utils.displacement2flow(displacement_field)
 
             register_time = time.time() - start_time
             res = {
                 "align_type": ttype,
-                "grid": grid.permute(0, 2, 3, 4, 1).to(original_device),
+                "grid": grid.to(original_device),
                 "time": register_time,
             }
             result_dict[ttype] = res
@@ -121,6 +98,7 @@ class ITKElastix:
          - list of image paths
          - Torch Tensor stack of images (N, 1, D, H, W)"""
         log_to_console = kwargs["log_to_console"]
+        num_resolutions = kwargs["num_resolutions_for_itkelastix"]
 
         # Load images and segmentations
         if isinstance(inputs, str):
@@ -149,7 +127,6 @@ class ITKElastix:
         # List of results
         result_dict = {}
 
-        num_resolutions = 1
         for ttype in transform_type:
             start_time = time.time()
             # Create Groupwise Parameter Object

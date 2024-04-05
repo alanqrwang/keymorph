@@ -8,7 +8,8 @@ import wandb
 import os
 import argparse
 import json
-import itk
+
+# import itk
 
 
 def align_img(grid, x, mode="bilinear"):
@@ -21,15 +22,43 @@ def align_img(grid, x, mode="bilinear"):
     )
 
 
-def align_img_elastix(transform_parameters, x):
-    """x: (dim1, dim2, dim3) or (dim1, dim2)
-    Returns: (dim1, dim2, dim3) or (dim1, dim2)"""
-    x = x.cpu().detach().numpy().astype(np.float32)
-    x = itk.image_view_from_array(x)
-    transform_parameters.SetParameter("FinalBSplineInterpolationOrder", "0")
-    result_image = itk.transformix_filter(x, transform_parameters)
-    res = torch.tensor(itk.array_view_from_image(result_image))
-    return res
+# def align_img_elastix(transform_parameters, x):
+#     """x: (dim1, dim2, dim3) or (dim1, dim2)
+#     Returns: (dim1, dim2, dim3) or (dim1, dim2)"""
+#     x = x.cpu().detach().numpy().astype(np.float32)
+#     x = itk.image_view_from_array(x)
+#     transform_parameters.SetParameter("FinalBSplineInterpolationOrder", "0")
+#     result_image = itk.transformix_filter(x, transform_parameters)
+#     res = torch.tensor(itk.array_view_from_image(result_image))
+#     return res
+
+
+def displacement2flow(displacement_field):
+    """displacement_field: (N, D, H, W, 3).
+    Assumes original space is physical space (voxel units), 256x256x256."""
+    W, H, D = displacement_field.shape[1:-1]
+
+    # Step 1: Create the original grid for 3D
+    coords_x, coords_y, coords_z = torch.meshgrid(
+        torch.linspace(-1, 1, W),
+        torch.linspace(-1, 1, H),
+        torch.linspace(-1, 1, D),
+        indexing="ij",
+    )
+    coords = torch.stack([coords_z, coords_y, coords_x], dim=-1)  # Shape: (D, H, W, 3)
+    coords = coords.unsqueeze(0)  # Shape: (N, 3, D, H, W), N=1
+
+    # Step 2: Normalize the displacement field
+    # Convert physical displacement values to the [-1, 1] range
+    # Assuming the displacement field is given in voxel units (physical coordinates)
+    for i, dim_size in enumerate(
+        [W, H, D]
+    ):  # Note the order matches x, y, z as per the displacement_field
+        # Normalize such that the displacement of 1 full dimension length corresponds to a move from -1 to 1
+        displacement_field[..., i] = 2 * displacement_field[..., i] / (dim_size - 1)
+
+    # Step 3: Add the displacement field to the original grid to get the transformed coordinates
+    return coords + displacement_field
 
 
 def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
