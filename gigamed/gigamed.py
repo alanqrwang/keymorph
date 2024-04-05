@@ -234,9 +234,10 @@ class GigaMed:
             id=True,
         )
         # skullstripped_normal_dssm_datasets = ... # This is not used because DSSM is subsumed by skullstrip_paired_datasets
-        sssm_datasets = (
-            skullstripped_lesion_sssm_datasets | skullstripped_normal_sssm_datasets
-        )
+        sssm_datasets = {
+            **skullstripped_lesion_sssm_datasets,
+            **skullstripped_normal_sssm_datasets,
+        }
         dssm_datasets = skullstripped_lesion_dssm_datasets
 
         # Dice loss families
