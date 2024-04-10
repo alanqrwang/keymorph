@@ -12,7 +12,7 @@
 
 # if using conda
 module load miniconda3/22.11.1-ctkwnpe
-source activate synthseg_38
+source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate synthseg_38
 echo $PATH
 # if using pip
 # source ~/myvev/bin/activate

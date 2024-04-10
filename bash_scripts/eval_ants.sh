@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#SBATCH --job-name=eval_itkelastix # give your job a name
+#SBATCH --job-name=eval_ants # give your job a name
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --time=120:00:00 # set this time according to your need
@@ -17,9 +17,9 @@ source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 #!/bin/bash
 
 NUM_KEY=0
-JOB_NAME="itkelastix-numres4-withharddiceroi"
+JOB_NAME="ants-syn-only"
 python run.py \
-    --registration_model itkelastix \
+    --registration_model ants \
     --run_mode eval \
     --job_name ${JOB_NAME} \
     --num_keypoints ${NUM_KEY} \

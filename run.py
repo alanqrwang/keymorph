@@ -14,7 +14,6 @@ from copy import deepcopy
 import matplotlib.pyplot as plt
 import shutil
 
-from itkelastix.register import ITKElastix
 from keymorph import loss_ops
 from keymorph.net import ConvNet, UNet, RXFM_Net, TruncatedUNet
 from keymorph.model import KeyMorph
@@ -225,6 +224,9 @@ def parse_args():
         default=None,
         help="Early stop number of test subjects for fast eval",
     )
+    parser.add_argument(
+        "--num_resolutions_for_itkelastix", type=int, default=4, help="Num resolutions"
+    )
 
     # Weights & Biases
     parser.add_argument("--use_wandb", action="store_true", help="Use Wandb")
@@ -256,7 +258,7 @@ def create_dirs(args):
         dataset_str = args.test_dataset
     elif args.run_mode == "pretrain":
         prefix = "__pretrain__"
-        dataset_str = args.test_dataset
+        dataset_str = args.train_dataset
     else:
         prefix = "__training__"
         dataset_str = args.train_dataset
@@ -342,8 +344,37 @@ def get_data(args):
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
         ref_subject = gigamed_dataset.get_reference_subject()
     elif args.train_dataset == "synthbrain":
-        synth_dataset = synthbrain.SynthBrain(args.batch_size, args.num_workers)
-        train_loader = synth_dataset.get_train_loader()
+        synthbrain_dataset = gigamed.GigaMed(
+            args.batch_size,
+            args.num_workers,
+            include_seg=False,
+            synthetic_brains_only=True,
+        )
+        synthbrain_dataset_with_seg = gigamed.GigaMed(
+            args.batch_size,
+            args.num_workers,
+            include_seg=True,
+            synthetic_brains_only=True,
+        )
+        train_loader = synthbrain_dataset_with_seg.get_train_loader()
+        pretrain_loader = synthbrain_dataset.get_pretrain_loader()
+        ref_subject = synthbrain_dataset.get_reference_subject()
+    elif args.train_dataset == "synthbraingenerated":
+        synthbrain_dataset = synthbrain.SynthBrain(
+            args.batch_size,
+            args.num_workers,
+        )
+        train_loader = synthbrain_dataset.get_train_loader()
+        pretrain_loader = synthbrain_dataset.get_pretrain_loader()
+
+        # Use Gigamed's first subject as reference
+        synthbrain_dataset = gigamed.GigaMed(
+            args.batch_size,
+            args.num_workers,
+            include_seg=False,
+            synthetic_brains_only=True,
+        )
+        ref_subject = synthbrain_dataset.get_reference_subject()
     elif args.train_dataset == "gigamed+synthbrain":
         gigamed_synthbrain_dataset = gigamed.GigaMed(
             args.batch_size,
@@ -481,7 +512,23 @@ def get_model(args):
         registration_model.to(args.device)
         utils.summary(registration_model)
     elif args.registration_model == "itkelastix":
+        from keymorph.baselines.itkelastix import ITKElastix
+
         registration_model = ITKElastix()
+    elif args.registration_model == "synthmorph":
+
+        from keymorph.baselines.voxelmorph import VoxelMorph
+
+        registration_model = VoxelMorph(perform_preaffine_register=True)
+    elif args.registration_model == "synthmorph-no-preaffine":
+
+        from keymorph.baselines.voxelmorph import VoxelMorph
+
+        registration_model = VoxelMorph(perform_preaffine_register=False)
+    elif args.registration_model == "ants":
+        from keymorph.baselines.ants import ANTs
+
+        registration_model = ANTs()
     else:
         raise ValueError(
             'Invalid registration model "{}"'.format(args.registration_model)
@@ -846,6 +893,18 @@ def run_eval(
                     print(
                         f"Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}"
                     )
+
+                    if args.save_eval_to_disk and not args.debug_mode:
+                        # Create directory to save images, segs, points, metrics
+                        mod1_str = "-".join(mod1.split("/")[-2:])
+                        mod2_str = "-".join(mod2.split("/")[-2:])
+                        save_dir = (
+                            args.model_eval_dir
+                            / save_dir_prefix
+                            / f"{i}_{j}_{mod1_str}_{mod2_str}"
+                        )
+                        if not os.path.exists(save_dir):
+                            os.makedirs(save_dir)
                     img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
                     if args.seg_available:
                         seg_f, seg_m = (
@@ -873,11 +932,19 @@ def run_eval(
                         registration_results = registration_model(
                             img_f,
                             img_m,
+                            seg_f=seg_f if args.seg_available else None,
+                            seg_m=seg_m if args.seg_available else None,
                             transform_type=list_of_eval_aligns,
                             return_aligned_points=True,
+                            save_dir=save_dir,
+                            num_resolutions_for_itkelastix=args.num_resolutions_for_itkelastix,
                         )
 
                     for align_type_str, res_dict in registration_results.items():
+                        if "img_m" in res_dict:
+                            img_m = res_dict["img_m"]
+                        if "img_f" in res_dict:
+                            img_f = res_dict["img_f"]
                         if "img_a" in res_dict:
                             img_a = res_dict["img_a"]
                         elif "grid" in res_dict:
@@ -885,7 +952,18 @@ def run_eval(
                             img_a = align_img(grid, img_m)
                         else:
                             raise ValueError("No way to get aligned image")
+                        if "grid" in res_dict:
+                            grid = res_dict["grid"]
+                        else:
+                            assert (
+                                "jdstd" in res_dict and "jdlessthan0" in res_dict
+                            )  # If no grid, then must have jdstd and jdlessthan0
+                            grid = None
                         if args.seg_available:
+                            if "seg_m" in res_dict:
+                                seg_m = res_dict["seg_m"]
+                            if "seg_f" in res_dict:
+                                seg_f = res_dict["seg_f"]
                             if "seg_a" in res_dict:
                                 seg_a = res_dict["seg_a"]
                             elif "grid" in res_dict:
@@ -1013,11 +1091,14 @@ def run_eval(
                         metrics = {}
                         if args.seg_available:
                             # Always compute hard dice once ahead of time
-                            dice = loss_ops.DiceLoss(hard=True, return_regions=True)(
+                            dice_total = loss_ops.DiceLoss(hard=True)(
                                 seg_a, seg_f, ign_first_ch=True
                             )
-                            dice_total = 1 - dice[0].item()
-                            dice_roi = (1 - dice[1].cpu().detach().numpy()).tolist()
+                            dice_roi = loss_ops.DiceLoss(
+                                hard=True, return_regions=True
+                            )(seg_a, seg_f, ign_first_ch=True)
+                            dice_total = 1 - dice_total.item()
+                            dice_roi = (1 - dice_roi.cpu().detach().numpy()).tolist()
                         for m in list_of_eval_metrics:
                             if m == "mse":
                                 metrics["mse"] = loss_ops.MSELoss()(img_f, img_a).item()
@@ -1040,11 +1121,11 @@ def run_eval(
                                     f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
                                 ].append(metrics["harddice"])
                             elif m == "harddiceroi":
-                                # Don't save roi into metric dict, since it's a list
                                 assert args.seg_available
+                                metrics["harddiceroi"] = dice_roi
                                 test_metrics[
                                     f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
-                                ].append(dice_roi)
+                                ].append(metrics["harddiceroi"])
                             elif m == "hausd":
                                 assert args.seg_available and args.dim == 3
                                 metrics["hausd"] = loss_ops.hausdorff_distance(
@@ -1055,17 +1136,23 @@ def run_eval(
                                 ].append(metrics["hausd"])
                             elif m == "jdstd":
                                 assert args.dim == 3
-                                grid_permute = grid.permute(0, 4, 1, 2, 3)
-                                metrics["jdstd"] = loss_ops.jdstd(grid_permute)
+                                if grid is None:
+                                    metrics["jdstd"] = res_dict["jdstd"]
+                                else:
+                                    grid_permute = grid.permute(0, 4, 1, 2, 3)
+                                    metrics["jdstd"] = loss_ops.jdstd(grid_permute)
                                 test_metrics[
                                     f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
                                 ].append(metrics["jdstd"])
                             elif m == "jdlessthan0":
                                 assert args.dim == 3
-                                grid_permute = grid.permute(0, 4, 1, 2, 3)
-                                metrics["jdlessthan0"] = loss_ops.jdlessthan0(
-                                    grid_permute, as_percentage=True
-                                )
+                                if grid is None:
+                                    metrics["jdlessthan0"] = res_dict["jdlessthan0"]
+                                else:
+                                    grid_permute = grid.permute(0, 4, 1, 2, 3)
+                                    metrics["jdlessthan0"] = loss_ops.jdstd(
+                                        grid_permute
+                                    )
                                 test_metrics[
                                     f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"
                                 ].append(metrics["jdlessthan0"])
@@ -1074,16 +1161,6 @@ def run_eval(
 
                         if args.save_eval_to_disk and not args.debug_mode:
                             assert args.batch_size == 1  # TODO: fix this
-                            # Create directory to save images, segs, points, metrics
-                            mod1_str = "-".join(mod1.split("/")[-2:])
-                            mod2_str = "-".join(mod2.split("/")[-2:])
-                            save_dir = (
-                                args.model_eval_dir
-                                / save_dir_prefix
-                                / f"{i}_{j}_{mod1_str}_{mod2_str}"
-                            )
-                            if not os.path.exists(save_dir):
-                                os.makedirs(save_dir)
 
                             # Save metrics
                             metrics_path = save_dir / f"metrics-{align_type_str}.json"
@@ -1109,8 +1186,11 @@ def run_eval(
                                 np.save(img_m_path, img_m[0].cpu().detach().numpy())
                             print("Saving:", img_a_path)
                             np.save(img_a_path, img_a[0].cpu().detach().numpy())
-                            print("Saving:", grid_path)
-                            np.save(grid_path, grid[0].cpu().detach().numpy())
+                            if grid is not None:
+                                print("Saving:", grid_path)
+                                np.save(grid_path, grid[0].cpu().detach().numpy())
+                            else:
+                                print("Grid is None, not saving!")
 
                             # Save segmentations
                             if args.seg_available:
@@ -1169,6 +1249,16 @@ def run_eval(
                                     points_a_path,
                                     points_a[0].cpu().detach().numpy(),
                                 )
+                                if points_weights is not None:
+                                    points_weights_path = (
+                                        save_dir
+                                        / f"points_weights_{i}-{mod1_str}_{j}-{mod2_str}-{aug}-{align_type_str}.npy"
+                                    )
+                                    print("Saving:", points_weights_path)
+                                    np.save(
+                                        points_weights_path,
+                                        points_weights[0].cpu().detach().numpy(),
+                                    )
 
                         if args.debug_mode:
                             print("\nDebugging info:")
@@ -1186,8 +1276,7 @@ def run_eval(
 
                         print("\nMetrics:")
                         for metric_name, metric in metrics.items():
-                            if not isinstance(metric, list):
-                                print(f"-> {metric_name}: {metric:.5f}")
+                            print(f"-> {metric_name}: {metric}")
     return test_metrics
 
 
@@ -1296,12 +1385,11 @@ def run_long_eval(
                             test_metrics[
                                 f"{m}:{dataset_name}:{aug}:{align_type_str}"
                             ].append(res_dict["metrics"]["harddice"])
-                        # elif m == "harddiceroi":
-                        #     # Don't save roi into metric dict, since it's a list
-                        #     assert args.seg_available
-                        #     test_metrics[
-                        #         f"{m}:{dataset_name}:{aug}:{align_type_str}"
-                        #     ].append(dice_roi)
+                        elif m == "harddiceroi":
+                            assert args.seg_available
+                            test_metrics[
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}"
+                            ].append(res_dict["metrics"]["harddiceroi"])
                         elif m == "hausd":
                             assert args.seg_available and args.dim == 3
                             test_metrics[
@@ -1434,12 +1522,11 @@ def run_group_eval(
                             test_metrics[
                                 f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
                             ].append(res_dict["metrics"]["harddice"])
-                        # elif m == "harddiceroi":
-                        #     # Don't save roi into metric dict, since it's a list
-                        #     assert args.seg_available
-                        #     test_metrics[
-                        #         f"{m}:{dataset_name}:{aug}:{align_type_str}"
-                        #     ].append(dice_roi)
+                        elif m == "harddiceroi":
+                            assert args.seg_available
+                            test_metrics[
+                                f"{m}:{dataset_name}:{aug}:{align_type_str}:{group_size}"
+                            ].append(res_dict["metrics"]["harddiceroi"])
                         elif m == "hausd":
                             assert args.seg_available and args.dim == 3
                             test_metrics[
@@ -1544,8 +1631,9 @@ def _run_group_eval_dir(
             save_results_to_disk=True,
             save_dir=registration_results_dir,
             plot=args.visualize,
-            num_iters=gigamed_hps.NUM_ITERS_KP,
+            num_iters=5,
             log_to_console=True,
+            num_resolutions_for_itkelastix=args.num_resolutions_for_itkelastix,
         )
         # registration_results = {"bspline": {}}
 
@@ -1632,12 +1720,9 @@ def _run_group_eval_dir(
             elif m == "harddice":
                 assert args.seg_available
                 img_metric_names.append("harddice")
-            # elif m == "harddiceroi":
-            #     # Don't save roi into metric dict, since it's a list
-            #     assert args.seg_available
-            #     test_metrics[
-            #         f"{m}:{dataset_name}:{aug}:{align_type_str}"
-            #     ].append(dice_roi)
+            elif m == "harddiceroi":
+                assert args.seg_available
+                img_metric_names.append("harddiceroi")
             elif m == "hausd":
                 assert args.seg_available and args.dim == 3
                 img_metric_names.append("hausd")
@@ -1655,6 +1740,10 @@ def _run_group_eval_dir(
         )
         if "harddice" in seg_metrics:
             seg_metrics["harddice"] = (1 - seg_metrics["harddice"]).item()
+        if "harddiceroi" in seg_metrics:
+            seg_metrics["harddiceroi"] = (1 - seg_metrics["harddiceroi"]).tolist()
+        if "softdice" in seg_metrics:
+            seg_metrics["softdice"] = (1 - seg_metrics["softdice"]).item()
         grid_metrics = loss_ops.MultipleAvgGridMetric()(
             groupgrids_paths, grid_metric_names
         )
@@ -1673,8 +1762,8 @@ def _run_group_eval_dir(
 
         # Save points
         if grouppoints_m is not None:
-            grouppoints_m_path = group_dir / f"points_m_{i}-{aug}.npy"
-            grouppoints_a_path = group_dir / f"points_a_{i}-{aug}-{align_type_str}.npy"
+            grouppoints_m_path = group_dir / f"points_m-{aug}.npy"
+            grouppoints_a_path = group_dir / f"points_a-{aug}-{align_type_str}.npy"
             if not os.path.exists(grouppoints_m_path):
                 print("Saving:", grouppoints_m_path)
                 np.save(
@@ -1696,8 +1785,7 @@ def _run_group_eval_dir(
 
         print("\nMetrics:")
         for metric_name, metric in metrics.items():
-            if not isinstance(metric, list):
-                print(f"-> {metric_name}: {metric:.5f}")
+            print(f"-> {metric_name}: {metric}")
 
     return registration_results
 
@@ -1768,22 +1856,27 @@ def main():
         elif args.test_dataset == "gigamed":
             list_of_eval_metrics = gigamed_hps.EVAL_METRICS
             list_of_eval_augs = gigamed_hps.EVAL_AUGS
-            if args.registration_model == "keymorph":
-                list_of_eval_aligns = gigamed_hps.EVAL_KP_ALIGNS
-                list_of_eval_group_aligns = gigamed_hps.EVAL_GROUP_KP_ALIGNS
-                list_of_eval_long_aligns = gigamed_hps.EVAL_LONG_KP_ALIGNS
-                list_of_eval_group_sizes = gigamed_hps.EVAL_GROUP_KP_SIZES
-            elif args.registration_model == "itkelastix":
-                list_of_eval_aligns = gigamed_hps.EVAL_ITKELASTIX_ALIGNS
-                list_of_eval_group_aligns = gigamed_hps.EVAL_GROUP_ITKELASTIX_ALIGNS
-                list_of_eval_long_aligns = gigamed_hps.EVAL_LONG_ITKELASTIX_ALIGNS
-                list_of_eval_group_sizes = gigamed_hps.EVAL_GROUP_ITKELASTIX_SIZES
-
+            list_of_eval_aligns = gigamed_hps.MODEL_HPS[args.registration_model][
+                "aligns"
+            ]
+            list_of_eval_group_aligns = gigamed_hps.MODEL_HPS[args.registration_model][
+                "group_aligns"
+            ]
+            list_of_eval_long_aligns = gigamed_hps.MODEL_HPS[args.registration_model][
+                "long_aligns"
+            ]
             list_of_eval_unimodal_names = gigamed_hps.EVAL_UNI_NAMES
             list_of_eval_multimodal_names = gigamed_hps.EVAL_MULTI_NAMES
             list_of_eval_lesion_names = gigamed_hps.EVAL_LESION_NAMES
             list_of_eval_group_names = gigamed_hps.EVAL_GROUP_NAMES
             list_of_eval_long_names = gigamed_hps.EVAL_LONG_NAMES
+            perform_groupwise_experiments = gigamed_hps.MODEL_HPS[
+                args.registration_model
+            ]["perform_groupwise_experiments"]
+            if perform_groupwise_experiments:
+                list_of_eval_group_sizes = gigamed_hps.MODEL_HPS[
+                    args.registration_model
+                ]["group_sizes"]
 
         print("\n\nStarting evaluation...")
         for dist in ["ss", "nss"]:
@@ -1806,7 +1899,7 @@ def main():
                 if not args.debug_mode:
                     save_dict_as_json(eval_metrics, json_path)
             else:
-                print("Skipping eval on", experiment_name)
+                print("-> Skipping eval on", experiment_name)
 
             # Pairwise Multimodal
             experiment_name = f"{dist}_multimodal"
@@ -1825,7 +1918,7 @@ def main():
                 if not args.debug_mode:
                     save_dict_as_json(eval_metrics, json_path)
             else:
-                print("Skipping eval on", experiment_name)
+                print("-> Skipping eval on", experiment_name)
 
             # Lesions
             experiment_name = f"{dist}_lesion"
@@ -1847,48 +1940,57 @@ def main():
                         json_path,
                     )
             else:
-                print("Skipping eval on", experiment_name)
+                print("-> Skipping eval on", experiment_name)
 
-            # Longitudinal
-            experiment_name = f"{dist}_long"
-            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            if not os.path.exists(json_path) and list_of_eval_long_names is not None:
-                long_metrics = run_long_eval(
-                    loaders["eval"][experiment_name],
-                    registration_model,
-                    list_of_eval_metrics,
-                    list_of_eval_long_names[dist],
-                    list_of_eval_augs,
-                    list_of_eval_long_aligns,
-                    args,
-                    save_dir_prefix=experiment_name,
-                )
-                if not args.debug_mode:
-                    save_dict_as_json(long_metrics, json_path)
-            else:
-                print("Skipping eval on", experiment_name)
+        if perform_groupwise_experiments:
+            for dist in ["ss", "nss"]:
+                print("Perform groupwise eval on", dist)
+                # Longitudinal
+                experiment_name = f"{dist}_long"
+                json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
+                if (
+                    not os.path.exists(json_path)
+                    and list_of_eval_long_names is not None
+                ):
+                    long_metrics = run_long_eval(
+                        loaders["eval"][experiment_name],
+                        registration_model,
+                        list_of_eval_metrics,
+                        list_of_eval_long_names[dist],
+                        list_of_eval_augs,
+                        list_of_eval_long_aligns,
+                        args,
+                        save_dir_prefix=experiment_name,
+                    )
+                    if not args.debug_mode:
+                        save_dict_as_json(long_metrics, json_path)
+                else:
+                    print("-> Skipping eval on", experiment_name)
 
-        # Groupwise: do this last since it takes the longest
-        for dist in ["ss", "nss"]:
-            print("Perform groupwise eval on", dist)
-            experiment_name = f"{dist}_group"
-            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            if not os.path.exists(json_path) and list_of_eval_group_names is not None:
-                group_metrics = run_group_eval(
-                    loaders["eval"][experiment_name],
-                    registration_model,
-                    list_of_eval_metrics,
-                    list_of_eval_group_names[dist],
-                    list_of_eval_augs,
-                    list_of_eval_group_aligns,
-                    list_of_eval_group_sizes,
-                    args,
-                    save_dir_prefix=experiment_name,
-                )
-                if not args.debug_mode:
-                    save_dict_as_json(group_metrics, json_path)
-            else:
-                print("Skipping eval on", experiment_name)
+                print("Perform groupwise eval on", dist)
+                experiment_name = f"{dist}_group"
+                json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
+                if (
+                    not os.path.exists(json_path)
+                    and list_of_eval_group_names is not None
+                ):
+                    group_metrics = run_group_eval(
+                        loaders["eval"][experiment_name],
+                        registration_model,
+                        list_of_eval_metrics,
+                        list_of_eval_group_names[dist],
+                        list_of_eval_augs[:1],  # Ignore augmentation for groupwise
+                        list_of_eval_group_aligns,
+                        list_of_eval_group_sizes,
+                        args,
+                        save_dir_prefix=experiment_name,
+                    )
+                    if not args.debug_mode:
+                        save_dict_as_json(group_metrics, json_path)
+                else:
+                    print("-> Skipping eval on", experiment_name)
+        else:
+            print("Skipping groupwise experiments!")
         print("\nEvaluation done!")
 
     elif args.run_mode == "pretrain":

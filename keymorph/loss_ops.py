@@ -54,12 +54,11 @@ class DiceLoss(torch.nn.Module):
         num = torch.sum(2 * (target * pred), 2) + eps
         den = (pred * pred).sum(2) + (target * target).sum(2) + eps
         dice_loss = 1 - num / den
-        ind_avg = dice_loss
         total_avg = torch.mean(dice_loss)
         regions_avg = torch.mean(dice_loss, 0)
 
         if self.return_regions:
-            return total_avg, regions_avg, ind_avg
+            return regions_avg
         else:
             return total_avg
 
@@ -498,14 +497,16 @@ class AvgJDLessThan0(_AvgGridMetric):
 
 
 class MultipleAvgSegPairwiseMetric(torch.nn.Module):
-    """Evaluate multiple pairwise losses on a batch of images, mostly
-    so that we don't need to load them into memory multiple times."""
+    """Evaluate multiple pairwise losses on a batch of images, 
+    so that we don't need to load the images into memory multiple times."""
 
     def __init__(self):
         super().__init__()
         self.name2fn = {
             "dice": fast_dice,
             "harddice": DiceLoss(hard=True).forward,
+            "harddiceroi": DiceLoss(hard=True, return_regions=True).forward,
+            "softdice": DiceLoss().forward,
             "hausd": hausdorff_distance,
         }
 
@@ -515,15 +516,12 @@ class MultipleAvgSegPairwiseMetric(torch.nn.Module):
         for i in range(len(batch_of_imgs)):
             for j in range(i + 1, len(batch_of_imgs)):
                 if isinstance(batch_of_imgs[0], str):
-                    print(batch_of_imgs[i])
-                    print(batch_of_imgs[j])
                     img1 = _load_file(batch_of_imgs[i])
                     img2 = _load_file(batch_of_imgs[j])
                 else:
                     img1 = batch_of_imgs[i : i + 1]
                     img2 = batch_of_imgs[j : j + 1]
                 for name in fn_names:
-                    print(name)
                     res[name] += self.name2fn[name](img1, img2)
                 num += 1
         return {name: res[name] / num for name in fn_names}

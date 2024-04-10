@@ -4,12 +4,18 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --time=50:30:00 # set this time according to your need
-#SBATCH --mem=16GB # how much RAM will your notebook consume? 
+#SBATCH --mem=32GB # how much RAM will your notebook consume? 
 #SBATCH -p sablab-gpu # specify partition
-#SBATCH --gres=gpu:a100:1 # if you need to use a GPU
+#SBATCH --gres=gpu:1 # if you need to use a GPU
 #SBATCH -o ./job_out/%j-jupyter.out
 #SBATCH -e ./job_err/%j-jupyter.err \ 
 module purge
+module load FSL/6.0.7-4
+module load bc/1.07.1-higilk3
+module load miniconda3/22.11.1-ctkwnpe
+export FREESURFER_HOME=/midtier/sablab/scratch/alw4013/freesurfer/freesurfer/
+source $FREESURFER_HOME/SetUpFreeSurfer.sh
+# source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate synthseg_38
 source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 # if using pip
 # source ~/myvev/bin/activate

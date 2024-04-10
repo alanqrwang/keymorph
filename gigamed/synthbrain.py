@@ -1,67 +1,121 @@
-import os
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import torchio as tio
-import random
-import torch.nn.functional as F
-
-data_dir = "/midtier/sablab/scratch/alw4013/data/synthbrain_clean_MNI"
+import numpy as np
+from SynthSeg.brain_generator import BrainGenerator
 
 
-def read_subjects_from_disk(root_dir: str, load_seg=True):
-    """Creates list of TorchIO subjects."""
-    img_dir = os.path.join(root_dir, "image")
-    img_data_paths = sorted(
-        [
-            os.path.join(img_dir, name)
-            for name in os.listdir(img_dir)
-            if ("image" in name and name.endswith(".nii.gz"))
-        ]
-    )
-    seg_data_paths = [s.replace("image", "labels") for s in img_data_paths]
-
-    # Now, load all subjects, separated by modality
-    subject_list = []
-    for img_path, seg_path in zip(img_data_paths, seg_data_paths):
-        subject_kwargs = {"img": tio.ScalarImage(img_path)}
-        if load_seg:
-            subject_kwargs["seg"] = tio.LabelMap(seg_path)
-        subject = tio.Subject(**subject_kwargs)
-        subject_list.append(subject)
-
-    return subject_list
-
-
-class SingleSubjectDataset(Dataset):
-    def __init__(self, root_dir, transform=None, load_seg=True):
-        self.subject_list = read_subjects_from_disk(root_dir, load_seg=load_seg)
+class SynthBrainDataset:
+    def __init__(self, paired=False, transform=None):
+        self.paired = paired
         self.transform = transform
 
-    def __len__(self):
-        return len(self.subject_list)
+        root_dir = "/home/alw4013/SynthSeg/"
+
+        # input training label maps
+        path_label_map = "/midtier/sablab/scratch/alw4013/synthseg/new_label_maps"
+        subjects_prob = f"{root_dir}/data/labels_classes_priors/subject_prob.npy"
+
+        # numpy arrays for generation labels, segmentation labels, etc.
+        generation_labels = (
+            f"{root_dir}/data/labels_classes_priors/generation_labels_2.0.npy"
+        )
+        generation_classes = (
+            f"{root_dir}/data/labels_classes_priors/generation_classes_2.0.npy"
+        )
+        output_labels = f"{root_dir}/data/labels_classes_priors/synthseg_segmentation_labels_2.0.npy"
+        n_neutral_labels = 19  # this has changed !!! It's because the CSF is now separated between cerebral and spinal fluid
+
+        # do not include label 24 in output segmentations. Comment out if you wish to segment label 24.
+        output_labels = np.load(output_labels)
+        output_labels[4] = 0
+
+        # ---------- Shape and resolution of the outputs ----------
+
+        # number of channel to synthesise for multi-modality settings. Set this to 1 (default) in the uni-modality scenario.
+        n_channels = 1
+
+        # We have the possibility to generate training examples at a different resolution than the training label maps (e.g.
+        # when using ultra HR training label maps). Here we want to generate at the same resolution as the training label maps,
+        # so we set this to None.
+        target_res = None
+
+        # The generative model offers the possibility to randomly crop the training examples to a given size.
+        # Here we crop them to 160^3, such that the produced images fit on the GPU during training.
+        output_shape = 256
+
+        # ---------- GMM sampling parameters ----------
+
+        # Here we use uniform prior distribution to sample the means/stds of the GMM. Because we don't specify prior_means and
+        # prior_stds, those priors will have default bounds of [0, 250], and [0, 35]. Those values enable to generate a wide
+        # range of contrasts (often unrealistic), which will make the segmentation network contrast-agnostic.
+        prior_distributions = "uniform"
+
+        # ---------- Spatial augmentation ----------
+
+        # We now introduce some parameters concerning the spatial deformation. They enable to set the range of the uniform
+        # distribution from which the corresponding parameters are selected.
+        # We note that because the label maps will be resampled with nearest neighbour interpolation, they can look less smooth
+        # than the original segmentations.
+
+        flipping = False  # enable right/left flipping
+        scaling_bounds = 0  # the scaling coefficients will be sampled from U(1-scaling_bounds; 1+scaling_bounds)
+        rotation_bounds = 0  # the rotation angles will be sampled from U(-rotation_bounds; rotation_bounds)
+        shearing_bounds = 0.0  # the shearing coefficients will be sampled from U(-shearing_bounds; shearing_bounds)
+        translation_bounds = False  # no translation is performed, as this is already modelled by the random cropping
+        nonlin_std = 4.0  # this controls the maximum elastic deformation (higher = more deformation)
+        bias_field_std = (
+            0.7  # this controls the maximum bias field corruption (higher = more bias)
+        )
+
+        # ---------- Resolution parameters ----------
+
+        # This enables us to randomise the resolution of the produces images.
+        # Although being only one parameter, this is crucial !!
+        randomise_res = False
+
+        # ------------------------------------------------------ Generate ------------------------------------------------------
+        # instantiate BrainGenerator object
+        self.brain_generator = BrainGenerator(
+            labels_dir=path_label_map,
+            generation_labels=generation_labels,
+            n_neutral_labels=n_neutral_labels,
+            prior_distributions=prior_distributions,
+            generation_classes=generation_classes,
+            subjects_prob=subjects_prob,
+            output_labels=output_labels,
+            n_channels=n_channels,
+            target_res=target_res,
+            output_shape=output_shape,
+            flipping=flipping,
+            scaling_bounds=scaling_bounds,
+            rotation_bounds=rotation_bounds,
+            shearing_bounds=shearing_bounds,
+            translation_bounds=translation_bounds,
+            nonlin_std=nonlin_std,
+            bias_field_std=bias_field_std,
+            randomise_res=randomise_res,
+        )
 
     def __getitem__(self, x):
-        subject = random.sample(self.subject_list, 1)[0]
+        im, lab = self.brain_generator.generate_brain()
+        subject = tio.Subject(
+            img=tio.ScalarImage(tensor=im), seg=tio.LabelMap(tensor=lab)
+        )
         if self.transform:
             subject = self.transform(subject)
+
+        if self.paired_dataset:
+            im, lab = self.brain_generator.generate_brain()
+            subject2 = tio.Subject(
+                img=tio.ScalarImage(tensor=im), seg=tio.LabelMap(tensor=lab)
+            )
+            if self.transform:
+                subject2 = self.transform(subject2)
+            return subject, subject2, "synthbrain"
         return subject
 
-
-class PairedSubjectDataset(Dataset):
-    """Longitudinal."""
-
-    def __init__(self, root_dir, transform=None, load_seg=True):
-        self.subject_list = read_subjects_from_disk(root_dir, load_seg=load_seg)
-        self.transform = transform
-
     def __len__(self):
-        return len(self.subject_list)
-
-    def __getitem__(self, x):
-        sub1, sub2 = random.sample(self.subject_list, 2)
-        if self.transform:
-            sub1 = self.transform(sub1)
-            sub2 = self.transform(sub2)
-        return sub1, sub2, "synthbrain"
+        return 1000000  # arbitrary number
 
 
 class SynthBrain:
@@ -69,29 +123,10 @@ class SynthBrain:
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.load_seg = load_seg
-        if transform is None:
-            self.transform = tio.Compose(
-                [
-                    tio.Lambda(one_hot, include=("seg",)),
-                ]
-            )
-        else:
-            self.transform = transform
-
-    def get_paired_dataset(self):
-        dataset = PairedSubjectDataset(data_dir, self.transform, self.load_seg)
-
-        self.print_dataset_stats([dataset], prefix="SynthMorph")
-        return dataset
-
-    def get_single_dataset(self):
-        dataset = SingleSubjectDataset(data_dir, self.transform, self.load_seg)
-
-        self.print_dataset_stats([dataset], prefix="SynthMorph")
-        return dataset
+        self.transform = transform
 
     def get_train_loader(self):
-        dataset = PairedSubjectDataset(data_dir, self.transform, self.load_seg)
+        dataset = SynthBrainDataset(paired=True, transform=self.transform)
         train_loader = DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -101,7 +136,7 @@ class SynthBrain:
         return train_loader
 
     def get_pretrain_loader(self):
-        dataset = SingleSubjectDataset(data_dir, self.transform, self.load_seg)
+        dataset = SynthBrainDataset(paired=False, transform=self.transform)
         train_loader = DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -110,16 +145,3 @@ class SynthBrain:
         )
 
         return train_loader
-
-    def print_dataset_stats(self, datasets, prefix=""):
-        print(f"\n{prefix} dataset has {len(datasets)} datasets.")
-        tot = 0
-        for i, ds in enumerate(datasets):
-            tot += len(ds)
-            print(
-                "-> Dataset {} has {} subjects".format(
-                    i,
-                    len(ds),
-                )
-            )
-        print("Total: ", tot)

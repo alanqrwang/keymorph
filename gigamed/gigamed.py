@@ -173,11 +173,13 @@ class GigaMed:
         include_seg=True,
         transform=None,
         normal_brains_only=False,
+        synthetic_brains_only=False,
         include_synthetic_brains=False,
     ):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.normal_brains_only = normal_brains_only
+        self.synthetic_brains_only = synthetic_brains_only
         self.include_synthetic_brains = include_synthetic_brains
 
         self.dataset = GigaMedDataset(include_seg=include_seg, transform=transform)
@@ -261,7 +263,7 @@ class GigaMed:
             PairedDataset,
             id=True,
         )
-        if self.include_synthetic_brains:
+        if self.synthetic_brains_only or self.include_synthetic_brains:
             synthbrain_datasets = self.dataset.get_dataset_family(
                 {
                     "has_train": True,
@@ -288,6 +290,13 @@ class GigaMed:
                 list(skullstrip_paired_datasets.values()),
             ]
             family_names = ["normal_nonskullstripped", "normal_skullstripped"]
+        elif self.synthetic_brains_only:
+            family_datasets = [
+                list(synthbrain_datasets.values()),
+            ]
+            family_names = [
+                "synthbrain",
+            ]
         elif self.include_synthetic_brains:
             family_datasets = [
                 list(sssm_datasets.values()),
@@ -337,7 +346,7 @@ class GigaMed:
             id=True,
         )
         self.print_dataset_stats(datasets, "PRETRAIN:")
-        if self.include_synthetic_brains:
+        if self.synthetic_brains_only or self.include_synthetic_brains:
             synthbrain_datasets = self.dataset.get_dataset_family(
                 {
                     "has_train": True,
@@ -348,7 +357,14 @@ class GigaMed:
             )
             self.print_dataset_stats(synthbrain_datasets, "PRETRAIN synthetic:")
 
-        if self.include_synthetic_brains:
+        if self.synthetic_brains_only:
+            family_datasets = [
+                list(synthbrain_datasets.values()),
+            ]
+            family_names = [
+                "synthbrain",
+            ]
+        elif self.include_synthetic_brains:
             family_datasets = [
                 list(datasets.values()),
                 list(synthbrain_datasets.values()),

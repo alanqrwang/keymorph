@@ -4,7 +4,7 @@ import torch
 import time
 import os
 
-from keymorph.utils import utils
+import keymorph.utils as utils
 
 
 class ITKElastix:
@@ -60,7 +60,6 @@ class ITKElastix:
                 parameter_object.AddParameterMap(default_bspline_parameter_map)
 
             # Call registration function
-            print("SAVE DIR", save_dir)
             _, result_transform_parameters = itk.elastix_registration_method(
                 fixed_image,
                 moving_image,

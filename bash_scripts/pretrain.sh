@@ -15,7 +15,7 @@ module purge
 source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 
 NUM_KEY=$1
-JOB_NAME="_pretrain_gigamed-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}"
+JOB_NAME="_pretrain_synthbrain-${NUM_KEY}"
 python /home/alw4013/keymorph/run.py \
     --run_mode pretrain \
     --registration_model keymorph \
@@ -23,8 +23,8 @@ python /home/alw4013/keymorph/run.py \
     --num_keypoints ${NUM_KEY} \
     --use_wandb \
     --wandb_kwargs project=keymorph name=$JOB_NAME \
-    --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/truncatedunet/ \
-    --train_dataset gigamed \
+    --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/truncatedunet1/ \
+    --train_dataset synthbrain \
     --test_dataset gigamed \
     --use_amp \
     --num_workers 8 \

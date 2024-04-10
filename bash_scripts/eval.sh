@@ -18,7 +18,8 @@ source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="gigamed-weighted-ACTUALLYWEIGHTED-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}"
+JOB_NAME="gigamed-weighted-ACTUALLYWEIGHTED-earlystopsubjects10-withharddiceroi-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}"
+# JOB_NAME="gigamed-weighted-earlystopsubjects10-withharddiceroi-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}"
 python run.py \
     --run_mode eval \
     --job_name ${JOB_NAME} \

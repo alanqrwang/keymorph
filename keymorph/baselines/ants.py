@@ -33,6 +33,8 @@ class ANTs:
             elif ttype == "affine":
                 type_of_transform = "AffineFast"
             elif ttype == "syn":
+                type_of_transform = "SyN"
+            elif ttype == "synra":
                 type_of_transform = "SyNRA"
             else:
                 raise ValueError("Invalid transform type")
