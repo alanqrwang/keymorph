@@ -17,7 +17,7 @@ source /midtier/sablab/scratch/alw4013/miniconda3/bin/activate keymorph
 #!/bin/bash
 
 NUM_KEY=$1
-JOB_NAME="synthbrain-${NUM_KEY}"
+JOB_NAME="gigamed-noaug-${NUM_KEY}"
 python run.py \
     --run_mode train \
     --job_name ${JOB_NAME} \
@@ -27,23 +27,22 @@ python run.py \
     --registration_model keymorph \
     --backbone truncatedunet \
     --num_truncated_layers_for_truncatedunet 1 \
-    --weighted_kp_align power \
     --epochs 5000 \
     --save_dir /midtier/sablab/scratch/alw4013/keymorph/experiments/truncatedunet1/ \
     --use_wandb \
     --wandb_kwargs project=keymorph name=${JOB_NAME} dir=/midtier/sablab/scratch/alw4013/keymorph/wandb/ \
-    --train_dataset synthbrain \
+    --train_dataset gigamed \
     --test_dataset gigamed \
     --num_workers 4 \
     --use_amp \
     --batch_size 1 \
     --compute_subgrids_for_tps \
     --seg_available \
-    --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/truncatedunet1/__pretrain___pretrain_synthbrain-${NUM_KEY}_datasetsynthbrain_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch7375_model.pth.tar
+    --weighted_kp_align power \
+    --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/truncatedunet1/__pretrain___pretrain_gigamed-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
+    # --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/truncatedunet1/__pretrain___pretrain_synthbrain-${NUM_KEY}_datasetsynthbrain_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
     # --load_path /midtier/sablab/scratch/alw4013/keymorph/experiments/truncatedunet1/__training__gigamed-weighted-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr3e-06/checkpoints/epoch5000_trained_model.pth.tar
-    # --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/truncatedunet1/__pretrain___pretrain_gigamed-lesion-normal-skullstrip-nonskullstrip-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
     # --resume_latest
-    # --load_path /midtier/sablab/scratch/alw4013/keymorph/weights/__pretrain___pretrain_gigamednb-${NUM_KEY}_datasetgigamed_modelkeymorph_keypoints${NUM_KEY}_batch1_normTypeinstance_lr0.0001/checkpoints/pretrained_epoch15000_model.pth.tar
     # --visualize \
     
 
