@@ -455,3 +455,128 @@ class TPS:
             ctl_points, tgt_points, lmbda, weights=weights
         )
         return self.deform_points(theta, ctl_points, points)
+
+
+class ApproximateTPS(TPS):
+    """Method 2 from ``Approximate TPS Mappings'' by Donato and Belongie"""
+
+    def fit(self, c, lmbda, subsample_indices, w=None):
+        """Assumes last dimension of c contains target points.
+
+          Set up and solve linear system:
+            [K + lmbda*I   P] [w] = [v]
+            [        P^T   0] [a]   [0]
+
+          If w is provided, solve weighted TPS:
+            [K + lmbda*1/diag(w)   P] [w] = [v]
+            [                P^T   0] [a]   [0]
+
+          See https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=929618&tag=1, Eq. (8)
+        Args:
+          c: control points and target point (bs, T, d+1)
+          lmbda: Lambda values per batch (bs)
+        """
+        device = c.device
+        bs, T = c.shape[0], c.shape[1]
+        ctrl, tgt = c[:, :, : self.dim], c[:, :, -1]
+        num_subsample = len(subsample_indices)
+        print(num_subsample)
+
+        # Build K matrix
+        print("ctrl shape", ctrl.shape)
+        U = TPS.u(TPS.d(ctrl, ctrl[:, subsample_indices]))
+        print("U shape", U.shape)
+        if w is not None:
+            w = torch.diag_embed(w)
+            w = w[:, :, subsample_indices]
+            print("w shape", w.shape)
+            K = U + torch.reciprocal(w + 1e-6) * lmbda.view(
+                bs, 1, 1
+            )  # w are weights, TPS expects variances
+        else:
+            I = torch.eye(T).repeat(bs, 1, 1).float().to(device)
+            I = I[:, :, subsample_indices]
+            K = U + I * lmbda.view(bs, 1, 1)
+
+        # Build P matrix
+        P = torch.ones((bs, T, self.dim + 1)).float()
+        P[:, :, 1:] = ctrl
+        P_tilde = P[:, subsample_indices]
+        print("P shapes", P.shape, P_tilde.shape)
+
+        # Build v vector
+        v = torch.zeros(bs, T + self.dim + 1).float()
+        v[:, :T] = tgt
+
+        A = torch.zeros((bs, T + self.dim + 1, num_subsample + self.dim + 1)).float()
+        A[:, :T, :num_subsample] = K
+        A[:, :T, -(self.dim + 1) :] = P
+        A[:, -(self.dim + 1) :, :num_subsample] = P_tilde.transpose(1, 2)
+
+        return torch.linalg.lstsq(A, v).solution
+
+    def tps_theta_from_points(
+        self, c_src, c_dst, lmbda, subsample_indices, weights=None
+    ):
+        """
+        Args:
+          c_src: (bs, T, dim)
+          c_dst: (bs, T, dim)
+          lmbda: (bs)
+        """
+        device = c_src.device
+
+        cx = torch.cat((c_src, c_dst[..., 0:1]), dim=-1)
+        cy = torch.cat((c_src, c_dst[..., 1:2]), dim=-1)
+        if self.dim == 3:
+            cz = torch.cat((c_src, c_dst[..., 2:3]), dim=-1)
+
+        theta_dx = self.fit(cx, lmbda, subsample_indices, w=weights).to(device)
+        theta_dy = self.fit(cy, lmbda, subsample_indices, w=weights).to(device)
+        if self.dim == 3:
+            theta_dz = self.fit(cz, lmbda, subsample_indices, w=weights).to(device)
+
+        if self.dim == 3:
+            return torch.stack((theta_dx, theta_dy, theta_dz), -1)
+        else:
+            return torch.stack((theta_dx, theta_dy), -1)
+
+    def grid_from_points(
+        self,
+        points_m,
+        points_f,
+        grid_shape,
+        subsample_indices,
+        weights=None,
+        compute_on_subgrids=False,
+        **kwargs,
+    ):
+        lmbda = kwargs["lmbda"]
+
+        assert len(subsample_indices) < points_m.shape[1]
+        theta = self.tps_theta_from_points(
+            points_f,
+            points_m,
+            lmbda,
+            subsample_indices,
+            weights=weights,
+        )
+        return self.tps_grid(
+            theta,
+            points_f[:, subsample_indices],
+            grid_shape,
+            compute_on_subgrids=compute_on_subgrids,
+        )
+
+    def points_from_points(
+        self, ctl_points, tgt_points, points, subsample_indices, weights=None, **kwargs
+    ):
+        lmbda = kwargs["lmbda"]
+        theta = self.tps_theta_from_points(
+            ctl_points,
+            tgt_points,
+            lmbda,
+            weights=weights,
+            subsample_indices=subsample_indices,
+        )
+        return self.deform_points(theta, ctl_points[:, subsample_indices], points)

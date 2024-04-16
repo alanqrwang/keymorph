@@ -247,154 +247,170 @@ def show_pretrain(
     plt.show()
 
 
+def rot90_points(points, k):
+    assert k in [0, 1, 2, 3]
+    rotated_points = np.zeros_like(points)
+
+    # Calculate the center of the image
+    center_y, center_x = (np.array((256, 256)) - 1) / 2.0
+
+    # Translate points to origin for rotation
+    translated_points = points - np.array([center_x, center_y])
+
+    rotated_points = np.zeros_like(translated_points)
+    if k == 1:
+        rotated_points[:, 0] = translated_points[:, 1]
+        rotated_points[:, 1] = -translated_points[:, 0]
+    elif k == 3:
+        rotated_points[:, 0] = -translated_points[:, 1]
+        rotated_points[:, 1] = translated_points[:, 0]
+    elif k == 2:
+        rotated_points[:, 0] = -translated_points[:, 0]
+        rotated_points[:, 1] = -translated_points[:, 1]
+    else:
+        rotated_points = translated_points
+
+    # Translate points back
+    rotated_points += np.array([center_x, center_y])
+    return rotated_points
+
+
 def show_img_and_points(
-    img,
-    points=None,
-    weights=None,
+    img=None,
+    all_points=None,
+    all_weights=None,
     projection=False,
     center_slices=(128, 128, 128),
     slab_thickness=10,
     axes=None,
     rotate_90_deg=0,
+    img_dims=(256, 256, 256),
 ):
+    """
+    img: (H, W, D) image
+    all_points: (N, 3) or (B, N, 3) array of points
+    all_weights: (N,) or (B, N) array of weights
+    """
+
     def normalize(data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))
 
-    img_dim = img.shape[-1]
-    if points is not None:
-        plot_points = True
-    else:
-        plot_points = False
+    plot_img = True if img is not None else None
+    plot_points = True if all_points is not None else None
 
     if plot_points:
-        points = (points + 1) / 2 * img_dim
+        if len(all_points.shape) == 2:
+            all_points = all_points[None]
 
-        if weights is None:
-            weights = np.ones(len(points))
+        all_points = (all_points + 1) / 2 * img_dims[-1]
+
+        if all_weights is None:
+            all_weights = np.ones(all_points.shape[:2])
         else:
-            weights = normalize(weights)
-
-    # Set global vmin and vmax so intensities values are comparable relative to each other
-    vmin = min(img.min(), img.min(), img.min())
-    vmax = max(img.max(), img.max(), img.max())
+            if len(all_weights.shape) == 1:
+                all_weights = all_weights[None]
+            all_weights = normalize(all_weights)
 
     if axes is None:
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-    [ax.set_xticks([]) for ax in axes]
-    [ax.set_yticks([]) for ax in axes]
-
     xy_ind, xz_ind, yz_ind = center_slices
-    img_xy = img[:, :, xy_ind]
-    img_xz = img[:, xz_ind, :]
-    img_yz = img[yz_ind, :, :]
+    if plot_img:
+        # Set global vmin and vmax so intensities values are comparable relative to each other
+        vmin = min(img.min(), img.min(), img.min())
+        vmax = max(img.max(), img.max(), img.max())
+
+        [ax.set_xticks([]) for ax in axes]
+        [ax.set_yticks([]) for ax in axes]
+
+        img_xy = img[:, :, xy_ind]
+        img_xz = img[:, xz_ind, :]
+        img_yz = img[yz_ind, :, :]
+
+        if rotate_90_deg != 0:
+            img_xy = np.rot90(img_xy, k=rotate_90_deg)
+            img_xz = np.rot90(img_xz, k=rotate_90_deg)
+            img_yz = np.rot90(img_yz, k=rotate_90_deg)
+
+        axes[0].imshow(img_xy, cmap="gray", vmin=vmin, vmax=vmax)
+        axes[1].imshow(img_xz, cmap="gray", vmin=vmin, vmax=vmax)
+        axes[2].imshow(img_yz, cmap="gray", vmin=vmin, vmax=vmax)
 
     if plot_points:
-        points_xy, depth_xy = points[:, 1:], points[:, 0]
-        points_xz, depth_xz = (
-            np.stack((points[:, 0], points[:, 2]), axis=-1),
-            points[:, 1],
-        )
-        points_yz, depth_yz = points[:, :2], points[:, 2]
-        if projection:
-            colors_xy = [[1, 0, 0, 1] for _ in range(len(points))]
-            weights_xy = weights
+        markers = [".", "+", "x"]
+        for points, weights, marker in zip(all_points, all_weights, markers):
+            points_xy, depth_xy = points[:, 1:], points[:, 0]
+            points_xz, depth_xz = (
+                np.stack((points[:, 0], points[:, 2]), axis=-1),
+                points[:, 1],
+            )
+            points_yz, depth_yz = points[:, :2], points[:, 2]
+            if projection:
+                colors_xy = [[1, 0, 0, 1] for _ in range(len(points))]
+                weights_xy = weights
 
-            colors_xz = [[1, 0, 0, 1] for _ in range(len(points))]
-            weights_xy = weights
+                colors_xz = [[1, 0, 0, 1] for _ in range(len(points))]
+                weights_xy = weights
 
-            colors_yz = [[1, 0, 0, 1] for _ in range(len(points))]
-            weights_xy = weights
+                colors_yz = [[1, 0, 0, 1] for _ in range(len(points))]
+                weights_xy = weights
 
-        else:
-            cmap = matplotlib.colormaps["bwr"]
+            else:
+                cmap = matplotlib.colormaps["bwr"]
 
-            start, stop = xy_ind - slab_thickness / 2, xy_ind + slab_thickness / 2
-            indices = (depth_xy > start).nonzero() and (depth_xy < stop).nonzero()
-            points_xy = points_xy[indices]
-            depth_xy = depth_xy[indices]
-            weights_xy = weights[indices]
+                start, stop = xy_ind - slab_thickness / 2, xy_ind + slab_thickness / 2
+                indices = (depth_xy > start).nonzero() and (depth_xy < stop).nonzero()
+                points_xy = points_xy[indices]
+                depth_xy = depth_xy[indices]
+                weights_xy = weights[indices]
 
-            start, stop = xz_ind - slab_thickness / 2, xz_ind + slab_thickness / 2
-            indices = (depth_xz > start).nonzero() and (depth_xz < stop).nonzero()
-            points_xz = points_xz[indices]
-            depth_xz = depth_xz[indices]
-            weights_xz = weights[indices]
+                start, stop = xz_ind - slab_thickness / 2, xz_ind + slab_thickness / 2
+                indices = (depth_xz > start).nonzero() and (depth_xz < stop).nonzero()
+                points_xz = points_xz[indices]
+                depth_xz = depth_xz[indices]
+                weights_xz = weights[indices]
 
-            start, stop = yz_ind - slab_thickness / 2, yz_ind + slab_thickness / 2
-            indices = (depth_yz > start).nonzero() and (depth_yz < stop).nonzero()
-            points_yz = points_yz[indices]
-            depth_yz = depth_yz[indices]
-            weights_yz = weights[indices]
+                start, stop = yz_ind - slab_thickness / 2, yz_ind + slab_thickness / 2
+                indices = (depth_yz > start).nonzero() and (depth_yz < stop).nonzero()
+                points_yz = points_yz[indices]
+                depth_yz = depth_yz[indices]
+                weights_yz = weights[indices]
 
-        # Set alpha to be proportional to weights
-        colors_xy = cmap(normalize(depth_xy))
-        colors_xy[:, -1] = weights_xy
-        colors_xz = cmap(normalize(depth_xz))
-        colors_xz[:, -1] = weights_xz
-        colors_yz = cmap(normalize(depth_yz))
-        colors_yz[:, -1] = weights_yz
+            # Set alpha to be proportional to weights
+            colors_xy = cmap(normalize(depth_xy))
+            colors_xy[:, -1] = weights_xy
+            colors_xz = cmap(normalize(depth_xz))
+            colors_xz[:, -1] = weights_xz
+            colors_yz = cmap(normalize(depth_yz))
+            colors_yz[:, -1] = weights_yz
 
-    def rot90_points(points, k):
-        assert k in [0, 1, 2, 3]
-        rotated_points = np.zeros_like(points)
+            if rotate_90_deg != 0:
+                points_xy = rot90_points(points_xy, rotate_90_deg)
+                points_xz = rot90_points(points_xz, rotate_90_deg)
+                points_yz = rot90_points(points_yz, rotate_90_deg)
 
-        # Calculate the center of the image
-        center_y, center_x = (np.array((256, 256)) - 1) / 2.0
-
-        # Translate points to origin for rotation
-        translated_points = points - np.array([center_x, center_y])
-
-        rotated_points = np.zeros_like(translated_points)
-        if k == 1:
-            rotated_points[:, 0] = translated_points[:, 1]
-            rotated_points[:, 1] = -translated_points[:, 0]
-        elif k == 3:
-            rotated_points[:, 0] = -translated_points[:, 1]
-            rotated_points[:, 1] = translated_points[:, 0]
-        elif k == 2:
-            rotated_points[:, 0] = -translated_points[:, 0]
-            rotated_points[:, 1] = -translated_points[:, 1]
-        else:
-            rotated_points = translated_points
-
-        # Translate points back
-        rotated_points += np.array([center_x, center_y])
-        return rotated_points
-
-    if rotate_90_deg != 0:
-        img_xy = np.rot90(img_xy, k=rotate_90_deg)
-        img_xz = np.rot90(img_xz, k=rotate_90_deg)
-        img_yz = np.rot90(img_yz, k=rotate_90_deg)
-        if points is not None:
-            points_xy = rot90_points(points_xy, rotate_90_deg)
-            points_xz = rot90_points(points_xz, rotate_90_deg)
-            points_yz = rot90_points(points_yz, rotate_90_deg)
-
-    axes[0].imshow(img_xy, cmap="gray", vmin=vmin, vmax=vmax)
-    axes[1].imshow(img_xz, cmap="gray", vmin=vmin, vmax=vmax)
-    axes[2].imshow(img_yz, cmap="gray", vmin=vmin, vmax=vmax)
-    if plot_points:
-        axes[0].scatter(
-            points_xy[:, 0],
-            points_xy[:, 1],
-            marker=".",
-            s=100,
-            color=colors_xy,
-        )
-        axes[1].scatter(
-            points_xz[:, 0],
-            points_xz[:, 1],
-            marker=".",
-            s=100,
-            color=colors_xz,
-        )
-        axes[2].scatter(
-            points_yz[:, 0],
-            points_yz[:, 1],
-            marker=".",
-            s=100,
-            color=colors_yz,
-        )
+            axes[0].scatter(
+                points_xy[:, 0],
+                points_xy[:, 1],
+                marker=marker,
+                s=100,
+                color=colors_xy,
+            )
+            axes[1].scatter(
+                points_xz[:, 0],
+                points_xz[:, 1],
+                marker=marker,
+                s=100,
+                color=colors_xz,
+            )
+            axes[2].scatter(
+                points_yz[:, 0],
+                points_yz[:, 1],
+                marker=marker,
+                s=100,
+                color=colors_yz,
+            )
+    [ax.set_xlim([0, img_dims[-1]]) for ax in axes]
+    [ax.set_ylim([img_dims[-1], 0]) for ax in axes]
 
     # plt.show()
     # plt.close()
