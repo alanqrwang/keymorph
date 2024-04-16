@@ -10,6 +10,7 @@ def read_subjects_from_disk(
     root_dir: str,
     train: bool,
     include_seg: bool = True,
+    include_lesion_seg: bool = False,
     must_have_longitudinal=False,
 ):
     """Creates dictionary of TorchIO subjects.
@@ -38,8 +39,15 @@ def read_subjects_from_disk(
         split_folder_img, split_folder_seg = "imagesTr", "synthSeglabelsTr"
     else:
         split_folder_img, split_folder_seg = "imagesTs", "synthSeglabelsTs"
+
     img_data_folder = os.path.join(root_dir, split_folder_img)
     seg_data_folder = os.path.join(root_dir, split_folder_seg)
+    if include_lesion_seg:
+        split_folder_lesion_seg = "labelsTr"
+        lesion_seg_data_folder = os.path.join(root_dir, split_folder_lesion_seg)
+        assert os.path.exists(
+            lesion_seg_data_folder
+        ), "No lesion segmentation found in labelsTr folder."
 
     # Initialize an empty dictionary using defaultdict for easier nested dictionary handling
     data_structure = defaultdict(lambda: defaultdict(list))
@@ -71,6 +79,9 @@ def read_subjects_from_disk(
             subject_kwargs = {
                 "img": tio.ScalarImage(img_path),
             }
+        if include_lesion_seg:
+            lesion_seg_path = os.path.join(lesion_seg_data_folder, filename)
+            subject_kwargs["lesion_seg"] = tio.LabelMap(lesion_seg_path)
         subject = tio.Subject(**subject_kwargs)
 
         match = pattern.search(filename)
@@ -114,9 +125,19 @@ def read_subjects_from_disk(
 
 
 class SingleSubjectDataset(Dataset):
-    def __init__(self, root_dir, train, transform=None, include_seg=True):
+    def __init__(
+        self,
+        root_dir,
+        train,
+        transform=None,
+        include_seg=True,
+        include_lesion_seg=False,
+    ):
         self.subject_dict, self.subject_list = read_subjects_from_disk(
-            root_dir, train, include_seg=include_seg
+            root_dir,
+            train,
+            include_seg=include_seg,
+            include_lesion_seg=include_lesion_seg,
         )
         self.transform = transform
 
@@ -141,9 +162,19 @@ class PairedDataset(Dataset):
     """General paired dataset.
     Given subject list, samples pairs of subjects without restriction."""
 
-    def __init__(self, root_dir, train, transform=None, include_seg=True):
+    def __init__(
+        self,
+        root_dir,
+        train,
+        transform=None,
+        include_seg=True,
+        include_lesion_seg=False,
+    ):
         self.subject_dict, self.subject_list = read_subjects_from_disk(
-            root_dir, train, include_seg=include_seg
+            root_dir,
+            train,
+            include_seg=include_seg,
+            include_lesion_seg=include_lesion_seg,
         )
         self.transform = transform
 
