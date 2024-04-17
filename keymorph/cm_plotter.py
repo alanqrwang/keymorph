@@ -6,8 +6,11 @@ import os
 import matplotlib
 from glob import glob
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 import matplotlib.cm as cm
+from . import utils
+import numpy as np
+import matplotlib
+
 
 # global settings for plotting
 matplotlib.rcParams["lines.linewidth"] = 2
@@ -244,13 +247,184 @@ def show_pretrain(
     plt.show()
 
 
+def rot90_points(points, k):
+    assert k in [0, 1, 2, 3]
+    rotated_points = np.zeros_like(points)
+
+    # Calculate the center of the image
+    center_y, center_x = (np.array((256, 256)) - 1) / 2.0
+
+    # Translate points to origin for rotation
+    translated_points = points - np.array([center_x, center_y])
+
+    rotated_points = np.zeros_like(translated_points)
+    if k == 1:
+        rotated_points[:, 0] = translated_points[:, 1]
+        rotated_points[:, 1] = -translated_points[:, 0]
+    elif k == 3:
+        rotated_points[:, 0] = -translated_points[:, 1]
+        rotated_points[:, 1] = translated_points[:, 0]
+    elif k == 2:
+        rotated_points[:, 0] = -translated_points[:, 0]
+        rotated_points[:, 1] = -translated_points[:, 1]
+    else:
+        rotated_points = translated_points
+
+    # Translate points back
+    rotated_points += np.array([center_x, center_y])
+    return rotated_points
+
+
+def show_img_and_points(
+    img=None,
+    all_points=None,
+    all_weights=None,
+    projection=False,
+    center_slices=(128, 128, 128),
+    slab_thickness=10,
+    axes=None,
+    rotate_90_deg=0,
+    img_dims=(256, 256, 256),
+):
+    """
+    img: (H, W, D) image
+    all_points: (N, 3) or (B, N, 3) array of points
+    all_weights: (N,) or (B, N) array of weights
+    """
+
+    def normalize(data):
+        return (data - np.min(data)) / (np.max(data) - np.min(data))
+
+    plot_img = True if img is not None else None
+    plot_points = True if all_points is not None else None
+
+    if plot_points:
+        if len(all_points.shape) == 2:
+            all_points = all_points[None]
+
+        all_points = (all_points + 1) / 2 * img_dims[-1]
+
+        if all_weights is None:
+            all_weights = np.ones(all_points.shape[:2])
+        else:
+            if len(all_weights.shape) == 1:
+                all_weights = all_weights[None]
+            all_weights = normalize(all_weights)
+
+    if axes is None:
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    xy_ind, xz_ind, yz_ind = center_slices
+    if plot_img:
+        # Set global vmin and vmax so intensities values are comparable relative to each other
+        vmin = min(img.min(), img.min(), img.min())
+        vmax = max(img.max(), img.max(), img.max())
+
+        [ax.set_xticks([]) for ax in axes]
+        [ax.set_yticks([]) for ax in axes]
+
+        img_xy = img[:, :, xy_ind]
+        img_xz = img[:, xz_ind, :]
+        img_yz = img[yz_ind, :, :]
+
+        if rotate_90_deg != 0:
+            img_xy = np.rot90(img_xy, k=rotate_90_deg)
+            img_xz = np.rot90(img_xz, k=rotate_90_deg)
+            img_yz = np.rot90(img_yz, k=rotate_90_deg)
+
+        axes[0].imshow(img_xy, cmap="gray", vmin=vmin, vmax=vmax)
+        axes[1].imshow(img_xz, cmap="gray", vmin=vmin, vmax=vmax)
+        axes[2].imshow(img_yz, cmap="gray", vmin=vmin, vmax=vmax)
+
+    if plot_points:
+        markers = [".", "+", "x"]
+        for points, weights, marker in zip(all_points, all_weights, markers):
+            points_xy, depth_xy = points[:, 1:], points[:, 0]
+            points_xz, depth_xz = (
+                np.stack((points[:, 0], points[:, 2]), axis=-1),
+                points[:, 1],
+            )
+            points_yz, depth_yz = points[:, :2], points[:, 2]
+            if projection:
+                colors_xy = [[1, 0, 0, 1] for _ in range(len(points))]
+                weights_xy = weights
+
+                colors_xz = [[1, 0, 0, 1] for _ in range(len(points))]
+                weights_xy = weights
+
+                colors_yz = [[1, 0, 0, 1] for _ in range(len(points))]
+                weights_xy = weights
+
+            else:
+                cmap = matplotlib.colormaps["bwr"]
+
+                start, stop = xy_ind - slab_thickness / 2, xy_ind + slab_thickness / 2
+                indices = (depth_xy > start).nonzero() and (depth_xy < stop).nonzero()
+                points_xy = points_xy[indices]
+                depth_xy = depth_xy[indices]
+                weights_xy = weights[indices]
+
+                start, stop = xz_ind - slab_thickness / 2, xz_ind + slab_thickness / 2
+                indices = (depth_xz > start).nonzero() and (depth_xz < stop).nonzero()
+                points_xz = points_xz[indices]
+                depth_xz = depth_xz[indices]
+                weights_xz = weights[indices]
+
+                start, stop = yz_ind - slab_thickness / 2, yz_ind + slab_thickness / 2
+                indices = (depth_yz > start).nonzero() and (depth_yz < stop).nonzero()
+                points_yz = points_yz[indices]
+                depth_yz = depth_yz[indices]
+                weights_yz = weights[indices]
+
+            # Set alpha to be proportional to weights
+            colors_xy = cmap(normalize(depth_xy))
+            colors_xy[:, -1] = weights_xy
+            colors_xz = cmap(normalize(depth_xz))
+            colors_xz[:, -1] = weights_xz
+            colors_yz = cmap(normalize(depth_yz))
+            colors_yz[:, -1] = weights_yz
+
+            if rotate_90_deg != 0:
+                points_xy = rot90_points(points_xy, rotate_90_deg)
+                points_xz = rot90_points(points_xz, rotate_90_deg)
+                points_yz = rot90_points(points_yz, rotate_90_deg)
+
+            axes[0].scatter(
+                points_xy[:, 0],
+                points_xy[:, 1],
+                marker=marker,
+                s=100,
+                color=colors_xy,
+            )
+            axes[1].scatter(
+                points_xz[:, 0],
+                points_xz[:, 1],
+                marker=marker,
+                s=100,
+                color=colors_xz,
+            )
+            axes[2].scatter(
+                points_yz[:, 0],
+                points_yz[:, 1],
+                marker=marker,
+                s=100,
+                color=colors_yz,
+            )
+    [ax.set_xlim([0, img_dims[-1]]) for ax in axes]
+    [ax.set_ylim([img_dims[-1], 0]) for ax in axes]
+
+    # plt.show()
+    # plt.close()
+    return axes
+
+
 def show_warped_vol(
     moving,
     fixed,
     warped,
-    ctl_points,
-    tgt_points,
-    warped_points,
+    ctl_points=None,
+    tgt_points=None,
+    warped_points=None,
+    weights=None,
     suptitle=None,
     save_path=None,
 ):
@@ -276,9 +450,27 @@ def show_warped_vol(
     """
 
     img_dim = moving.shape[-1]
-    tgt_points = (tgt_points + 1) / 2
-    ctl_points = (ctl_points + 1) / 2
-    warped_points = (warped_points + 1) / 2
+    if tgt_points is not None and ctl_points is not None and warped_points is not None:
+        plot_points = True
+    else:
+        plot_points = False
+    if plot_points:
+        tgt_points = (tgt_points + 1) / 2 * img_dim
+        ctl_points = (ctl_points + 1) / 2 * img_dim
+        warped_points = (warped_points + 1) / 2 * img_dim
+
+        moving_colors = ["r" for _ in range(len(ctl_points))]
+        fixed_colors = ["b" for _ in range(len(ctl_points))]
+        warped_colors = ["r" for _ in range(len(ctl_points))]
+
+        if weights is None:
+            weights = np.ones(len(ctl_points))
+        else:
+            weights = utils.rescale_intensity(weights)
+
+    # Set global vmin and vmax so intensities values are comparable relative to each other
+    vmin = min(moving.min(), fixed.min(), warped.min())
+    vmax = max(moving.max(), fixed.max(), warped.max())
 
     fig, axes = plt.subplots(3, 3, figsize=(16, 16))
     [ax.set_xticks([0, moving.shape[-1]]) for ax in axes.ravel()]
@@ -287,8 +479,6 @@ def show_warped_vol(
     [ax.set_yticklabels([-1, 1]) for ax in axes.ravel()]
     [ax.set_xlim([-0 * img_dim, 1 * img_dim]) for ax in axes.ravel()]
     [ax.set_ylim([-0 * img_dim, 1 * img_dim]) for ax in axes.ravel()]
-
-    colors = cm.viridis(np.linspace(0, 1, len(ctl_points)))
 
     xy_ind = moving.shape[-1] // 2
     xz_ind = moving.shape[-2] // 2
@@ -311,54 +501,83 @@ def show_warped_vol(
             p_index = 1
         elif index == 2:
             p_index = 0
-        axes[index, 0].imshow(m, origin="upper", cmap="gray")
-        for k, c in zip(range(len(ctl_points)), colors):
+        axes[index, 0].imshow(m, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
+        axes[index, 1].imshow(f, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
+        axes[index, 2].imshow(w, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
+
+        if plot_points:
             axes[p_index, 0].scatter(
-                ctl_points[k, i] * img_dim,
-                ctl_points[k, j] * img_dim,
-                marker="+",
-                s=100,
-                color=c,
-            )
-
-        axes[index, 1].imshow(f, origin="upper", cmap="gray")
-        for k, c in zip(range(len(ctl_points)), colors):
-            axes[p_index, 1].scatter(
-                tgt_points[k, i] * img_dim,
-                tgt_points[k, j] * img_dim,
-                marker="+",
-                s=100,
-                color=c,
-            )
-
-        axes[index, 2].imshow(w, origin="upper", cmap="gray")
-        for k, c in zip(range(len(ctl_points)), colors):
-            axes[p_index, 2].scatter(
-                warped_points[k, i] * img_dim,
-                warped_points[k, j] * img_dim,
+                ctl_points[:, i],
+                ctl_points[:, j],
                 marker=".",
                 s=100,
-                color=c,
+                color=moving_colors,
+                alpha=weights,
             )
-            axes[p_index, 2].scatter(
-                tgt_points[k, i] * img_dim,
-                tgt_points[k, j] * img_dim,
+            axes[p_index, 1].scatter(
+                tgt_points[:, i],
+                tgt_points[:, j],
                 marker="+",
                 s=100,
-                color=c,
+                color=fixed_colors,
+                alpha=weights,
             )
+            axes[p_index, 2].scatter(
+                warped_points[:, i],
+                warped_points[:, j],
+                marker=".",
+                s=100,
+                color=warped_colors,
+                alpha=weights,
+            )
+            axes[p_index, 2].scatter(
+                tgt_points[:, i],
+                tgt_points[:, j],
+                marker="+",
+                s=100,
+                color=fixed_colors,
+                alpha=weights,
+            )
+            # for k, c, alpha in zip(range(len(ctl_points)), moving_colors, weights):
+            #     axes[p_index, 0].scatter(
+            #         ctl_points[:, i],
+            #         ctl_points[:, j],
+            #         marker=".",
+            #         s=100,
+            #         color=c,
+            #         alpha=alpha,
+            #     )
+            # for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
+            #     axes[p_index, 1].scatter(
+            #         tgt_points[k, i],
+            #         tgt_points[k, j],
+            #         marker="+",
+            #         s=100,
+            #         color="b",
+            #         alpha=alpha,
+            #     )
+            # for k, c, alpha in zip(range(len(ctl_points)), warped_colors, weights):
+            #     axes[p_index, 2].scatter(
+            #         warped_points[k, i],
+            #         warped_points[k, j],
+            #         marker=".",
+            #         s=100,
+            #         color="r",
+            #         alpha=alpha,
+            #     )
+            # for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
+            #     axes[p_index, 2].scatter(
+            #         tgt_points[k, i],
+            #         tgt_points[k, j],
+            #         marker="+",
+            #         s=100,
+            #         color="b",
+            #         alpha=alpha,
+            #     )
 
     axes[0, 0].set_title("Moving")
     axes[0, 1].set_title("Fixed")
     axes[0, 2].set_title("Warped")
-    axes[0, 0].set_ylabel("y")
-    axes[0, 0].set_xlabel("x")
-
-    axes[1, 0].set_xlabel("x")
-    axes[1, 0].set_ylabel("z")
-
-    axes[2, 0].set_xlabel("y")
-    axes[2, 0].set_ylabel("z")
     if save_path is not None:
         fig.savefig(
             save_path,
@@ -371,3 +590,17 @@ def show_warped_vol(
     fig.show()
     plt.show()
     plt.close()
+
+
+def plot_groupwise_register(list_of_moving_imgs, list_of_aligned_imgs):
+    fig, axes = plt.subplots(
+        2, len(list_of_moving_imgs), figsize=(len(list_of_moving_imgs) * 4, 2 * 4)
+    )
+    for i, img in enumerate(list_of_moving_imgs):
+        axes[0, i].imshow(img, cmap="gray")
+        axes[0, i].axis("off")
+    for i, img in enumerate(list_of_aligned_imgs):
+        axes[1, i].imshow(img, cmap="gray")
+        axes[1, i].axis("off")
+    fig.show()
+    plt.show()

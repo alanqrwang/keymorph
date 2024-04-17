@@ -150,11 +150,11 @@ output/*
 pretraining_output/*
 register_output/*
 
-*.sh
 job_out/*
 job_err/*
-register.ipynb
 
 *.npy
 *.out
 .vscode/
+*.cache
+cache/

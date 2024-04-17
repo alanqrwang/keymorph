@@ -190,7 +190,7 @@ def random_affine_augment(
     seg=None,
     points=None,
     max_random_params=(0.2, 0.2, 3.1416, 0.1),
-    scale_params=None,
+    scale_params=1,
 ):
     """Randomly augment moving image. Optionally augments corresponding segmentation and keypoints.
 
@@ -199,12 +199,10 @@ def random_affine_augment(
     :param scale_params: If set, scales parameters by this value. Use for ramping up degree of augmnetation.
     """
     s, o, a, z = max_random_params
-    if scale_params:
-        assert scale_params >= 0 and scale_params <= 1
-        s *= scale_params
-        o *= scale_params
-        a *= scale_params
-        z *= scale_params
+    s *= scale_params
+    o *= scale_params
+    a *= scale_params
+    z *= scale_params
     if len(img.shape) == 4:
         scale = torch.FloatTensor(1, 2).uniform_(1 - s, 1 + s)
         offset = torch.FloatTensor(1, 2).uniform_(-o, o)
@@ -228,27 +226,28 @@ def random_affine_augment(
     if points is not None:
         points = augmenter.deform_points(points, params)
         res += (points,)
-    return res
+    return res[0] if len(res) == 1 else res
 
 
 def affine_augment(img, fixed_params, seg=None, points=None):
     """Augment moving image. Optionally augments corresponding segmentation and keypoints.
+    Augments isotropically in all directions. TODO: fix this?
 
     :param img: Moving image to augment (bs, nch, l, w) or (bs, nch, l, w, h)
-    :param fixed_params: Fixed parameters for transformation.
+    :param fixed_params: tuple of floats, fixed parameters for transformation.
     """
     s, o, a, z = fixed_params
     if len(img.shape) == 4:
-        scale = torch.tensor([e + 1 for e in s]).unsqueeze(0).float()
-        offset = torch.tensor(o).unsqueeze(0).float()
-        theta = torch.tensor(a).unsqueeze(0).float()
-        shear = torch.tensor(z).unsqueeze(0).float()
+        scale = torch.FloatTensor(1, 2).fill_(1 + s)
+        offset = torch.FloatTensor(1, 2).fill_(o)
+        theta = torch.FloatTensor(1, 1).fill_(a)
+        shear = torch.FloatTensor(1, 2).fill_(z)
         augmenter = AffineDeformation2d(device=img.device)
     else:
-        scale = torch.tensor([e + 1 for e in s]).unsqueeze(0).float()
-        offset = torch.tensor(o).unsqueeze(0).float()
-        theta = torch.tensor(a).unsqueeze(0).float()
-        shear = torch.tensor(z).unsqueeze(0).float()
+        scale = torch.FloatTensor(1, 3).fill_(1 + s)
+        offset = torch.FloatTensor(1, 3).fill_(o)
+        theta = torch.FloatTensor(1, 3).fill_(a)
+        shear = torch.FloatTensor(1, 6).fill_(z)
         augmenter = AffineDeformation3d(device=img.device)
 
     params = (scale, offset, theta, shear)
@@ -261,19 +260,17 @@ def affine_augment(img, fixed_params, seg=None, points=None):
     if points is not None:
         points = augmenter.deform_points(points, params)
         res += (points,)
-    return res
+    return res[0] if len(res) == 1 else res
 
 
 def random_affine_augment_pair(
-    img1, img2, max_random_params=(0.2, 0.2, 3.1416, 0.1), scale_params=None
+    img1, img2, max_random_params=(0.2, 0.2, 3.1416, 0.1), scale_params=1
 ):
     s, o, a, z = max_random_params
-    if scale_params:
-        assert scale_params >= 0 and scale_params <= 1
-        s *= scale_params
-        o *= scale_params
-        a *= scale_params
-        z *= scale_params
+    s *= scale_params
+    o *= scale_params
+    a *= scale_params
+    z *= scale_params
     if len(img1.shape) == 4:
         scale = torch.FloatTensor(1, 2).uniform_(1 - s, 1 + s)
         offset = torch.FloatTensor(1, 2).uniform_(-o, o)

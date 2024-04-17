@@ -1,3 +1,4 @@
+import re
 import torch
 import torch.nn.functional as F
 import math
@@ -6,16 +7,63 @@ from collections import defaultdict
 import wandb
 import os
 import argparse
+import json
+
+# import itk
 
 
-def align_img(grid, x):
+def align_img(grid, x, mode="bilinear"):
     return F.grid_sample(
-        x, grid=grid, mode="bilinear", padding_mode="border", align_corners=False
+        x,
+        grid=grid,
+        mode=mode,
+        padding_mode="border",
+        align_corners=False,
     )
 
 
+# def align_img_elastix(transform_parameters, x):
+#     """x: (dim1, dim2, dim3) or (dim1, dim2)
+#     Returns: (dim1, dim2, dim3) or (dim1, dim2)"""
+#     x = x.cpu().detach().numpy().astype(np.float32)
+#     x = itk.image_view_from_array(x)
+#     transform_parameters.SetParameter("FinalBSplineInterpolationOrder", "0")
+#     result_image = itk.transformix_filter(x, transform_parameters)
+#     res = torch.tensor(itk.array_view_from_image(result_image))
+#     return res
+
+
+def displacement2flow(displacement_field):
+    """displacement_field: (N, D, H, W, 3).
+    Assumes original space is physical space (voxel units), 256x256x256."""
+    W, H, D = displacement_field.shape[1:-1]
+
+    # Step 1: Create the original grid for 3D
+    coords_x, coords_y, coords_z = torch.meshgrid(
+        torch.linspace(-1, 1, W),
+        torch.linspace(-1, 1, H),
+        torch.linspace(-1, 1, D),
+        indexing="ij",
+    )
+    coords = torch.stack([coords_z, coords_y, coords_x], dim=-1)  # Shape: (D, H, W, 3)
+    coords = coords.unsqueeze(0)  # Shape: (N, 3, D, H, W), N=1
+
+    # Step 2: Normalize the displacement field
+    # Convert physical displacement values to the [-1, 1] range
+    # Assuming the displacement field is given in voxel units (physical coordinates)
+    for i, dim_size in enumerate(
+        [W, H, D]
+    ):  # Note the order matches x, y, z as per the displacement_field
+        # Normalize such that the displacement of 1 full dimension length corresponds to a move from -1 to 1
+        displacement_field[..., i] = 2 * displacement_field[..., i] / (dim_size - 1)
+
+    # Step 3: Add the displacement field to the original grid to get the transformed coordinates
+    return coords + displacement_field
+
+
 def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
-    array = array.float()
+    if isinstance(array, torch.Tensor):
+        array = array.float()
 
     if percentiles != (0, 100):
         cutoff = np.percentile(array, percentiles)
@@ -32,24 +80,31 @@ def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
     return array
 
 
-def parse_test_metric(mod, aug):
-    mod1, mod2 = mod.split("_")
+def parse_test_mod(mod):
+    if isinstance(mod, str):
+        mod1, mod2 = mod.split("_")
+    else:
+        mod1, mod2 = mod
+    return mod1, mod2
+
+
+def parse_test_aug(aug):
     if "rot" in aug:
         if aug == "rot0":
-            rot_aug = [0, 0, 0]
+            rot_aug = 0
         elif aug == "rot45":
-            rot_aug = np.random.choice([0, math.pi / 4], size=3)
+            rot_aug = math.pi / 4
         elif aug == "rot90":
-            rot_aug = np.random.choice([0, math.pi / 2], size=3)
+            rot_aug = math.pi / 2
         elif aug == "rot135":
-            rot_aug = np.random.choice([0, 3 * math.pi / 4], size=3)
+            rot_aug = 3 * math.pi / 4
         elif aug == "rot180":
-            rot_aug = np.random.choice([0, math.pi], size=3)
-        aug_param = [(0, 0, 0), (0, 0, 0), rot_aug, (0, 0, 0, 0, 0, 0)]
+            rot_aug = math.pi
+        aug_param = (0, 0, rot_aug, 0)
     else:
         raise NotImplementedError()
 
-    return mod1, mod2, aug_param
+    return aug_param
 
 
 def str_or_float(x):
@@ -72,8 +127,27 @@ def initialize_wandb(config):
         with open(config.wandb_api_key_path, "r") as f:
             os.environ["WANDB_API_KEY"] = f.read().strip()
 
-    wandb.init(**config.wandb_kwargs, resume=config.resume)
+    wandb.init(**config.wandb_kwargs)
     wandb.config.update(config)
+
+
+def load_checkpoint(
+    checkpoint_path, model, optimizer, scheduler=None, resume=False, device="cpu"
+):
+    state = torch.load(checkpoint_path, map_location=torch.device(device))
+    state_dict = state["state_dict"]
+    missing_keys, _ = model.backbone.load_state_dict(state_dict, strict=True)
+    print("Missing keys when loading checkpoint: ", missing_keys)
+
+    if resume:
+        optimizer.load_state_dict(state["optimizer"])
+        if scheduler:
+            scheduler.load_state_dict(state["scheduler"])
+
+    if scheduler:
+        return state, model, optimizer, scheduler
+    else:
+        return state, model, optimizer
 
 
 # Taken from https://sumit-ghosh.com/articles/parsing-dictionary-key-value-pairs-kwargs-argparse-python/
@@ -163,3 +237,112 @@ def summary(network):
     )
     print("---------------------------------------------------------------")
     print("")
+
+
+def save_dict_as_json(dict, save_path):
+    with open(save_path, "w") as outfile:
+        json.dump(dict, outfile, sort_keys=True, indent=4)
+
+
+def get_latest_epoch_file(directory_path):
+    max_epoch = -1
+    latest_epoch_file = None
+
+    # Compile a regular expression pattern to extract the epoch number
+    epoch_pattern = re.compile(r"epoch(\d+)_trained_model.pth.tar")
+
+    # List all files in the given directory
+    for filename in os.listdir(directory_path):
+        match = epoch_pattern.match(filename)
+        if match:
+            # Extract the epoch number and convert it to an integer
+            epoch_num = int(match.group(1))
+            # Update the max_epoch and latest_epoch_file if this file has a larger epoch number
+            if epoch_num > max_epoch:
+                max_epoch = epoch_num
+                latest_epoch_file = filename
+
+    # Return the path of the file with the largest epoch number
+    if latest_epoch_file is not None:
+        return os.path.join(directory_path, latest_epoch_file)
+    else:
+        return None
+
+
+def one_hot_eval(asegs):
+    subset_regs = [
+        [0, 24],  # Background and CSF
+        [13, 52],  # Pallidum
+        [18, 54],  # Amygdala
+        [11, 50],  # Caudate
+        [3, 42],  # Cerebral Cortex
+        [17, 53],  # Hippocampus
+        [10, 49],  # Thalamus
+        [12, 51],  # Putamen
+        [2, 41],  # Cerebral WM
+        [8, 47],  # Cerebellum Cortex
+        [4, 43],  # Lateral Ventricle
+        [7, 46],  # Cerebellum WM
+        [16, 16],  # Brain-Stem
+    ]
+
+    N, _, dim1, dim2, dim3 = asegs.shape
+    chs = 14
+    one_hot = torch.zeros(N, chs, dim1, dim2, dim3)
+
+    for i, s in enumerate(subset_regs):
+        combined_vol = (asegs == s[0]) | (asegs == s[1])
+        one_hot[:, i, :, :, :] = (combined_vol * 1).float()
+
+    mask = one_hot.sum(1).squeeze()
+    ones = torch.ones_like(mask)
+    non_roi = ones - mask
+    one_hot[:, -1, :, :, :] = non_roi
+
+    assert (
+        one_hot.sum(1).sum() == N * dim1 * dim2 * dim3
+    ), "One-hot encoding does not add up to 1"
+    return one_hot
+
+
+def one_hot(seg):
+    """Converts a segmentation to one-hot encoding.
+
+    seg: (N, 1, D, H, W) tensor of integer labels
+    """
+    return F.one_hot(seg)[:, 0].permute(0, 4, 1, 2, 3)
+
+
+def one_hot_subsampled_pair(seg1, seg2, subsample_num=14):
+    # Determine the unique integers in both segmentations
+    unique_vals1 = np.unique(seg1.cpu().detach().numpy())
+    unique_vals2 = np.unique(seg2.cpu().detach().numpy())
+
+    # Take intersection
+    unique_vals = np.intersect1d(unique_vals1, unique_vals2, assume_unique=True)
+
+    # Subsample (if more than subsample_num values)
+    if len(unique_vals) > subsample_num:
+        selected_vals = np.random.choice(unique_vals, subsample_num, replace=False)
+    else:
+        selected_vals = unique_vals
+        subsample_num = len(unique_vals)
+
+    # Step 3: Create a mapping for the selected integers
+    mapping = {val: i for i, val in enumerate(selected_vals)}
+
+    # Step 4: Apply one-hot encoding to both segmentations with the mapping
+    def apply_one_hot(asegs, mapping, subsample_num):
+        one_hot_maps = torch.zeros(
+            (asegs.shape[0], subsample_num, *asegs.shape[2:]),
+            dtype=torch.float32,
+            device=asegs.device,
+        )
+        for val, new_idx in mapping.items():
+            one_hot_maps[:, new_idx] = (asegs == val).float()
+        return one_hot_maps
+
+    one_hot_maps1 = apply_one_hot(seg1, mapping, subsample_num)
+    one_hot_maps2 = apply_one_hot(seg2, mapping, subsample_num)
+
+    return one_hot_maps1, one_hot_maps2
