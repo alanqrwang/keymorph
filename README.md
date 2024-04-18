@@ -1,6 +1,57 @@
 # KeyMorph: Robust Multi-modal Registration via Keypoint Detection
 
-End-to-end learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
+KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
+
+## Update (April 2024)
+- Releasing an updated version of foundational KeyMorph  for brain MRIs which is trained on over 100K images at full resolution (256^3).
+
+## Requirements
+Install the packages with `pip install -r requirements.txt`.
+
+You might need to install Pytorch separately, according to your GPU and CUDA version.
+Install Pytorch [here](https://pytorch.org/get-started/locally/).
+
+## Downloading Trained Weights
+You can find all trained weights under [Releases](https://github.com/alanqrwang/keymorph/releases).
+Download them and put them in the `./weights/` folder.
+
+## Registering brain volumes with foundation model
+```
+python register.py \
+    --moving ./example_data/images/IXI_000001_0000.nii.gz \
+    --fixed ./example_data/images/IXI_000002_0000.nii.gz \
+    --load_path ./weights/foundation-numkey256-256x256x256.tar \
+    --num_keypoints 256 \
+    --moving_seg ./example_data/labels/IXI_000001_0000.nii.gz \
+    --fixed_seg ./example_data/labels/IXI_000002_0000.nii.gz 
+```
+
+`--moving_seg` and `--fixed_seg` are optional. If provided, the script will compute the Dice score between the registered moving segmentation map and the fixed segmentation map. Otherwise, it will only compute MSE between the registered moving image and the fixed image.
+
+Add the flag `--save_preds` to save outputs to disk. The default location is `./register_output/`.
+
+The model is trained on full resolution (256x256x256) images. 
+The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
+
+## Registering brain volumes
+All other model weights are trained on half-resolution (128x128x128). 
+To register two volumes with our best-performing model:
+
+```
+python register.py \
+    --moving ./example_data/images_half/IXI_001.nii.gz \
+    --fixed ./example_data/images_half/IXI_002.nii.gz \
+    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
+    --num_keypoints 512 \
+    --moving_seg ./example_data/labels_half/IXI_001.nii.gz \
+    --fixed_seg ./example_data/labels_half/IXI_002.nii.gz 
+```
+
+`--moving_seg` and `--fixed_seg` are optional. If provided, the script will compute the Dice score between the registered moving segmentation map and the fixed segmentation map. Otherwise, it will only compute MSE between the registered moving image and the fixed image.
+
+Add the flag `--save_preds` to save outputs to disk. The default location is `./register_output/`.
+
+For all inputs, ensure that pixel values are min-max normalized to the $[0,1]$ range and that the spatial dimensions are $(L, W, H) = (128, 128, 128)$.
 
 ## TLDR in code
 The crux of the code is in the `forward()` function in `keymorph/model.py`, which performs one forward pass through the entire KeyMorph pipeline.
@@ -42,37 +93,6 @@ def forward(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
 ```
 The `network` variable is a CNN with center-of-mass layer which extracts keypoints from the input images.
 The `kp_aligner` variable is a keypoint alignment module. It has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be affine or nonlinear.
-
-## Requirements
-Install the packages with `pip install -r requirements.txt`.
-
-You might need to install Pytorch separately, according to your GPU and CUDA version.
-Install Pytorch [here](https://pytorch.org/get-started/locally/).
-
-## Downloading Trained Weights
-You can find all trained weights for most models used in this repository (KeyMorph training, pretraining, and brain extraction) under [Releases](https://github.com/alanqrwang/keymorph/releases) in this repository.
-Download them and put them in the `./weights/` folder.
-
-## Registering brain volumes
-For convenience, we provide a script `register.py` which registers two brain volumes using our trained weights.
-To register two volumes with our best-performing model:
-
-```
-python register.py \
-    --moving ./example_data/images/IXI_001.nii.gz \
-    --fixed ./example_data/images/IXI_002.nii.gz \
-    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
-    --num_keypoints 512 \
-    --moving_seg ./example_data/labels/IXI_001.nii.gz \
-    --fixed_seg ./example_data/labels/IXI_002.nii.gz 
-```
-
-`--moving_seg` and `--fixed_seg` are optional. If provided, the script will compute the Dice score between the registered moving segmentation map and the fixed segmentation map. Otherwise, it will only compute MSE between the registered moving image and the fixed image.
-
-Add the flag `--save_preds` to save outputs to disk. The default location is `./register_output/`.
-
-For all inputs, ensure that pixel values are min-max normalized to the $[0,1]$ range and that the spatial dimensions are $(L, W, H) = (128, 128, 128)$.
-
 ## Training KeyMorph
 Use `run.py` to train KeyMorph.
 

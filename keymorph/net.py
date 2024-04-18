@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from .unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from . import layers
 
+from nnunet_mednext import create_mednext_v1
 from se3cnn.image.gated_block import GatedBlock
 
 h_dims = [32, 64, 64, 128, 128, 256, 256, 512]
@@ -131,6 +132,21 @@ class TruncatedUNet(nn.Module):
             conv_padding=1,
         )
         self.backbone = backbone
+
+    def forward(self, x):
+        return self.backbone(x)
+
+
+class MedNeXt(nn.Module):
+    def __init__(self, input_ch, out_dim, model_id="L", norm_type="group"):
+        super(MedNeXt, self).__init__()
+        self.backbone = create_mednext_v1(
+            num_input_channels=input_ch,
+            num_classes=out_dim,
+            model_id=model_id,  # S, B, M and L are valid model ids
+            kernel_size=3,  # 3x3x3 and 5x5x5 were tested in publication
+            deep_supervision=False,  # was used in publication
+        )
 
     def forward(self, x):
         return self.backbone(x)

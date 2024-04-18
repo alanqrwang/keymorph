@@ -84,35 +84,6 @@ class GigaMedDataset:
         return subject_list[0]
 
 
-GIGAMED_FAMILY_TRAIN_PARAMS = {
-    "same_sub_same_mod": {
-        "transform_type": "rigid",
-        "loss_fn": "mse",
-        "max_random_params": (0, 0.15, 3.1416, 0),
-    },
-    "diff_sub_same_mod": {
-        "transform_type": "tps_loguniform",
-        "loss_fn": "mse",
-        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
-    },
-    "synthbrain": {
-        "transform_type": "tps_loguniform",
-        "loss_fn": "dice",
-        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
-    },
-    "normal_skullstripped": {
-        "transform_type": "tps_loguniform",
-        "loss_fn": "dice",
-        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
-    },
-    "normal_nonskullstripped": {
-        "transform_type": "tps_loguniform",
-        "loss_fn": "dice",
-        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
-    },
-}
-
-
 class GigaMed:
     """Top-level class. Handles creating Pytorch dataloaders.
 
