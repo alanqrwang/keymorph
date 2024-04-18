@@ -97,7 +97,6 @@ def parse_args():
         "--backbone",
         type=str,
         default="conv",
-        choices=["conv", "unet", "se3cnn", "se3cnn2", "truncatedunet", "mednext"],
         help="Keypoint extractor module to use",
     )
     parser.add_argument(
@@ -105,6 +104,12 @@ def parse_args():
         type=int,
         default=1,
         help="Number of truncated layers for truncated unet",
+    )
+    parser.add_argument(
+        "--num_levels_for_unet",
+        type=int,
+        default=1,
+        help="Number of levels for unet",
     )
 
     parser.add_argument(
@@ -308,15 +313,23 @@ def get_data(args):
     if args.train_dataset == "ixi":
         train_loader, _ = ixi.get_loaders()
     elif args.train_dataset == "gigamed":
+        transform = tio.Compose(
+            [
+                tio.CropOrPad((224, 224, 224), padding_mode=0, include=("img",)),
+                tio.CropOrPad((224, 224, 224), padding_mode=0, include=("seg",)),
+            ]
+        )
         gigamed_dataset = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
             include_seg=False,
+            transform=transform,
         )
         gigamed_dataset_with_seg = gigamed.GigaMed(
             args.batch_size,
             args.num_workers,
             include_seg=True,
+            transform=transform,
         )
         train_loader = gigamed_dataset_with_seg.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
@@ -472,6 +485,7 @@ def get_model(args):
                 args.dim,
                 1,
                 args.num_keypoints,
+                num_levels=args.num_levels_for_unet,
             )
         elif args.backbone == "truncatedunet":
             network = TruncatedUNet(
@@ -479,12 +493,13 @@ def get_model(args):
                 1,
                 args.num_keypoints,
                 args.num_truncated_layers_for_truncatedunet,
+                num_levels=args.num_levels_for_unet,
             )
         elif args.backbone == "se3cnn":
             network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
         elif args.backbone == "mednext":
             network = MedNeXt(
-                1, args.num_keypoints, model_id="S", norm_type=args.norm_type
+                1, args.num_keypoints, model_id="L", norm_type=args.norm_type
             )
         else:
             raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))

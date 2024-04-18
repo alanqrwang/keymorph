@@ -43,7 +43,7 @@ class ConvNet(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, dim, input_ch, out_dim):
+    def __init__(self, dim, input_ch, out_dim, num_levels):
         super(UNet, self).__init__()
         if dim == 2:
             backbone = UNet2D(
@@ -53,7 +53,7 @@ class UNet(nn.Module):
                 f_maps=64,
                 layer_order="gcr",
                 num_groups=8,
-                num_levels=4,
+                num_levels=num_levels,
                 is_segmentation=False,
                 conv_padding=1,
             )
@@ -65,7 +65,7 @@ class UNet(nn.Module):
                 f_maps=32,  # Used by nnUNet
                 layer_order="gcr",
                 num_groups=8,
-                num_levels=4,
+                num_levels=num_levels,
                 is_segmentation=False,
                 conv_padding=1,
             )
@@ -116,7 +116,7 @@ class RXFM_Net(nn.Module):
 
 
 class TruncatedUNet(nn.Module):
-    def __init__(self, dim, input_ch, out_dim, num_truncated_layers):
+    def __init__(self, dim, input_ch, out_dim, num_truncated_layers, num_levels):
         super(TruncatedUNet, self).__init__()
         assert dim == 3
         backbone = TruncatedUNet3D(
@@ -127,7 +127,7 @@ class TruncatedUNet(nn.Module):
             f_maps=32,  # Used by nnUNet
             layer_order="gcr",
             num_groups=8,
-            num_levels=4,
+            num_levels=num_levels,
             is_segmentation=False,
             conv_padding=1,
         )
