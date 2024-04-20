@@ -42,39 +42,6 @@ class ConvNet(nn.Module):
         return out
 
 
-class UNet(nn.Module):
-    def __init__(self, dim, input_ch, out_dim, num_levels):
-        super(UNet, self).__init__()
-        if dim == 2:
-            backbone = UNet2D(
-                input_ch,
-                out_dim,
-                final_sigmoid=False,
-                f_maps=64,
-                layer_order="gcr",
-                num_groups=8,
-                num_levels=num_levels,
-                is_segmentation=False,
-                conv_padding=1,
-            )
-        if dim == 3:
-            backbone = UNet3D(
-                input_ch,
-                out_dim,
-                final_sigmoid=False,
-                f_maps=32,  # Used by nnUNet
-                layer_order="gcr",
-                num_groups=8,
-                num_levels=num_levels,
-                is_segmentation=False,
-                conv_padding=1,
-            )
-        self.backbone = backbone
-
-    def forward(self, x):
-        return self.backbone(x)
-
-
 class RXFM_Net(nn.Module):
     def __init__(self, n_in, output_chans, norm_type):
         super(RXFM_Net, self).__init__()
@@ -113,28 +80,6 @@ class RXFM_Net(nn.Module):
     def forward(self, x):
         x = self.sequence(x)
         return x
-
-
-class TruncatedUNet(nn.Module):
-    def __init__(self, dim, input_ch, out_dim, num_truncated_layers, num_levels):
-        super(TruncatedUNet, self).__init__()
-        assert dim == 3
-        backbone = TruncatedUNet3D(
-            input_ch,
-            out_dim,
-            num_truncated_layers,
-            final_sigmoid=False,
-            f_maps=32,  # Used by nnUNet
-            layer_order="gcr",
-            num_groups=8,
-            num_levels=num_levels,
-            is_segmentation=False,
-            conv_padding=1,
-        )
-        self.backbone = backbone
-
-    def forward(self, x):
-        return self.backbone(x)
 
 
 class MedNeXt(nn.Module):
