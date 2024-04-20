@@ -1,16 +1,29 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils import checkpoint
 
 
-class MatrixKeypointAligner:
+class MatrixKeypointAligner(nn.Module):
     def __init__(self, dim):
+        super().__init__()
         self.dim = dim
 
     def get_matrix(self, p1, p2, w=None):
         pass
 
-    def grid_from_points(self, points_m, points_f, grid_shape, weights=None, **kwargs):
-        del kwargs
+    def forward(self, *args, **kwargs):
+        return self.grid_from_points(*args, **kwargs)
+
+    def grid_from_points(
+        self,
+        points_m,
+        points_f,
+        grid_shape,
+        weights=None,
+        lmbda=None,
+        compute_on_subgrids=False,
+    ):
         # Note we flip the order of the points here
         matrix = self.get_matrix(points_f, points_m, w=weights)
         grid = F.affine_grid(matrix, grid_shape, align_corners=False)
@@ -123,6 +136,7 @@ class RigidKeypointAligner(MatrixKeypointAligner):
 
 class AffineKeypointAligner(MatrixKeypointAligner):
     def __init__(self, dim):
+        super().__init__(dim)
         self.dim = dim
 
     def get_matrix(self, x, y, w=None):
@@ -166,12 +180,14 @@ class AffineKeypointAligner(MatrixKeypointAligner):
         return out
 
 
-class TPS:
+class TPS(nn.Module):
     """See https://github.com/cheind/py-thin-plate-spline/blob/master/thinplate/numpy.py"""
 
-    def __init__(self, dim, num_subgrids=4):
+    def __init__(self, dim, num_subgrids=4, use_checkpoint=False):
+        super().__init__()
         self.dim = dim
         self.num_subgrids = num_subgrids
+        self.use_checkpoint = use_checkpoint
 
     def fit(self, c, lmbda, w=None):
         """Assumes last dimension of c contains target points.
@@ -375,13 +391,22 @@ class TPS:
                             k * subsize_z : (k + 1) * subsize_z,
                             :,
                         ]
-                        z[
-                            :,
-                            i * subsize_x : (i + 1) * subsize_x,
-                            j * subsize_y : (j + 1) * subsize_y,
-                            k * subsize_z : (k + 1) * subsize_z,
-                            :,
-                        ] = self.tps(theta, ctrl, subgrid)
+                        if self.use_checkpoint:
+                            z[
+                                :,
+                                i * subsize_x : (i + 1) * subsize_x,
+                                j * subsize_y : (j + 1) * subsize_y,
+                                k * subsize_z : (k + 1) * subsize_z,
+                                :,
+                            ] = checkpoint.checkpoint(self.tps, theta, ctrl, subgrid)
+                        else:
+                            z[
+                                :,
+                                i * subsize_x : (i + 1) * subsize_x,
+                                j * subsize_y : (j + 1) * subsize_y,
+                                k * subsize_z : (k + 1) * subsize_z,
+                                :,
+                            ] = self.tps(theta, ctrl, subgrid)
         else:
             z = self.tps(theta, ctrl, grid)
         return z
@@ -417,19 +442,27 @@ class TPS:
             grid[..., 3] = torch.linspace(-1, 1, D).unsqueeze(-1).unsqueeze(-1)
         return grid
 
+    def forward(self, *args, **kwargs):
+        return self.grid_from_points(*args, **kwargs)
+
     def grid_from_points(
         self,
         points_m,
         points_f,
         grid_shape,
         weights=None,
+        lmbda=None,
         compute_on_subgrids=False,
-        **kwargs,
     ):
-        lmbda = kwargs["lmbda"]
-
         # Note we flip the order of the points here
-        theta = self.tps_theta_from_points(points_f, points_m, lmbda, weights=weights)
+        if self.use_checkpoint:
+            theta = checkpoint.checkpoint(
+                self.tps_theta_from_points, points_f, points_m, lmbda, weights
+            )
+        else:
+            theta = self.tps_theta_from_points(
+                points_f, points_m, lmbda, weights=weights
+            )
         return self.tps_grid(
             theta, points_f, grid_shape, compute_on_subgrids=compute_on_subgrids
         )
