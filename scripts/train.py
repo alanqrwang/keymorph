@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import torchio as tio
 import time
+from torch.profiler import profile, record_function, ProfilerActivity
 
 import keymorph.utils as utils
 from keymorph.utils import align_img
@@ -92,12 +93,35 @@ def run_train(train_loader, registration_model, optimizer, train_params, args):
 
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
-            registration_results = registration_model(
-                img_f,
-                img_m,
-                transform_type=transform_type,
-                return_aligned_points=args.visualize,
-            )[transform_type]
+            if args.use_profiler:
+                with profile(
+                    enabled=args.use_profiler,
+                    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                    with_stack=True,
+                    profile_memory=True,
+                    experimental_config=torch._C._profiler._ExperimentalConfig(
+                        verbose=True
+                    ),
+                ) as prof:
+                    with record_function("model_inference"):
+                        registration_results = registration_model(
+                            img_f,
+                            img_m,
+                            transform_type=transform_type,
+                            return_aligned_points=args.visualize,
+                        )[transform_type]
+                print(
+                    prof.key_averages(group_by_stack_n=5).table(
+                        sort_by="self_cuda_memory_usage"
+                    )
+                )
+            else:
+                registration_results = registration_model(
+                    img_f,
+                    img_m,
+                    transform_type=transform_type,
+                    return_aligned_points=args.visualize,
+                )[transform_type]
             grid = registration_results["grid"]
             align_type = transform_type
             tps_lmbda = registration_results["tps_lmbda"]
