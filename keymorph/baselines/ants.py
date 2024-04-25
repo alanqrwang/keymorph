@@ -27,11 +27,10 @@ class ANTs:
         result_dict = {}
 
         for ttype in transform_type:
-            print(ttype)
             if ttype == "rigid":
                 type_of_transform = "Rigid"
             elif ttype == "affine":
-                type_of_transform = "AffineFast"
+                type_of_transform = "Affine"
             elif ttype == "syn":
                 type_of_transform = "SyN"
             elif ttype == "synra":
