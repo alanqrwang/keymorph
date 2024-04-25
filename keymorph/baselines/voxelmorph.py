@@ -52,28 +52,28 @@ class VoxelMorph:
 
         return moved, seg_moved
 
-    # def vxm_register(self, moving, fixed, seg_moving, model_path, gpu):
-    #     # tensorflow device handling
-    #     device, nb_devices = vxm.tf.utils.setup_device(gpu)
+    def vxm_register(self, moving, fixed, seg_moving, model_path, gpu):
+        # tensorflow device handling
+        device, nb_devices = vxm.tf.utils.setup_device(gpu)
 
-    #     inshape = moving.shape[1:-1]
-    #     seg_inshape = seg_moving.shape[1:-1]
-    #     nb_feats = moving.shape[-1]
-    #     seg_nb_feats = seg_moving.shape[-1]
+        inshape = moving.shape[1:-1]
+        seg_inshape = seg_moving.shape[1:-1]
+        nb_feats = moving.shape[-1]
+        seg_nb_feats = seg_moving.shape[-1]
 
-    #     with tf.device(device):
-    #         # load model and predict
-    #         config = dict(inshape=inshape, input_model=None)
-    #         model = vxm.networks.VxmDense.load(model_path, **config)
-    #         warp = model.register(moving, fixed)
-    #         moved = vxm.networks.Transform(inshape, nb_feats=nb_feats).predict(
-    #             [moving, warp]
-    #         )
-    #         seg_moved = vxm.networks.Transform(
-    #             seg_inshape, nb_feats=seg_nb_feats
-    #         ).predict([seg_moving, warp])
+        with tf.device(device):
+            # load model and predict
+            config = dict(inshape=inshape, input_model=None)
+            model = vxm.networks.VxmDense.load(model_path, **config)
+            warp = model.register(moving, fixed)
+            moved = vxm.networks.Transform(inshape, nb_feats=nb_feats).predict(
+                [moving, warp]
+            )
+            seg_moved = vxm.networks.Transform(
+                seg_inshape, nb_feats=seg_nb_feats
+            ).predict([seg_moving, warp])
 
-    #     return moved, seg_moved, warp
+        return moved, seg_moved, warp
 
     def vxm_register_cmd(self, moving, fixed, output_dir):
         moving_path = os.path.join(output_dir, "synthmorph_img_m.nii.gz")
@@ -95,7 +95,9 @@ class VoxelMorph:
         """img is (L, W, H) numpy array"""
         return np.rot90(img, k=1, axes=(1, 2))
 
-    def pairwise_register(self, img_f, img_m, transform_type="dense", **kwargs):
+    def pairwise_register(
+        self, img_f, img_m, transform_type="dense", cmd_line=False, **kwargs
+    ):
         original_device = img_f.device
         assert len(img_f) == 1, "Fixed image should be a single image"
         assert len(img_m) == 1, "Moving image should be a single image"
@@ -124,10 +126,10 @@ class VoxelMorph:
             preaffine_register_time = time.time() - start_time
 
             # Crop all images to save memory
-            img_m = img_m.copy()[48:-48, 48:-48, 32:-32]
-            seg_m = seg_m.copy()[48:-48, 48:-48, 32:-32]
-            img_f = img_f.copy()[48:-48, 48:-48, 32:-32]
-            seg_f = seg_f.copy()[48:-48, 48:-48, 32:-32]
+            img_m = img_m[48:-48, 48:-48, 32:-32]
+            seg_m = seg_m[48:-48, 48:-48, 32:-32]
+            img_f = img_f[48:-48, 48:-48, 32:-32]
+            seg_f = seg_f[48:-48, 48:-48, 32:-32]
 
             # fig, axes = plt.subplots(2, 2, figsize=(6, 6))
             # axes[0, 0].imshow(img_f[80, :, :])
@@ -138,10 +140,16 @@ class VoxelMorph:
 
             # Perform Synthmorph registration
             start_time = time.time()
-            # img_a, seg_a, grid = self.vxm_register(
-            #     img_m, img_f, seg_m, self.synthmorph_model_path, 0
-            # )
-            displacement_field = self.vxm_register_cmd(img_m, img_f, save_dir)
+            if cmd_line:
+                img_m = img_m[None, ..., None]
+                img_f = img_f[None, ..., None]
+                seg_m = seg_m[None, ..., None]
+                seg_f = seg_f[None, ..., None]
+                displacement_field = self.vxm_register_cmd(img_m, img_f, save_dir)
+            else:
+                img_a, seg_a, displacement_field = self.vxm_register(
+                    img_m, img_f, seg_m, self.synthmorph_model_path, 0
+                )
             synthmorph_time = time.time() - start_time
 
             # Convert back to torch
