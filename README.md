@@ -16,35 +16,47 @@ You can find all trained weights under [Releases](https://github.com/alanqrwang/
 Download them and put them in the `./weights/` folder.
 
 ## Registering brain volumes with foundation model
+The foundation model is trained on full resolution (256x256x256) images. 
+The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
+
 ```
-python register.py \
+python scripts/register.py \
+    --registration_model keymorph \
+    --num_keypoints 256 \
+    --backbone truncatedunet \
     --moving ./example_data/images/IXI_000001_0000.nii.gz \
     --fixed ./example_data/images/IXI_000002_0000.nii.gz \
     --load_path ./weights/foundation-numkey256-256x256x256.tar \
-    --num_keypoints 256 \
     --moving_seg ./example_data/labels/IXI_000001_0000.nii.gz \
-    --fixed_seg ./example_data/labels/IXI_000002_0000.nii.gz 
+    --fixed_seg ./example_data/labels/IXI_000002_0000.nii.gz \
+    --list_of_aligns affine tps_0 \
+    --list_of_metrics mse harddice
 ```
 
-`--moving_seg` and `--fixed_seg` are optional. If provided, the script will compute the Dice score between the registered moving segmentation map and the fixed segmentation map. Otherwise, it will only compute MSE between the registered moving image and the fixed image.
+`--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
+You can also replace filenames with directories to register all images in the directory.
+Note that the script expects each segmentation to have the same name for its corresponding image.
 
-Add the flag `--save_preds` to save outputs to disk. The default location is `./register_output/`.
+Add the flag `--save_eval_to_disk` to save outputs to disk. The default location is `./register_output/`.
 
-The model is trained on full resolution (256x256x256) images. 
-The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
 
-## Registering brain volumes
+## Registering brain volumes with half-resolution models
 All other model weights are trained on half-resolution (128x128x128). 
 To register two volumes with our best-performing model:
 
 ```
-python register.py \
-    --moving ./example_data/images_half/IXI_001.nii.gz \
-    --fixed ./example_data/images_half/IXI_002.nii.gz \
-    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
+python scripts/register.py \
+    --half_resolution \
+    --registration_model keymorph \
     --num_keypoints 512 \
-    --moving_seg ./example_data/labels_half/IXI_001.nii.gz \
-    --fixed_seg ./example_data/labels_half/IXI_002.nii.gz 
+    --backbone conv \
+    --moving ./example_data/images_half/IXI_001_128x128x128.nii.gz \
+    --fixed ./example_data/images_half/IXI_002_128x128x128.nii.gz \
+    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
+    --moving_seg ./example_data/labels_half/IXI_001_128x128x128.nii.gz \
+    --fixed_seg ./example_data/labels_half/IXI_002_128x128x128.nii.gz \
+    --list_of_aligns affine tps_0 \
+    --list_of_metrics mse harddice
 ```
 
 `--moving_seg` and `--fixed_seg` are optional. If provided, the script will compute the Dice score between the registered moving segmentation map and the fixed segmentation map. Otherwise, it will only compute MSE between the registered moving image and the fixed image.
