@@ -7,7 +7,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 
 import keymorph.utils as utils
 from keymorph.utils import align_img
-from keymorph.cm_plotter import show_warped, show_warped_vol
+from keymorph.cm_plotter import imshow_registration_2d, imshow_registration_3d
 from keymorph.augmentation import random_affine_augment
 import keymorph.loss_ops as loss_ops
 
@@ -212,7 +212,7 @@ def run_train(train_loader, registration_model, optimizer, train_params, args):
 
         if args.visualize:
             if args.dim == 2:
-                show_warped(
+                imshow_registration_2d(
                     img_m[0, 0].cpu().detach().numpy(),
                     img_f[0, 0].cpu().detach().numpy(),
                     img_a[0, 0].cpu().detach().numpy(),
@@ -221,7 +221,7 @@ def run_train(train_loader, registration_model, optimizer, train_params, args):
                     points_a[0].cpu().detach().numpy(),
                 )
                 if args.seg_available:
-                    show_warped(
+                    imshow_registration_2d(
                         seg_m[0, 0].cpu().detach().numpy(),
                         seg_f[0, 0].cpu().detach().numpy(),
                         seg_a[0, 0].cpu().detach().numpy(),
@@ -230,7 +230,7 @@ def run_train(train_loader, registration_model, optimizer, train_params, args):
                         points_a[0].cpu().detach().numpy(),
                     )
             else:
-                show_warped_vol(
+                imshow_registration_3d(
                     img_m[0, 0].cpu().detach().numpy(),
                     img_f[0, 0].cpu().detach().numpy(),
                     img_a[0, 0].cpu().detach().numpy(),
@@ -246,7 +246,7 @@ def run_train(train_loader, registration_model, optimizer, train_params, args):
                     ),
                 )
                 if args.seg_available:
-                    show_warped_vol(
+                    imshow_registration_3d(
                         seg_m.argmax(1)[0].cpu().detach().numpy(),
                         seg_f.argmax(1)[0].cpu().detach().numpy(),
                         seg_a.argmax(1)[0].cpu().detach().numpy(),

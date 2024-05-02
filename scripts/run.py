@@ -20,7 +20,6 @@ from keymorph.utils import (
     save_dict_as_json,
 )
 from dataset import ixi, gigamed, synthbrain
-from keymorph.cm_plotter import show_warped_vol
 import scripts.gigamed_hyperparameters as gigamed_hps
 import scripts.ixi_hyperparameters as ixi_hps
 from scripts.train import run_train
@@ -621,10 +620,7 @@ def main():
     registration_model = get_model(args)
 
     # Optimizer
-    if isinstance(registration_model, torch.nn.Module):
-        optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
-    else:
-        optimizer = None
+    optimizer = torch.optim.Adam(registration_model.parameters(), lr=args.lr)
 
     # Checkpoint loading
     if args.resume_latest:
@@ -640,7 +636,6 @@ def main():
             args.load_path,
             registration_model,
             optimizer,
-            resume=args.resume,
             device=args.device,
         )
 
@@ -820,15 +815,15 @@ def main():
             )
             random_points = random_points * 2 - 1
             random_points = random_points.repeat(args.batch_size, 1, 1)
-            if args.visualize:
-                show_warped_vol(
-                    ref_img[0, 0].cpu().detach().numpy(),
-                    ref_img[0, 0].cpu().detach().numpy(),
-                    ref_img[0, 0].cpu().detach().numpy(),
-                    random_points[0].cpu().detach().numpy(),
-                    random_points[0].cpu().detach().numpy(),
-                    random_points[0].cpu().detach().numpy(),
-                )
+            # if args.visualize:
+            #     show_warped_vol(
+            #         ref_img[0, 0].cpu().detach().numpy(),
+            #         ref_img[0, 0].cpu().detach().numpy(),
+            #         ref_img[0, 0].cpu().detach().numpy(),
+            #         random_points[0].cpu().detach().numpy(),
+            #         random_points[0].cpu().detach().numpy(),
+            #         random_points[0].cpu().detach().numpy(),
+            #     )
             del ref_subject
 
         for epoch in range(start_epoch, args.epochs + 1):

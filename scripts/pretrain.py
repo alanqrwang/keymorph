@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from keymorph import utils
 from keymorph.augmentation import random_affine_augment
-from keymorph.cm_plotter import show_warped, show_warped_vol
+from keymorph.cm_plotter import imshow_registration_2d, imshow_registration_3d
 
 
 def run_pretrain(loader, random_points, keymorph_model, optimizer, args):
@@ -68,7 +68,7 @@ def run_pretrain(loader, random_points, keymorph_model, optimizer, args):
 
         if args.visualize and step_idx == 0:
             if args.dim == 2:
-                show_warped(
+                imshow_registration_2d(
                     x_moving[0, 0].cpu().detach().numpy(),
                     x_fixed[0, 0].cpu().detach().numpy(),
                     x_fixed[0, 0].cpu().detach().numpy(),
@@ -77,7 +77,7 @@ def run_pretrain(loader, random_points, keymorph_model, optimizer, args):
                     pred_points[0].cpu().detach().numpy(),
                 )
             else:
-                show_warped_vol(
+                imshow_registration_3d(
                     x_moving[0, 0].cpu().detach().numpy(),
                     x_fixed[0, 0].cpu().detach().numpy(),
                     x_fixed[0, 0].cpu().detach().numpy(),

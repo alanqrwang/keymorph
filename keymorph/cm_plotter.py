@@ -1,13 +1,9 @@
-import torch
-from skimage.filters import gaussian
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 import matplotlib
-from glob import glob
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from . import utils
 import numpy as np
 import matplotlib
 
@@ -26,83 +22,7 @@ plt.rc("legend", fontsize=SMALL_SIZE)  # legend fontsize
 plt.rc("figure", titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 
-def blur_cm_plot(Cm_plot, sigma):
-    """
-    Blur the keypoints/center-of-masses for better visualiztion
-
-    Arguments
-    ---------
-    Cm_plot : tensor with the center-of-masses
-    sigma   : how much to blur
-
-    Return
-    ------
-        out : blurred points
-    """
-
-    n_batch = Cm_plot.shape[0]
-    n_reg = Cm_plot.shape[1]
-    out = []
-    for n in range(n_batch):
-        cm_plot = Cm_plot[n, :, :, :]
-        blur_cm_plot = []
-        for r in range(n_reg):
-            _blur_cm_plot = gaussian(cm_plot[r, :, :, :], sigma=sigma, mode="nearest")
-            _blur_cm_plot = torch.from_numpy(_blur_cm_plot).float().unsqueeze(0)
-            blur_cm_plot += [_blur_cm_plot]
-
-        blur_cm_plot = torch.cat(blur_cm_plot, 0)
-        out += [blur_cm_plot.unsqueeze(0)]
-    return torch.cat(out, 0)
-
-
-def get_cm_plot(Y_cm, dim0, dim1, dim2):
-    """
-    Convert the coordinate of the keypoint/center-of-mass to points in an tensor
-
-    Arguments
-    ---------
-    Y_cm : keypoints coordinates/center-of-masses[n_bath, 3, n_reg]
-    dim  : dim of the image
-
-    Return
-    ------
-        out : tensor it assigns value of 1 where keypoints are located otherwise 0
-    """
-
-    n_batch = Y_cm.shape[0]
-
-    out = []
-    for n in range(n_batch):
-        Y = Y_cm[n, :, :]
-        n_reg = Y.shape[1]
-
-        axis2 = torch.linspace(-1, 1, dim2).float()
-        axis1 = torch.linspace(-1, 1, dim1).float()
-        axis0 = torch.linspace(-1, 1, dim0).float()
-
-        index0 = []
-        for i in range(n_reg):
-            index0.append(torch.argmin((axis0 - Y[2, i]) ** 2).item())
-
-        index1 = []
-        for i in range(n_reg):
-            index1.append(torch.argmin((axis1 - Y[1, i]) ** 2).item())
-
-        index2 = []
-        for i in range(n_reg):
-            index2.append(torch.argmin((axis2 - Y[0, i]) ** 2).item())
-
-        cm_plot = torch.zeros(n_reg, dim0, dim1, dim2)
-        for i in range(n_reg):
-            cm_plot[i, index0[i], index1[i], index2[i]] = 1
-
-        out += [cm_plot.unsqueeze(0)]
-
-    return torch.cat(out, 0)
-
-
-def show_warped(
+def imshow_registration_2d(
     img_m, img_f, img_a, points_m, points_f, points_a, save_dir=None, save_name=None
 ):
     """
@@ -189,64 +109,6 @@ def show_warped(
     plt.close()
 
 
-def show_pretrain(
-    moved, fixed, init_points, pred_points, tgt_points, save_dir=None, save_name=None
-):
-    """
-    Moved and fixed should be images with 2 dimensions.
-    Points should be normalized in [0,1].
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(16, 8))
-    axes[0].axis("off")
-    axes[1].axis("off")
-    axes[2].axis("off")
-
-    colors = cm.rainbow(np.linspace(0, 1, len(pred_points)))
-    axes[0].imshow(fixed, origin="upper", cmap="gray")
-    axes[0].set_title("Initial")
-    for i, c in zip(range(len(init_points)), colors):
-        axes[0].scatter(
-            init_points[i, 0] * fixed.shape[1],
-            init_points[i, 1] * fixed.shape[0],
-            marker="+",
-            s=100,
-            color=c,
-        )
-
-    colors = cm.rainbow(np.linspace(0, 1, len(pred_points)))
-    axes[1].imshow(moved, origin="upper", cmap="gray")
-    axes[1].set_title("Prediction")
-    for i, c in zip(range(len(pred_points)), colors):
-        axes[1].scatter(
-            pred_points[i, 0] * fixed.shape[1],
-            pred_points[i, 1] * fixed.shape[0],
-            marker="+",
-            s=100,
-            color=c,
-        )
-
-    axes[2].imshow(moved, origin="upper", cmap="gray")
-    axes[2].set_title("Target")
-    for i, c in zip(range(len(tgt_points)), colors):
-        axes[2].scatter(
-            tgt_points[i, 0] * moved.shape[1],
-            tgt_points[i, 1] * moved.shape[0],
-            marker="+",
-            s=100,
-            color=c,
-        )
-
-    if save_name is not None:
-        fig.savefig(
-            os.path.join(save_dir, save_name),
-            format="png",
-            dpi=100,
-            bbox_inches="tight",
-        )
-    fig.show()
-    plt.show()
-
-
 def rot90_points(points, k):
     assert k in [0, 1, 2, 3]
     rotated_points = np.zeros_like(points)
@@ -275,7 +137,7 @@ def rot90_points(points, k):
     return rotated_points
 
 
-def show_img_and_points(
+def imshow_img_and_points_3d(
     img=None,
     all_points=None,
     all_weights=None,
@@ -287,8 +149,14 @@ def show_img_and_points(
     img_dims=(256, 256, 256),
 ):
     """
+    Plots 3 orthogonal slices of a 3D image and overlays points on them.
+
     img: (H, W, D) image
-    all_points: (N, 3) or (B, N, 3) array of points
+    all_points: (N, 3) or (B, N, 3) array of points.
+        Points can be defined on:
+         1. the Pytorch grid, i.e. in [-1, 1]
+         2. the image grid, e.g. in [0, 256]
+        The code converts Pytorch grids to image grids by internally checking if
     all_weights: (N,) or (B, N) array of weights
     """
 
@@ -302,7 +170,12 @@ def show_img_and_points(
         if len(all_points.shape) == 2:
             all_points = all_points[None]
 
-        all_points = (all_points + 1) / 2 * img_dims[-1]
+        # If points are in [-1, 1], convert to image coordinates
+        if np.all(all_points >= -1) or np.all(all_points <= 1):
+            print("Converting points from [-1, 1] to image coordinates")
+            all_points = (all_points + 1) / 2 * img_dims[-1]
+        if np.any(all_points < 0):
+            raise ValueError("Points must be non-negative")
 
         if all_weights is None:
             all_weights = np.ones(all_points.shape[:2])
@@ -412,18 +285,16 @@ def show_img_and_points(
     [ax.set_xlim([0, img_dims[-1]]) for ax in axes]
     [ax.set_ylim([img_dims[-1], 0]) for ax in axes]
 
-    # plt.show()
-    # plt.close()
     return axes
 
 
-def show_warped_vol(
-    moving,
-    fixed,
-    warped,
-    ctl_points=None,
-    tgt_points=None,
-    warped_points=None,
+def imshow_registration_3d(
+    img_m,
+    img_f,
+    img_a,
+    points_m=None,
+    points_f=None,
+    points_a=None,
     weights=None,
     suptitle=None,
     save_path=None,
@@ -448,132 +319,31 @@ def show_warped_vol(
     gets filled in first, the rows get filled with varying first coordinates,
     as we desire.
     """
-
-    img_dim = moving.shape[-1]
-    if tgt_points is not None and ctl_points is not None and warped_points is not None:
-        plot_points = True
-    else:
-        plot_points = False
-    if plot_points:
-        tgt_points = (tgt_points + 1) / 2 * img_dim
-        ctl_points = (ctl_points + 1) / 2 * img_dim
-        warped_points = (warped_points + 1) / 2 * img_dim
-
-        moving_colors = ["r" for _ in range(len(ctl_points))]
-        fixed_colors = ["b" for _ in range(len(ctl_points))]
-        warped_colors = ["r" for _ in range(len(ctl_points))]
-
-        if weights is None:
-            weights = np.ones(len(ctl_points))
-        else:
-            weights = utils.rescale_intensity(weights)
-
-    # Set global vmin and vmax so intensities values are comparable relative to each other
-    vmin = min(moving.min(), fixed.min(), warped.min())
-    vmax = max(moving.max(), fixed.max(), warped.max())
+    points_af = np.stack([points_a, points_f], axis=0)
 
     fig, axes = plt.subplots(3, 3, figsize=(16, 16))
-    [ax.set_xticks([0, moving.shape[-1]]) for ax in axes.ravel()]
-    [ax.set_xticklabels([-1, 1]) for ax in axes.ravel()]
-    [ax.set_yticks([0, moving.shape[-1]]) for ax in axes.ravel()]
-    [ax.set_yticklabels([-1, 1]) for ax in axes.ravel()]
-    [ax.set_xlim([-0 * img_dim, 1 * img_dim]) for ax in axes.ravel()]
-    [ax.set_ylim([-0 * img_dim, 1 * img_dim]) for ax in axes.ravel()]
 
-    xy_ind = moving.shape[-1] // 2
-    xz_ind = moving.shape[-2] // 2
-    yz_ind = moving.shape[-3] // 2
-
-    all_xy = (moving[:, :, xy_ind], fixed[:, :, xy_ind], warped[:, :, xy_ind])
-    all_xz = (moving[:, xz_ind, :], fixed[:, xz_ind, :], warped[:, xz_ind, :])
-    all_yz = (moving[yz_ind, :, :], fixed[yz_ind, :, :], warped[yz_ind, :, :])
-
-    # Loop over different dimensions, i.e. axial, sagittal, coronal.
-    for index, ((m, f, w), (i, j)) in enumerate(
-        zip([all_xy, all_xz, all_yz], [(0, 1), (0, 2), (1, 2)])
-    ):
-        if index == 0:
-            p_index = 2
-            # m = np.rot90(m, k=2)
-            # f = np.rot90(f, k=2)
-            # w = np.rot90(w, k=2)
-        elif index == 1:
-            p_index = 1
-        elif index == 2:
-            p_index = 0
-        axes[index, 0].imshow(m, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
-        axes[index, 1].imshow(f, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
-        axes[index, 2].imshow(w, origin="upper", cmap="gray", vmin=vmin, vmax=vmax)
-
-        if plot_points:
-            axes[p_index, 0].scatter(
-                ctl_points[:, i],
-                ctl_points[:, j],
-                marker=".",
-                s=100,
-                color=moving_colors,
-                alpha=weights,
-            )
-            axes[p_index, 1].scatter(
-                tgt_points[:, i],
-                tgt_points[:, j],
-                marker="+",
-                s=100,
-                color=fixed_colors,
-                alpha=weights,
-            )
-            axes[p_index, 2].scatter(
-                warped_points[:, i],
-                warped_points[:, j],
-                marker=".",
-                s=100,
-                color=warped_colors,
-                alpha=weights,
-            )
-            axes[p_index, 2].scatter(
-                tgt_points[:, i],
-                tgt_points[:, j],
-                marker="+",
-                s=100,
-                color=fixed_colors,
-                alpha=weights,
-            )
-            # for k, c, alpha in zip(range(len(ctl_points)), moving_colors, weights):
-            #     axes[p_index, 0].scatter(
-            #         ctl_points[:, i],
-            #         ctl_points[:, j],
-            #         marker=".",
-            #         s=100,
-            #         color=c,
-            #         alpha=alpha,
-            #     )
-            # for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
-            #     axes[p_index, 1].scatter(
-            #         tgt_points[k, i],
-            #         tgt_points[k, j],
-            #         marker="+",
-            #         s=100,
-            #         color="b",
-            #         alpha=alpha,
-            #     )
-            # for k, c, alpha in zip(range(len(ctl_points)), warped_colors, weights):
-            #     axes[p_index, 2].scatter(
-            #         warped_points[k, i],
-            #         warped_points[k, j],
-            #         marker=".",
-            #         s=100,
-            #         color="r",
-            #         alpha=alpha,
-            #     )
-            # for k, c, alpha in zip(range(len(ctl_points)), fixed_colors, weights):
-            #     axes[p_index, 2].scatter(
-            #         tgt_points[k, i],
-            #         tgt_points[k, j],
-            #         marker="+",
-            #         s=100,
-            #         color="b",
-            #         alpha=alpha,
-            #     )
+    imshow_img_and_points_3d(
+        img_m,
+        points_m,
+        weights,
+        axes=(axes[0, 0], axes[1, 0], axes[2, 0]),
+        img_dims=(256, 256, 256),
+    )
+    imshow_img_and_points_3d(
+        img_f,
+        points_f,
+        weights,
+        axes=(axes[0, 1], axes[1, 1], axes[2, 1]),
+        img_dims=(256, 256, 256),
+    )
+    imshow_img_and_points_3d(
+        img_a,
+        points_af,
+        weights,
+        axes=(axes[0, 2], axes[1, 2], axes[2, 2]),
+        img_dims=(256, 256, 256),
+    )
 
     axes[0, 0].set_title("Moving")
     axes[0, 1].set_title("Fixed")

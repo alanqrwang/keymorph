@@ -132,7 +132,7 @@ def initialize_wandb(config):
 
 
 def load_checkpoint(
-    checkpoint_path, model, optimizer=None, scheduler=None, resume=False, device="cpu"
+    checkpoint_path, model, optimizer=None, scheduler=None, device="cpu"
 ):
     state = torch.load(checkpoint_path, map_location=torch.device(device))
     state_dict = state["state_dict"]
@@ -146,13 +146,12 @@ def load_checkpoint(
 
     res = (state, model)
 
-    if resume:
-        assert optimizer is not None
+    if optimizer:
         optimizer.load_state_dict(state["optimizer"])
         res += (optimizer,)
-        if scheduler:
-            scheduler.load_state_dict(state["scheduler"])
-            res += (scheduler,)
+    if scheduler:
+        scheduler.load_state_dict(state["scheduler"])
+        res += (scheduler,)
 
     return res
 

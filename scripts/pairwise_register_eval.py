@@ -8,7 +8,7 @@ from keymorph.utils import (
     align_img,
     save_dict_as_json,
 )
-from keymorph.cm_plotter import show_warped, show_warped_vol
+from keymorph.cm_plotter import imshow_registration_2d, imshow_registration_3d
 from keymorph.augmentation import affine_augment
 import keymorph.loss_ops as loss_ops
 
@@ -151,7 +151,7 @@ def run_eval(
 
                         if args.visualize:
                             if args.dim == 2:
-                                show_warped(
+                                imshow_registration_2d(
                                     img_m[0, 0].cpu().detach().numpy(),
                                     img_f[0, 0].cpu().detach().numpy(),
                                     img_a[0, 0].cpu().detach().numpy(),
@@ -173,7 +173,7 @@ def run_eval(
                                     weights=points_weights,
                                 )
                                 if args.seg_available:
-                                    show_warped(
+                                    imshow_registration_2d(
                                         seg_m[0, 0].cpu().detach().numpy(),
                                         seg_f[0, 0].cpu().detach().numpy(),
                                         seg_a[0, 0].cpu().detach().numpy(),
@@ -195,7 +195,7 @@ def run_eval(
                                         weights=points_weights,
                                     )
                             else:
-                                show_warped_vol(
+                                imshow_registration_3d(
                                     img_m[0, 0].cpu().detach().numpy(),
                                     img_f[0, 0].cpu().detach().numpy(),
                                     img_a[0, 0].cpu().detach().numpy(),
@@ -222,7 +222,7 @@ def run_eval(
                                     save_path=None,
                                 )
                                 if args.seg_available:
-                                    show_warped_vol(
+                                    imshow_registration_3d(
                                         seg_m.argmax(1)[0].cpu().detach().numpy(),
                                         seg_f.argmax(1)[0].cpu().detach().numpy(),
                                         seg_a.argmax(1)[0].cpu().detach().numpy(),
