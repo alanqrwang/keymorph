@@ -39,6 +39,7 @@ You can also replace filenames with directories to register all images in the di
 Note that the script expects each segmentation to have the same name for its corresponding image.
 
 Add the flag `--save_eval_to_disk` to save outputs to disk. The default location is `./register_output/`.
+Add the flag `--visualize` to have the script plot images and keypoints. 
 
 
 ### IXI-trained, half-resolution models
@@ -66,6 +67,7 @@ You can also replace filenames with directories to register all images in the di
 Note that the script expects each segmentation to have the same name for its corresponding image.
 
 Add the flag `--save_eval_to_disk` to save outputs to disk. The default location is `./register_output/`.
+Add the flag `--visualize` to have the script plot images and keypoints. 
 
 
 ## TLDR in code
