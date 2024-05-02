@@ -42,6 +42,7 @@ Add the flag `--save_eval_to_disk` to save outputs to disk. The default location
 
 ## Registering brain volumes with half-resolution models
 All other model weights are trained on half-resolution (128x128x128). 
+The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
 To register two volumes with our best-performing model:
 
 ```
@@ -59,11 +60,12 @@ python scripts/register.py \
     --list_of_metrics mse harddice
 ```
 
-`--moving_seg` and `--fixed_seg` are optional. If provided, the script will compute the Dice score between the registered moving segmentation map and the fixed segmentation map. Otherwise, it will only compute MSE between the registered moving image and the fixed image.
+`--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
+You can also replace filenames with directories to register all images in the directory.
+Note that the script expects each segmentation to have the same name for its corresponding image.
 
-Add the flag `--save_preds` to save outputs to disk. The default location is `./register_output/`.
+Add the flag `--save_eval_to_disk` to save outputs to disk. The default location is `./register_output/`.
 
-For all inputs, ensure that pixel values are min-max normalized to the $[0,1]$ range and that the spatial dimensions are $(L, W, H) = (128, 128, 128)$.
 
 ## TLDR in code
 The crux of the code is in the `forward()` function in `keymorph/model.py`, which performs one forward pass through the entire KeyMorph pipeline.
