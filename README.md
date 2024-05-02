@@ -42,7 +42,7 @@ Add the flag `--save_eval_to_disk` to save outputs to disk. The default location
 
 ## Registering brain volumes with half-resolution models
 All other model weights are trained on half-resolution (128x128x128). 
-The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
+The script will automatically min-max normalize the images.
 To register two volumes with our best-performing model:
 
 ```
