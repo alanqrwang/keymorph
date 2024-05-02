@@ -22,6 +22,7 @@ Download them and put them in the `./weights/` folder.
 The foundation model is trained on over 100,000 brain MR images at full resolution (256x256x256). 
 The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
 
+To register a single pair of volumes:
 ```
 python scripts/register.py \
     --registration_model keymorph \
@@ -33,15 +34,37 @@ python scripts/register.py \
     --moving_seg ./example_data/labels/IXI_000001_0000.nii.gz \
     --fixed_seg ./example_data/labels/IXI_000002_0000.nii.gz \
     --list_of_aligns affine tps_0 \
-    --list_of_metrics mse harddice
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
 ```
 
-`--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
-You can also replace filenames with directories to register all images in the directory.
-Note that the script expects each segmentation to have the same name for its corresponding image.
+Description of important flags:
++ `--moving` and `--fixed` are paths to moving and fixed images.
++ `--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
++ `--list_of_aligns` specifies the types of alignment to perform. Options are `rigid`, `affine` and `tps_<lambda>` (TPS with hyperparameter <lambda>). lambda=0 corresponds to exact keypoint alignment. lambda=10 is very similar to affine.
++ `--list_of_metrics` specifies the metrics to report. Options are `mse`, `harddice`, `softdice`, `hausd`, `jdstd`, `jdlessthan0`. To compute Dice scores and surface distances, `--moving_seg` and `--fixed_seg` must be provided.
++ `--save_eval_to_disk` saves all outputs to disk. The default location is `./register_output/`.
++ `--visualize` plots a matplotlib figure of moving, fixed, and registered images overlaid with corresponding points.
 
-Add the flag `--save_eval_to_disk` to save outputs to disk. The default location is `./register_output/`.
-Add the flag `--visualize` to have the script plot images and keypoints. 
+You can also replace filenames with directories to register all images in the directory.
+Note that the script expects corresponding image and segmentation pairs to have the same filename.
+```
+python scripts/register.py \
+    --registration_model keymorph \
+    --num_keypoints 256 \
+    --backbone truncatedunet \
+    --moving ./example_data/images/ \
+    --fixed ./example_data/images/ \
+    --load_path ./weights/foundation-numkey256-256x256x256.tar \
+    --moving_seg ./example_data/labels/ \
+    --fixed_seg ./example_data/labels/ \
+    --list_of_aligns affine tps_0 \
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
+```
+
 
 
 ### IXI-trained, half-resolution models
@@ -61,16 +84,10 @@ python scripts/register.py \
     --moving_seg ./example_data/labels_half/IXI_001_128x128x128.nii.gz \
     --fixed_seg ./example_data/labels_half/IXI_002_128x128x128.nii.gz \
     --list_of_aligns affine tps_0 \
-    --list_of_metrics mse harddice
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
 ```
-
-`--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
-You can also replace filenames with directories to register all images in the directory.
-Note that the script expects each segmentation to have the same name for its corresponding image.
-
-Add the flag `--save_eval_to_disk` to save outputs to disk. The default location is `./register_output/`.
-Add the flag `--visualize` to have the script plot images and keypoints. 
-
 
 ## TLDR in code
 The crux of the code is in the `forward()` function in `keymorph/model.py`, which performs one forward pass through the entire KeyMorph pipeline.
@@ -85,7 +102,7 @@ def forward(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
         img_f, img_m: Fixed and moving intensity image (bs, 1, l, w, h)
         seg_f, seg_m: Fixed and moving one-hot segmentation map (bs, num_classes, l, w, h)
         network: Keypoint extractor network
-        kp_aligner: Affine or TPS keypoint alignment module
+        kp_aligner: Rigid, affine or TPS keypoint alignment module
     '''
     optimizer.zero_grad()
 
@@ -111,7 +128,7 @@ def forward(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
     optimizer.step()
 ```
 The `network` variable is a CNN with center-of-mass layer which extracts keypoints from the input images.
-The `kp_aligner` variable is a keypoint alignment module. It has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be affine or nonlinear.
+The `kp_aligner` variable is a keypoint alignment module. It has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be rigid, affine, or nonlinear (TPS).
 
 ## Training KeyMorph
 Use `scripts/run.py` to train KeyMorph.
