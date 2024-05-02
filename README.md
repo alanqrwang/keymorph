@@ -108,10 +108,15 @@ def forward(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
 ```
 The `network` variable is a CNN with center-of-mass layer which extracts keypoints from the input images.
 The `kp_aligner` variable is a keypoint alignment module. It has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be affine or nonlinear.
+
 ## Training KeyMorph
 Use `run.py` to train KeyMorph.
+Some example bash commands are provided in `bash_scripts`.
 
-We use the weights from the pretraining step to initialize our model. 
+I'm in the process of updating the code to make it more user-friendly, and will update this repository soon.
+In the meantime, feel free to open an issue if you have any training questions.
+
+<!-- We use the weights from the pretraining step to initialize our model. 
 Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
 
 The `--num_keypoints <num_key>` flag specifies the number of keypoints to extract per image as `<num_key>`.
@@ -184,7 +189,7 @@ python run.py --num_keypoints 128 --kp_align_method tps --tps_lmbda loguniform -
                 --load_path ./weights/numkey128_pretrain.2500.h5
 ```
 
-Note that supervised/unsupervised variants can be run similarly to affine, as described above.
+Note that supervised/unsupervised variants can be run similarly to affine, as described above. -->
 
 <!-- ## Step-by-step guide for reproducing our results
 
