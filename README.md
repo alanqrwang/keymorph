@@ -2,8 +2,10 @@
 
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
 
-## Update (April 2024)
-- Releasing an updated version of foundational KeyMorph  for brain MRIs which is trained on over 100K images at full resolution (256^3).
+## Updates
+- [Apr 2024] Releasing foundational model of KeyMorph for brain MRIs which is trained on over 100K images at full resolution (256^3). Instructions under "Foundation model".
+- [Dec 2023] [Journal paper](https://arxiv.org/abs/2304.09941) extension of MIDL paper published in Medical Image Analysis. Instructions under "IXI-trained, half-resolution models".
+- [Feb 2022] [Conference paper](https://openreview.net/forum?id=OrNzjERFybh) published in MIDL 2021.
 
 ## Requirements
 Install the packages with `pip install -r requirements.txt`.
