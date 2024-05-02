@@ -15,8 +15,9 @@ Install Pytorch [here](https://pytorch.org/get-started/locally/).
 You can find all trained weights under [Releases](https://github.com/alanqrwang/keymorph/releases).
 Download them and put them in the `./weights/` folder.
 
-## Registering brain volumes with foundation model
-The foundation model is trained on full resolution (256x256x256) images. 
+## Registering brain volumes 
+### Foundation model
+The foundation model is trained on over 100,000 brain MR images at full resolution (256x256x256). 
 The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
 
 ```
@@ -40,8 +41,8 @@ Note that the script expects each segmentation to have the same name for its cor
 Add the flag `--save_eval_to_disk` to save outputs to disk. The default location is `./register_output/`.
 
 
-## Registering brain volumes with half-resolution models
-All other model weights are trained on half-resolution (128x128x128). 
+### IXI-trained, half-resolution models
+All other model weights are trained on half-resolution (128x128x128) on the (smaller) IXI dataset. 
 The script will automatically min-max normalize the images.
 To register two volumes with our best-performing model:
 
