@@ -22,7 +22,6 @@ def parse_args():
     parser.add_argument(
         "--gpus", type=str, default="0", help="Which GPUs to use? Index from 0"
     )
-
     parser.add_argument(
         "--save_dir",
         type=str,
@@ -30,18 +29,16 @@ def parse_args():
         default="./register_output/",
         help="Path to the folder where outputs are saved",
     )
-
     parser.add_argument(
         "--load_path", type=str, default=None, help="Load checkpoint at .h5 path"
     )
-
     parser.add_argument(
         "--save_eval_to_disk", action="store_true", help="Perform evaluation"
     )
-
     parser.add_argument(
         "--visualize", action="store_true", help="Visualize images and points"
     )
+    parser.add_argument("--debug_mode", action="store_true", help="Debug mode")
 
     # KeyMorph
     parser.add_argument(
@@ -329,6 +326,7 @@ if __name__ == "__main__":
     save_path = Path(args.save_dir)
     if not os.path.exists(save_path) and args.save_eval_to_disk:
         os.makedirs(save_path)
+    args.model_eval_dir = save_path
 
     # Set seed
     random.seed(args.seed)
