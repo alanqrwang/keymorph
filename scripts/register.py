@@ -9,7 +9,6 @@ from pathlib import Path
 
 from keymorph.model import KeyMorph
 from keymorph import utils
-from keymorph.utils import align_img
 from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from keymorph.net import ConvNet, RXFM_Net, MedNeXt
 from scripts.pairwise_register_eval import run_eval

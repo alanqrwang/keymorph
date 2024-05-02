@@ -8,7 +8,7 @@ from keymorph.utils import (
     align_img,
     save_dict_as_json,
 )
-from keymorph.cm_plotter import imshow_registration_2d, imshow_registration_3d
+from keymorph.viz_tools import imshow_registration_2d, imshow_registration_3d
 from keymorph.augmentation import affine_augment
 import keymorph.loss_ops as loss_ops
 

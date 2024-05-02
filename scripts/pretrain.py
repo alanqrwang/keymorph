@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from keymorph import utils
 from keymorph.augmentation import random_affine_augment
-from keymorph.cm_plotter import imshow_registration_2d, imshow_registration_3d
+from keymorph.viz_tools import imshow_registration_2d, imshow_registration_3d
 
 
 def run_pretrain(loader, random_points, keymorph_model, optimizer, args):
