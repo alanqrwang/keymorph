@@ -110,8 +110,8 @@ The `network` variable is a CNN with center-of-mass layer which extracts keypoin
 The `kp_aligner` variable is a keypoint alignment module. It has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be affine or nonlinear.
 
 ## Training KeyMorph
-Use `run.py` to train KeyMorph.
-Some example bash commands are provided in `bash_scripts`.
+Use `scripts/run.py` to train KeyMorph.
+Some example bash commands are provided in `bash_scripts/`.
 
 I'm in the process of updating the code to make it more user-friendly, and will update this repository soon.
 In the meantime, feel free to open an issue if you have any training questions.
