@@ -186,7 +186,7 @@ python run.py --num_keypoints 128 --kp_align_method tps --tps_lmbda loguniform -
 
 Note that supervised/unsupervised variants can be run similarly to affine, as described above.
 
-## Step-by-step guide for reproducing our results
+<!-- ## Step-by-step guide for reproducing our results
 
 ### Dataset 
 [A] Scripts in `./notebooks/[A] Download Data` will download the IXI data and perform some basic preprocessing
@@ -236,4 +236,4 @@ The second, follow-up journal paper contains the unsupervised/supervised, affine
 
 Evan M. Yu, et al. "[KeyMorph: Robust Multi-modal Affine Registration via Unsupervised Keypoint Detection.](https://openreview.net/forum?id=OrNzjERFybh)" (MIDL 2021).
 
-Alan Q. Wang, et al. "[A Robust and Interpretable Deep Learning Framework for Multi-modal Registration via Keypoints.](https://arxiv.org/abs/2304.09941)" (Medical Image Analysis 2023).
+Alan Q. Wang, et al. "[A Robust and Interpretable Deep Learning Framework for Multi-modal Registration via Keypoints.](https://arxiv.org/abs/2304.09941)" (Medical Image Analysis 2023). -->
