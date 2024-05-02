@@ -7,7 +7,7 @@ from skimage import morphology
 from scipy.stats import loguniform
 import time
 import os
-import nibabel as nib
+from torch.utils import checkpoint
 
 from keymorph.keypoint_aligners import RigidKeypointAligner, AffineKeypointAligner, TPS
 from keymorph.layers import (
@@ -28,6 +28,7 @@ class KeyMorph(nn.Module):
         keypoint_layer="com",
         max_train_keypoints=None,
         use_amp=False,
+        use_checkpoint=False,
         weight_keypoints=None,
     ):
         """KeyMorph pipeline in a single module. Used for training.
@@ -54,12 +55,13 @@ class KeyMorph(nn.Module):
                 self.keypoint_layer = LinearRegressor3d()
         self.max_train_keypoints = max_train_keypoints
         self.use_amp = use_amp
+        self.use_checkpoint = use_checkpoint
 
         # Keypoint alignment module
         self.supported_transform_type = ["rigid", "affine", "tps"]
         self.rigid_aligner = RigidKeypointAligner(self.dim)
         self.affine_aligner = AffineKeypointAligner(self.dim)
-        self.tps_aligner = TPS(self.dim)
+        self.tps_aligner = TPS(self.dim, use_checkpoint=self.use_checkpoint)
 
         # Weight keypoints
         assert weight_keypoints in [None, "variance", "power"]
@@ -175,10 +177,13 @@ class KeyMorph(nn.Module):
             points_f, feat_f = self.get_keypoints(img_f, return_feat=True)
             points_m, feat_m = self.get_keypoints(img_m, return_feat=True)
 
-            if self.weight_keypoints == "variance":
-                weights = self.weight_by_variance(feat_f, feat_m)
-            elif self.weight_keypoints == "power":
-                weights = self.weight_by_power(feat_f, feat_m)
+            if self.weight_keypoints == "power":
+                if self.use_checkpoint:
+                    weights = checkpoint.checkpoint(
+                        self.weight_by_power, feat_f, feat_m
+                    )
+                else:
+                    weights = self.weight_by_power(feat_f, feat_m)
             else:
                 weights = None
 
@@ -225,8 +230,8 @@ class KeyMorph(nn.Module):
                 points_m,
                 points_f,
                 img_f.shape,
-                lmbda=tps_lmbda,
                 weights=weights,
+                lmbda=tps_lmbda,
                 compute_on_subgrids=False if self.training else True,
             )
 

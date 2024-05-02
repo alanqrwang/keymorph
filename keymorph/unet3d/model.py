@@ -1,4 +1,5 @@
 import torch.nn as nn
+from torch.utils import checkpoint
 
 from .buildingblocks import (
     DoubleConv,
@@ -55,6 +56,7 @@ class AbstractUNet(nn.Module):
         pool_kernel_size=2,
         conv_padding=1,
         is3d=True,
+        use_checkpoint=False,
     ):
         super(AbstractUNet, self).__init__()
 
@@ -108,11 +110,16 @@ class AbstractUNet(nn.Module):
             # regression problem
             self.final_activation = None
 
+        self.use_checkpoint = use_checkpoint
+
     def forward(self, x):
         # encoder part
         encoders_features = []
         for encoder in self.encoders:
-            x = encoder(x)
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(encoder, x, use_reentrant=False)
+            else:
+                x = encoder(x)
             # reverse the encoder outputs to be aligned with the decoder
             encoders_features.insert(0, x)
 
@@ -124,9 +131,17 @@ class AbstractUNet(nn.Module):
         for decoder, encoder_features in zip(self.decoders, encoders_features):
             # pass the output from the corresponding encoder and the output
             # of the previous decoder
-            x = decoder(encoder_features, x)
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(
+                    decoder, encoder_features, x, use_reentrant=False
+                )
+            else:
+                x = decoder(encoder_features, x)
 
-        x = self.final_conv(x)
+        if self.use_checkpoint:
+            x = checkpoint.checkpoint(self.final_conv, x, use_reentrant=False)
+        else:
+            x = self.final_conv(x)
 
         # apply final_activation (i.e. Sigmoid or Softmax) only during prediction.
         # During training the network outputs logits
@@ -170,6 +185,7 @@ class UNet3D(AbstractUNet):
             is_segmentation=is_segmentation,
             conv_padding=conv_padding,
             is3d=True,
+            **kwargs
         )
 
 

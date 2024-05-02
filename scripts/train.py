@@ -7,7 +7,6 @@ from torch.profiler import profile, record_function, ProfilerActivity
 
 import keymorph.utils as utils
 from keymorph.utils import align_img
-from gigamed import gigamed
 from keymorph.cm_plotter import show_warped, show_warped_vol
 from keymorph.augmentation import random_affine_augment
 import keymorph.loss_ops as loss_ops

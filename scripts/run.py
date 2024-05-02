@@ -9,8 +9,9 @@ import wandb
 import torchio as tio
 import json
 from copy import deepcopy
+from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 
-from keymorph.net import ConvNet, UNet, RXFM_Net, TruncatedUNet, MedNeXt
+from keymorph.net import ConvNet, RXFM_Net, MedNeXt
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import (
@@ -18,7 +19,7 @@ from keymorph.utils import (
     initialize_wandb,
     save_dict_as_json,
 )
-from gigamed import ixi, gigamed, synthbrain
+from dataset import ixi, gigamed, synthbrain
 from keymorph.cm_plotter import show_warped_vol
 import scripts.gigamed_hyperparameters as gigamed_hps
 import scripts.ixi_hyperparameters as ixi_hps
@@ -108,8 +109,20 @@ def parse_args():
     parser.add_argument(
         "--num_levels_for_unet",
         type=int,
-        default=1,
+        default=4,
         help="Number of levels for unet",
+    )
+
+    parser.add_argument(
+        "--use_checkpoint",
+        action="store_true",
+        help="Use torch.utils.checkpoint",
+    )
+
+    parser.add_argument(
+        "--use_profiler",
+        action="store_true",
+        help="Use torch profiler",
     )
 
     parser.add_argument(
@@ -148,6 +161,14 @@ def parse_args():
         help="Number of subgrids for computing TPS",
     )
 
+    parser.add_argument(
+        "--train_family_params",
+        type=str,
+        default="default",
+        choices=["default", "mse_only", "tps0_only"],
+        help="Type of training family parameters to use",
+    )
+
     # Data
     parser.add_argument(
         "--train_dataset", help="<Required> Train datasets", required=True
@@ -166,6 +187,10 @@ def parse_args():
         "--seg_available",
         action="store_true",
         help="Whether or not segmentation maps are available for the dataset",
+    )
+
+    parser.add_argument(
+        "--crop_dims_for_train", type=int, default=256, help="Num workers"
     )
 
     # ML
@@ -313,10 +338,11 @@ def get_data(args):
     if args.train_dataset == "ixi":
         train_loader, _ = ixi.get_loaders()
     elif args.train_dataset == "gigamed":
+        crop_dims = (args.crop_dims_for_train,) * args.dim
         transform = tio.Compose(
             [
-                tio.CropOrPad((224, 224, 224), padding_mode=0, include=("img",)),
-                tio.CropOrPad((224, 224, 224), padding_mode=0, include=("seg",)),
+                tio.CropOrPad(crop_dims, padding_mode=0, include=("img",)),
+                tio.CropOrPad(crop_dims, padding_mode=0, include=("seg",)),
             ]
         )
         gigamed_dataset = gigamed.GigaMed(
@@ -481,20 +507,45 @@ def get_model(args):
                 norm_type=args.norm_type,
             )
         elif args.backbone == "unet":
-            network = UNet(
-                args.dim,
-                1,
-                args.num_keypoints,
-                num_levels=args.num_levels_for_unet,
-            )
+            if args.dim == 2:
+                network = UNet2D(
+                    1,
+                    args.num_keypoints,
+                    final_sigmoid=False,
+                    f_maps=64,
+                    layer_order="gcr",
+                    num_groups=8,
+                    num_levels=args.num_levels_for_unet,
+                    is_segmentation=False,
+                    conv_padding=1,
+                )
+            if args.dim == 3:
+                network = UNet3D(
+                    1,
+                    args.num_keypoints,
+                    final_sigmoid=False,
+                    f_maps=32,  # Used by nnUNet
+                    layer_order="gcr",
+                    num_groups=8,
+                    num_levels=args.num_levels_for_unet,
+                    is_segmentation=False,
+                    conv_padding=1,
+                    use_checkpoint=args.use_checkpoint,
+                )
         elif args.backbone == "truncatedunet":
-            network = TruncatedUNet(
-                args.dim,
-                1,
-                args.num_keypoints,
-                args.num_truncated_layers_for_truncatedunet,
-                num_levels=args.num_levels_for_unet,
-            )
+            if args.dim == 3:
+                network = TruncatedUNet3D(
+                    1,
+                    args.num_keypoints,
+                    args.num_truncated_layers_for_truncatedunet,
+                    final_sigmoid=False,
+                    f_maps=32,  # Used by nnUNet
+                    layer_order="gcr",
+                    num_groups=8,
+                    num_levels=args.num_levels_for_unet,
+                    is_segmentation=False,
+                    conv_padding=1,
+                )
         elif args.backbone == "se3cnn":
             network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
         elif args.backbone == "mednext":
@@ -511,6 +562,7 @@ def get_model(args):
             args.num_keypoints,
             args.dim,
             use_amp=args.use_amp,
+            use_checkpoint=args.use_checkpoint,
             max_train_keypoints=args.max_train_keypoints,
             weight_keypoints=args.weighted_kp_align,
         )
@@ -819,7 +871,12 @@ def main():
         train_loss = []
 
         if args.train_dataset in ["gigamed", "synthbrain"]:
-            train_params = gigamed_hps.GIGAMED_FAMILY_TRAIN_PARAMS
+            if args.train_family_params == "mse_only":
+                train_params = gigamed_hps.GIGAMED_FAMILY_TRAIN_PARAMS_MSE_ONLY
+            elif args.train_family_params == "tps0_only":
+                train_params = gigamed_hps.GIGAMED_FAMILY_TRAIN_PARAMS_TPS0_ONLY
+            else:
+                train_params = gigamed_hps.GIGAMED_FAMILY_TRAIN_PARAMS
         else:
             raise ValueError(
                 'No train parameters found for "{}"'.format(args.train_dataset)

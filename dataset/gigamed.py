@@ -1,9 +1,6 @@
 import os
-import torchio as tio
-from torch.utils.data import Dataset, DataLoader
-from gigamed.synthbrain import SynthBrain
+from torch.utils.data import DataLoader
 import pandas as pd
-from pprint import pprint
 
 from .utils import (
     read_subjects_from_disk,
@@ -16,8 +13,8 @@ from .utils import (
     SimpleDatasetIterator,
 )
 
-id_csv_file = "/home/alw4013/keymorph/gigamed/gigamed_id.csv"
-ood_csv_file = "/home/alw4013/keymorph/gigamed/gigamed_ood.csv"
+id_csv_file = "/home/alw4013/keymorph/dataset/gigamed_id.csv"
+ood_csv_file = "/home/alw4013/keymorph/dataset/gigamed_ood.csv"
 
 
 class GigaMedPaths:

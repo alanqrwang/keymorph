@@ -510,12 +510,11 @@ def _run_group_eval_dir(
                 grouppoints_a[0].cpu().detach().numpy(),
             )
 
-        if args.debug_mode:
-            print("\nDebugging info:")
-            print(f"-> Alignment: {align_type_str} ")
-            # print(f"-> Max random params: {aug_params} ")
-            print(f"-> Group size: {len(groupimg_m_paths)}")
-            print(f"-> Float16: {args.use_amp}")
+        print("\nDebugging info:")
+        print(f"-> Alignment: {align_type_str} ")
+        # print(f"-> Max random params: {aug_params} ")
+        print(f"-> Group size: {len(groupimg_m_paths)}")
+        print(f"-> Float16: {args.use_amp}")
 
         print("\nMetrics:")
         for metric_name, metric in metrics.items():

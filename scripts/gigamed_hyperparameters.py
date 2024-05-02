@@ -135,7 +135,7 @@ EVAL_AUGS = [
     "rot45",
     "rot90",
     "rot135",
-    "rot180",
+    # "rot180",
 ]
 
 MODEL_HPS = {
@@ -225,6 +225,62 @@ GIGAMED_FAMILY_TRAIN_PARAMS = {
     },
     "normal_nonskullstripped": {
         "transform_type": "tps_loguniform",
+        "loss_fn": "dice",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+}
+
+GIGAMED_FAMILY_TRAIN_PARAMS_MSE_ONLY = {
+    "same_sub_same_mod": {
+        "transform_type": "rigid",
+        "loss_fn": "mse",
+        "max_random_params": (0, 0.15, 3.1416, 0),
+    },
+    "diff_sub_same_mod": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "mse",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "synthbrain": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "mse",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "normal_skullstripped": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "mse",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "normal_nonskullstripped": {
+        "transform_type": "tps_loguniform",
+        "loss_fn": "mse",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+}
+
+GIGAMED_FAMILY_TRAIN_PARAMS_TPS0_ONLY = {
+    "same_sub_same_mod": {
+        "transform_type": "tps_0",
+        "loss_fn": "mse",
+        "max_random_params": (0, 0.15, 3.1416, 0),
+    },
+    "diff_sub_same_mod": {
+        "transform_type": "tps_0",
+        "loss_fn": "mse",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "synthbrain": {
+        "transform_type": "tps_0",
+        "loss_fn": "dice",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "normal_skullstripped": {
+        "transform_type": "tps_0",
+        "loss_fn": "dice",
+        "max_random_params": (0.2, 0.15, 3.1416, 0.1),
+    },
+    "normal_nonskullstripped": {
+        "transform_type": "tps_0",
         "loss_fn": "dice",
         "max_random_params": (0.2, 0.15, 3.1416, 0.1),
     },

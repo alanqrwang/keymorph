@@ -51,7 +51,7 @@ def run_eval(
                     ):
                         break
                     print(
-                        f"Running test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}"
+                        f"\n\n\nRunning test: subject id {i}->{j}, mod {mod1}->{mod2}, aug {aug}"
                     )
 
                     if args.save_eval_to_disk and not args.debug_mode:
@@ -65,6 +65,8 @@ def run_eval(
                         )
                         if not os.path.exists(save_dir):
                             os.makedirs(save_dir)
+                    else:
+                        save_dir = None
                     img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
                     if args.seg_available:
                         seg_f, seg_m = (
@@ -420,19 +422,21 @@ def run_eval(
                                         points_weights[0].cpu().detach().numpy(),
                                     )
 
-                        if args.debug_mode:
-                            print("\nDebugging info:")
-                            print(f"-> Alignment: {align_type_str} ")
-                            print(f"-> Max random params: {param} ")
-                            print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
-                            if points_f is not None:
-                                print(
-                                    f"-> Point shapes: {points_f.shape}, {points_m.shape}"
-                                )
-                                print(f"-> Point weights: {points_weights}")
-                            print(f"-> Float16: {args.use_amp}")
-                            if args.seg_available:
-                                print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")
+                        # Print some stats
+                        print("\nDebugging info:")
+                        print(f'-> Time: {res_dict["time"]}')
+                        print(f"-> Alignment: {align_type_str} ")
+                        print(f"-> Max random params: {param} ")
+                        print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
+                        if points_f is not None:
+                            print(
+                                f"-> Point shapes: {points_f.shape}, {points_m.shape}"
+                            )
+                            print(f"-> Point weights: {points_weights}")
+                        print(f"-> Float16: {args.use_amp}")
+                        if args.seg_available:
+                            print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")
+                        # print(f"-> Full Results: {res_dict}")
 
                         print("\nMetrics:")
                         for metric_name, metric in metrics.items():

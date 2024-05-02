@@ -5,15 +5,14 @@ import numpy as np
 import random
 from argparse import ArgumentParser
 import torchio as tio
-from scipy.stats import loguniform
 from pathlib import Path
 
-from keymorph.keypoint_aligners import ClosedFormAffine, TPS
-from keymorph.net import ConvNetFC, ConvNetCoM
 from keymorph.model import KeyMorph
+from keymorph import utils
 from keymorph.utils import align_img
-from keymorph import loss_ops
-from gigamed import ixi, gigamed, synthbrain
+from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
+from keymorph.net import ConvNet, RXFM_Net, MedNeXt
+from scripts.pairwise_register_eval import run_eval
 
 
 def parse_args():
@@ -36,7 +35,9 @@ def parse_args():
         "--load_path", type=str, default=None, help="Load checkpoint at .h5 path"
     )
 
-    parser.add_argument("--save_preds", action="store_true", help="Perform evaluation")
+    parser.add_argument(
+        "--save_eval_to_disk", action="store_true", help="Perform evaluation"
+    )
 
     parser.add_argument(
         "--visualize", action="store_true", help="Visualize images and points"
@@ -44,17 +45,29 @@ def parse_args():
 
     # KeyMorph
     parser.add_argument(
+        "--registration_model", type=str, required=True, help="Registration model"
+    )
+    parser.add_argument(
         "--num_keypoints", type=int, required=True, help="Number of keypoints"
     )
-
     parser.add_argument(
-        "--kp_extractor",
+        "--backbone",
         type=str,
-        default="conv_com",
-        choices=["conv_fc", "conv_com"],
+        default="conv",
         help="Keypoint extractor module to use",
     )
-
+    parser.add_argument(
+        "--num_truncated_layers_for_truncatedunet",
+        type=int,
+        default=1,
+        help="Number of truncated layers for truncated unet",
+    )
+    parser.add_argument(
+        "--num_levels_for_unet",
+        type=int,
+        default=4,
+        help="Number of levels for unet",
+    )
     parser.add_argument(
         "--kp_align_method",
         type=str,
@@ -62,8 +75,6 @@ def parse_args():
         choices=["affine", "tps"],
         help="Keypoint alignment module to use",
     )
-
-    parser.add_argument("--tps_lmbda", default=None, help="TPS lambda value")
 
     parser.add_argument(
         "--norm_type",
@@ -81,6 +92,28 @@ def parse_args():
         help="Loss function",
     )
 
+    parser.add_argument(
+        "--weighted_kp_align",
+        type=str,
+        default=None,
+        choices=["variance", "power"],
+        help="Type of weighting to use for keypoints",
+    )
+
+    parser.add_argument(
+        "--list_of_aligns",
+        nargs="*",
+        default=("affine",),
+        help="Alignments to use for KeyMorph",
+    )
+
+    parser.add_argument(
+        "--list_of_metrics",
+        nargs="*",
+        default=("mse",),
+        help="Metrics to report",
+    )
+
     # Data
     parser.add_argument("--moving", type=str, required=True, help="Moving image path")
 
@@ -91,6 +124,19 @@ def parse_args():
     parser.add_argument("--fixed_seg", type=str, default=None, help="Fixed seg path")
 
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
+
+    parser.add_argument(
+        "--half_resolution",
+        action="store_true",
+        help="Evaluate on half-resolution models",
+    )
+
+    parser.add_argument(
+        "--early_stop_eval_subjects",
+        type=int,
+        default=None,
+        help="Early stop number of test subjects for fast eval",
+    )
 
     # Miscellaneous
     parser.add_argument(
@@ -103,17 +149,168 @@ def parse_args():
 
     parser.add_argument("--dim", type=int, default=3)
 
+    parser.add_argument("--use_amp", action="store_true", help="Use AMP")
+
+    parser.add_argument("--groupwise", action="store_true", help="Use AMP")
+
+    parser.add_argument(
+        "--use_checkpoint",
+        action="store_true",
+        help="Use torch.utils.checkpoint",
+    )
+
+    parser.add_argument(
+        "--num_resolutions_for_itkelastix", type=int, default=4, help="Num resolutions"
+    )
+
     args = parser.parse_args()
     return args
 
 
-def _get_tps_lmbda(num_samples, args):
-    if args.tps_lmbda is None:
-        assert args.kp_align_method != "tps", "Need to implement this"
-        lmbda = None
+def build_tio_subject(img_path, seg_path=None):
+    _dict = {"img": tio.ScalarImage(img_path)}
+    if seg_path is not None:
+        _dict["seg"] = tio.LabelMap(seg_path)
+    return tio.Subject(**_dict)
+
+
+def get_loaders(args):
+    args.seg_available = args.moving_seg is not None and args.fixed_seg is not None
+    if os.path.isfile(args.moving) and os.path.isfile(args.fixed):
+        if args.seg_available:
+            moving = [build_tio_subject(args.moving, args.moving_seg)]
+            fixed = [build_tio_subject(args.fixed, args.fixed_seg)]
+        else:
+            moving = [build_tio_subject(args.moving)]
+            fixed = [build_tio_subject(args.fixed)]
+    elif os.path.isdir(args.moving) and os.path.isdir(args.fixed):
+        fixed, moving = [], []
+        for moving_name in os.listdir(args.moving):
+            moving_path = os.path.join(args.moving, moving_name)
+            if args.seg_available:
+                moving_seg_path = os.path.join(args.moving_seg, moving_name)
+            else:
+                moving_seg_path = None
+            moving.append(build_tio_subject(moving_path, moving_seg_path))
+        for fixed_name in os.listdir(args.fixed):
+            fixed_path = os.path.join(args.fixed, fixed_name)
+            if args.seg_available:
+                fixed_seg_path = os.path.join(args.fixed_seg, fixed_name)
+            else:
+                fixed_seg_path = None
+            fixed.append(build_tio_subject(fixed_path, fixed_seg_path))
+
+    # Build dataset
+    fixed_dataset = tio.SubjectsDataset(fixed, transform=transform)
+    moving_dataset = tio.SubjectsDataset(moving, transform=transform)
+    fixed_loader = DataLoader(
+        fixed_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+    )
+    moving_loader = DataLoader(
+        moving_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+    )
+    loaders = {"fixed": fixed_loader, "moving": moving_loader}
+    return loaders
+
+
+def get_model(args):
+    if args.registration_model == "keymorph":
+        # CNN, i.e. keypoint extractor
+        if args.backbone == "conv":
+            network = ConvNet(
+                args.dim,
+                1,
+                args.num_keypoints,
+                norm_type=args.norm_type,
+            )
+        elif args.backbone == "unet":
+            if args.dim == 2:
+                network = UNet2D(
+                    1,
+                    args.num_keypoints,
+                    final_sigmoid=False,
+                    f_maps=64,
+                    layer_order="gcr",
+                    num_groups=8,
+                    num_levels=args.num_levels_for_unet,
+                    is_segmentation=False,
+                    conv_padding=1,
+                )
+            if args.dim == 3:
+                network = UNet3D(
+                    1,
+                    args.num_keypoints,
+                    final_sigmoid=False,
+                    f_maps=32,  # Used by nnUNet
+                    layer_order="gcr",
+                    num_groups=8,
+                    num_levels=args.num_levels_for_unet,
+                    is_segmentation=False,
+                    conv_padding=1,
+                    use_checkpoint=args.use_checkpoint,
+                )
+        elif args.backbone == "truncatedunet":
+            if args.dim == 3:
+                network = TruncatedUNet3D(
+                    1,
+                    args.num_keypoints,
+                    args.num_truncated_layers_for_truncatedunet,
+                    final_sigmoid=False,
+                    f_maps=32,  # Used by nnUNet
+                    layer_order="gcr",
+                    num_groups=8,
+                    num_levels=args.num_levels_for_unet,
+                    is_segmentation=False,
+                    conv_padding=1,
+                )
+        elif args.backbone == "se3cnn":
+            network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
+        elif args.backbone == "mednext":
+            network = MedNeXt(
+                1, args.num_keypoints, model_id="L", norm_type=args.norm_type
+            )
+        else:
+            raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
+        network = torch.nn.DataParallel(network)
+
+        # Keypoint model
+        registration_model = KeyMorph(
+            network,
+            args.num_keypoints,
+            args.dim,
+            use_amp=args.use_amp,
+            use_checkpoint=args.use_checkpoint,
+            weight_keypoints=args.weighted_kp_align,
+        )
+        registration_model.to(args.device)
+        utils.summary(registration_model)
+    elif args.registration_model == "itkelastix":
+        from keymorph.baselines.itkelastix import ITKElastix
+
+        registration_model = ITKElastix()
+    elif args.registration_model == "synthmorph":
+
+        from keymorph.baselines.voxelmorph import VoxelMorph
+
+        registration_model = VoxelMorph(perform_preaffine_register=True)
+    elif args.registration_model == "synthmorph-no-preaffine":
+
+        from keymorph.baselines.voxelmorph import VoxelMorph
+
+        registration_model = VoxelMorph(perform_preaffine_register=False)
+    elif args.registration_model == "ants":
+        from keymorph.baselines.ants import ANTs
+
+        registration_model = ANTs()
     else:
-        lmbda = torch.tensor(float(args.tps_lmbda)).repeat(num_samples).to(args.device)
-    return lmbda
+        raise ValueError(
+            'Invalid registration model "{}"'.format(args.registration_model)
+        )
+    return registration_model
 
 
 if __name__ == "__main__":
@@ -130,7 +327,7 @@ if __name__ == "__main__":
 
     # Create save path
     save_path = Path(args.save_dir)
-    if not os.path.exists(save_path) and args.save_preds:
+    if not os.path.exists(save_path) and args.save_eval_to_disk:
         os.makedirs(save_path)
 
     # Set seed
@@ -146,7 +343,7 @@ if __name__ == "__main__":
                 #                 RandomNoise(),
                 tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
                 tio.Resize(128),
-                tio.Lambda(ixi.one_hot, include=("seg")),
+                # tio.Lambda(ixi.one_hot, include=("seg",)),
             ]
         )
     else:
@@ -161,131 +358,36 @@ if __name__ == "__main__":
             include=("img", "seg"),
         )
 
-    # Build subject
-    moving_dict = {"img": tio.ScalarImage(args.moving)}
-    fixed_dict = {"img": tio.ScalarImage(args.fixed)}
-    if args.moving_seg is not None:
-        moving_dict["seg"] = tio.LabelMap(args.moving_seg)
-    if args.fixed_seg is not None:
-        fixed_dict["seg"] = tio.LabelMap(args.fixed_seg)
-    fixed = [tio.Subject(**fixed_dict)]
-    moving = [tio.Subject(**moving_dict)]
+    # Loaders
+    loaders = get_loaders(args)
 
-    # Build dataset
-    fixed_dataset = tio.SubjectsDataset(fixed, transform=transform)
-    moving_dataset = tio.SubjectsDataset(moving, transform=transform)
-    fixed_loader = DataLoader(
-        fixed_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-    )
-    moving_loader = DataLoader(
-        moving_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-    )
+    # Evaluation parameters
+    list_of_eval_names = [("fixed", "moving")]
+    list_of_eval_augs = ["rot0"]
 
-    # CNN, i.e. keypoint extractor
-    if args.kp_extractor == "conv_fc":
-        network = ConvNetFC(
-            args.dim, 1, args.num_keypoints * args.dim, norm_type=args.norm_type
-        )
-        network = torch.nn.DataParallel(network)
-    elif args.kp_extractor == "conv_com":
-        network = ConvNetCoM(args.dim, 1, args.num_keypoints, norm_type=args.norm_type)
-    network = torch.nn.DataParallel(network)
-    network.to(args.device)
-
-    if args.load_path:
-        state_dict = torch.load(args.load_path)["state_dict"]
-        network.load_state_dict(state_dict)
-
-    # Keypoint alignment module
-    if args.kp_align_method == "affine":
-        kp_aligner = ClosedFormAffine(args.dim)
-    elif args.kp_align_method == "tps":
-        kp_aligner = TPS(args.dim)
-    else:
-        raise NotImplementedError
-
-    # Keypoint model
-    registration_model = KeyMorph(network, kp_aligner, args.num_keypoints, args.dim)
+    # Model
+    registration_model = get_model(args)
     registration_model.eval()
 
-    for i, fixed in enumerate(fixed_loader):
-        for j, moving in enumerate(moving_loader):
+    # Checkpoint loading
+    if args.load_path is not None:
+        print(f"Loading checkpoint from {args.load_path}")
+        ckpt_state, registration_model = utils.load_checkpoint(
+            args.load_path,
+            registration_model,
+            device=args.device,
+        )
 
-            # Get images and segmentations from TorchIO subject
-            img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
-            if "seg" in fixed and "seg" in moving:
-                seg_available = True
-                seg_f, seg_m = fixed["seg"][tio.DATA], moving["seg"][tio.DATA]
-            else:
-                seg_available = False
-
-            # Move to device
-            img_f = img_f.float().to(args.device)
-            img_m = img_m.float().to(args.device)
-            if seg_available:
-                seg_f = seg_f.float().to(args.device)
-                seg_m = seg_m.float().to(args.device)
-            lmbda = _get_tps_lmbda(len(img_f), args)
-            grid, points_f, points_m = registration_model(img_f, img_m, lmbda)
-            img_a = align_img(grid, img_m)
-            if seg_available:
-                seg_a = align_img(grid, seg_m)
-            points_a = kp_aligner.points_from_points(
-                points_m, points_f, points_m, lmbda=lmbda
-            )
-
-            # import matplotlib.pyplot as plt
-            # fig, axes = plt.subplots(1, 3, figsize=(10, 3))
-            # axes[0].imshow(img_f[0,0,64].cpu().numpy(), cmap='gray')
-            # axes[1].imshow(img_m[0,0,64].cpu().numpy(), cmap='gray')
-            # axes[2].imshow(img_a[0,0,64].cpu().numpy(), cmap='gray')
-            # plt.show()
-
-            # Compute metrics
-            metrics = {}
-            metrics["mse"] = loss_ops.MSELoss()(img_f, img_a)
-            if seg_available:
-                metrics["softdiceloss"] = loss_ops.DiceLoss()(seg_a, seg_f)
-                metrics["softdice"] = 1 - metrics["softdiceloss"]
-                metrics["harddice"] = (
-                    1 - loss_ops.DiceLoss(hard=True)(seg_a, seg_f, ign_first_ch=True)[0]
-                )
-                if args.dim == 3:  # TODO: Implement 2D metrics
-                    metrics["hausd"] = loss_ops.hausdorff_distance(seg_a, seg_f)
-                    grid = grid.permute(0, 4, 1, 2, 3)
-                    metrics["jdstd"] = loss_ops.jdstd(grid)
-                    metrics["jdlessthan0"] = loss_ops.jdlessthan0(
-                        grid, as_percentage=True
-                    )
-
-            if args.save_preds:
-                assert args.batch_size == 1  # TODO: fix this
-                img_a_path = save_path / f"img_a_{i}_{j}.npy"
-                seg_a_path = save_path / f"seg_a_{i}_{j}.npy"
-                points_f_path = save_path / f"points_f_{i}_{j}.npy"
-                points_m_path = save_path / f"points_m_{i}_{j}.npy"
-                points_a_path = save_path / f"points_a_{i}_{j}.npy"
-                grid_path = save_path / f"grid_{i}_{j}.npy"
-                print(
-                    "Saving:\n{}\n{}\n{}\n{}\n{}\n{}".format(
-                        img_a_path,
-                        seg_a_path,
-                        points_f_path,
-                        points_m_path,
-                        points_a_path,
-                        grid_path,
-                    )
-                )
-                np.save(img_a_path, img_a[0].cpu().detach().numpy())
-                np.save(seg_a_path, np.argmax(seg_a.cpu().detach().numpy(), axis=1))
-                np.save(points_f_path, points_f[0].cpu().detach().numpy())
-                np.save(points_m_path, points_m[0].cpu().detach().numpy())
-                np.save(points_a_path, points_a[0].cpu().detach().numpy())
-                np.save(grid_path, grid[0].cpu().detach().numpy())
-
-            for name, metric in metrics.items():
-                print(f"[Eval Stat] {name}: {metric:.5f}")
+    if args.groupwise:
+        pass
+    else:
+        run_eval(
+            loaders,
+            registration_model,
+            args.list_of_metrics,
+            list_of_eval_names,
+            list_of_eval_augs,
+            args.list_of_aligns,
+            args,
+            save_dir_prefix="eval",
+        )
