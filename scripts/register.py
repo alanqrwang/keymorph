@@ -97,8 +97,8 @@ def parse_args():
     parser.add_argument(
         "--weighted_kp_align",
         type=str,
-        default=None,
-        choices=["variance", "power"],
+        default="power",
+        choices=[None, "variance", "power"],
         help="Type of weighting to use for keypoints",
     )
 
