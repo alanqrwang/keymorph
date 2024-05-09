@@ -3,7 +3,8 @@
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
 
 ## Updates
-- [Apr 2024] Releasing foundational model of KeyMorph for brain MRIs which is trained on over 100K images at full resolution (256^3). Instructions under "Foundation model".
+- [May 2024] Released full set of foundation models on [Box](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i). Detailed instructions under "Foundation model".
+- [Apr 2024] Released foundational model of KeyMorph for brain MRIs which is trained on over 100K images at full resolution (256^3). Instructions under "Foundation model".
 - [Dec 2023] [Journal paper](https://arxiv.org/abs/2304.09941) extension of MIDL paper published in Medical Image Analysis. Instructions under "IXI-trained, half-resolution models".
 - [Feb 2022] [Conference paper](https://openreview.net/forum?id=OrNzjERFybh) published in MIDL 2021.
 
@@ -14,7 +15,8 @@ You might need to install Pytorch separately, according to your GPU and CUDA ver
 Install Pytorch [here](https://pytorch.org/get-started/locally/).
 
 ## Downloading Trained Weights
-You can find all trained weights under [Releases](https://github.com/alanqrwang/keymorph/releases).
+You can find all full-resolution trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
+Half-resolution trained weights are under [Releases](https://github.com/alanqrwang/keymorph/releases).
 Download them and put them in the `./weights/` folder.
 
 ## Registering brain volumes 
@@ -22,15 +24,18 @@ Download them and put them in the `./weights/` folder.
 The foundation model is trained on over 100,000 brain MR images at full resolution (256x256x256). 
 The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
 
+`--num_keypoints` and `num_levels_for_unet` will determine which model will be used to perform the registration.
+Make sure the corresponding weights are present in `--weights_dir`.
+`--num_keypoints` can be set to `128, 256, 512` and `--num_levels_for_unet` can be set to `4, 5, 6, 7`, respectively (corresponding to 'S', 'M', 'L', 'H' in the paper).
+
 To register a single pair of volumes:
 ```
 python scripts/register.py \
-    --registration_model keymorph \
     --num_keypoints 256 \
-    --backbone truncatedunet \
+    --num_levels_for_unet 4 \
+    --weights_dir ./weights/ \
     --moving ./example_data/images/IXI_000001_0000.nii.gz \
     --fixed ./example_data/images/IXI_000002_0000.nii.gz \
-    --load_path ./weights/foundation-numkey256-256x256x256.tar \
     --moving_seg ./example_data/labels/IXI_000001_0000.nii.gz \
     --fixed_seg ./example_data/labels/IXI_000002_0000.nii.gz \
     --list_of_aligns affine tps_0 \
@@ -39,7 +44,7 @@ python scripts/register.py \
     --visualize
 ```
 
-Description of important flags:
+Description of other important flags:
 + `--moving` and `--fixed` are paths to moving and fixed images.
 + `--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
 + `--list_of_aligns` specifies the types of alignment to perform. Options are `rigid`, `affine` and `tps_<lambda>` (TPS with hyperparameter value equal to lambda). lambda=0 corresponds to exact keypoint alignment. lambda=10 is very similar to affine.
@@ -51,12 +56,11 @@ You can also replace filenames with directories to register all images in the di
 Note that the script expects corresponding image and segmentation pairs to have the same filename.
 ```
 python scripts/register.py \
-    --registration_model keymorph \
     --num_keypoints 256 \
-    --backbone truncatedunet \
+    --num_levels_for_unet 4 \
+    --weights_dir ./weights/ \
     --moving ./example_data/images/ \
     --fixed ./example_data/images/ \
-    --load_path ./weights/foundation-numkey256-256x256x256.tar \
     --moving_seg ./example_data/labels/ \
     --fixed_seg ./example_data/labels/ \
     --list_of_aligns affine tps_0 \
@@ -75,7 +79,6 @@ To register two volumes with our best-performing model:
 ```
 python scripts/register.py \
     --half_resolution \
-    --registration_model keymorph \
     --num_keypoints 512 \
     --backbone conv \
     --moving ./example_data/images_half/IXI_001_128x128x128.nii.gz \

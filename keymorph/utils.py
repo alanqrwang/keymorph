@@ -250,6 +250,12 @@ def save_dict_as_json(dict, save_path):
         json.dump(dict, outfile, sort_keys=True, indent=4)
 
 
+def load_dict_from_json(json_path):
+    with open(json_path, "r") as file:
+        data = json.load(file)
+    return data
+
+
 def get_latest_epoch_file(directory_path):
     max_epoch = -1
     latest_epoch_file = None

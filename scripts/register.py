@@ -32,6 +32,12 @@ def parse_args():
         "--load_path", type=str, default=None, help="Load checkpoint at .h5 path"
     )
     parser.add_argument(
+        "--weights_dir",
+        type=str,
+        default="./weights/",
+        help="Directory where keymorph model weights are saved",
+    )
+    parser.add_argument(
         "--save_eval_to_disk", action="store_true", help="Perform evaluation"
     )
     parser.add_argument(
@@ -41,7 +47,7 @@ def parse_args():
 
     # KeyMorph
     parser.add_argument(
-        "--registration_model", type=str, required=True, help="Registration model"
+        "--registration_model", type=str, default="keymorph", help="Registration model"
     )
     parser.add_argument(
         "--num_keypoints", type=int, required=True, help="Number of keypoints"
@@ -49,7 +55,7 @@ def parse_args():
     parser.add_argument(
         "--backbone",
         type=str,
-        default="conv",
+        default="truncatedunet",
         help="Keypoint extractor module to use",
     )
     parser.add_argument(
@@ -213,6 +219,11 @@ def get_loaders(args):
     return loaders
 
 
+def get_foundation_weights_path(weights_dir, num_keypoints, num_levels):
+    template_name = "foundation-numkey{}-numlevels{}.pth.tar"
+    return os.path.join(weights_dir, template_name.format(num_keypoints, num_levels))
+
+
 def get_model(args):
     if args.registration_model == "keymorph":
         # CNN, i.e. keypoint extractor
@@ -336,11 +347,8 @@ if __name__ == "__main__":
     if args.half_resolution:
         transform = tio.Compose(
             [
-                #                 RandomBiasField(),
-                #                 RandomNoise(),
                 tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
                 tio.Resize(128),
-                # tio.Lambda(ixi.one_hot, include=("seg",)),
             ]
         )
     else:
@@ -367,6 +375,14 @@ if __name__ == "__main__":
     registration_model.eval()
 
     # Checkpoint loading
+    if args.half_resolution and args.registration_model == "keymorph":
+        assert (
+            args.load_path is not None
+        ), "Must specify path for weights for half resolution models"
+    else:
+        args.load_path = get_foundation_weights_path(
+            args.weights_dir, args.num_keypoints, args.num_levels_for_unet
+        )
     if args.load_path is not None:
         print(f"Loading checkpoint from {args.load_path}")
         ckpt_state, registration_model = utils.load_checkpoint(

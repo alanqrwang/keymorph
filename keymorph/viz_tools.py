@@ -348,6 +348,8 @@ def imshow_registration_3d(
     axes[0, 0].set_title("Moving")
     axes[0, 1].set_title("Fixed")
     axes[0, 2].set_title("Warped")
+    if suptitle:
+        fig.suptitle(suptitle)
     if save_path is not None:
         fig.savefig(
             save_path,
@@ -355,8 +357,6 @@ def imshow_registration_3d(
             dpi=100,
             bbox_inches="tight",
         )
-    if suptitle:
-        fig.suptitle(suptitle)
     fig.show()
     plt.show()
     plt.close()

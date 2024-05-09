@@ -144,6 +144,7 @@ tmp/
 ./notebooks/weights/
 .idea/
 *.h5
+*.tar
 wandb/*
 training_output/*
 output/*
