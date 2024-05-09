@@ -43,7 +43,6 @@ def parse_args():
     parser.add_argument(
         "--visualize", action="store_true", help="Visualize images and points"
     )
-    parser.add_argument("--debug_mode", action="store_true", help="Debug mode")
 
     # KeyMorph
     parser.add_argument(
@@ -71,27 +70,11 @@ def parse_args():
         help="Number of levels for unet",
     )
     parser.add_argument(
-        "--kp_align_method",
-        type=str,
-        default="affine",
-        choices=["affine", "tps"],
-        help="Keypoint alignment module to use",
-    )
-
-    parser.add_argument(
         "--norm_type",
         type=str,
         default="instance",
         choices=["none", "instance", "batch", "group"],
         help="Normalization type",
-    )
-
-    parser.add_argument(
-        "--loss_fn",
-        type=str,
-        default="mse",
-        choices=["mse", "dice"],
-        help="Loss function",
     )
 
     parser.add_argument(
