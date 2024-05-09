@@ -43,6 +43,7 @@ def parse_args():
     parser.add_argument(
         "--visualize", action="store_true", help="Visualize images and points"
     )
+    parser.add_argument("--debug_mode", action="store_true", help="Debug mode")
 
     # KeyMorph
     parser.add_argument(

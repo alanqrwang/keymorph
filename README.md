@@ -38,7 +38,7 @@ python scripts/register.py \
     --fixed ./example_data/images/IXI_000002_0000.nii.gz \
     --moving_seg ./example_data/labels/IXI_000001_0000.nii.gz \
     --fixed_seg ./example_data/labels/IXI_000002_0000.nii.gz \
-    --list_of_aligns affine tps_0 \
+    --list_of_aligns rigid affine tps_1 \
     --list_of_metrics mse harddice \
     --save_eval_to_disk \
     --visualize
@@ -63,7 +63,7 @@ python scripts/register.py \
     --fixed ./example_data/images/ \
     --moving_seg ./example_data/labels/ \
     --fixed_seg ./example_data/labels/ \
-    --list_of_aligns affine tps_0 \
+    --list_of_aligns rigid affine tps_1 \
     --list_of_metrics mse harddice \
     --save_eval_to_disk \
     --visualize
@@ -86,7 +86,7 @@ python scripts/register.py \
     --load_path ./weights/numkey512_tps0_dice.4760.h5 \
     --moving_seg ./example_data/labels_half/IXI_001_128x128x128.nii.gz \
     --fixed_seg ./example_data/labels_half/IXI_002_128x128x128.nii.gz \
-    --list_of_aligns affine tps_0 \
+    --list_of_aligns affine tps_1 \
     --list_of_metrics mse harddice \
     --save_eval_to_disk \
     --visualize
