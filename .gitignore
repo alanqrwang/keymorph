@@ -162,3 +162,4 @@ cache/
 
 generated_figs/
 bash_scripts/
+.gitignore
