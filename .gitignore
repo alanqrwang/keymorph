@@ -159,3 +159,6 @@ job_err/*
 .vscode/
 *.cache
 cache/
+
+generated_figs/
+bash_scripts/
