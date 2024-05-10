@@ -8,11 +8,36 @@ KeyMorph is a deep learning-based image registration framework that relies on au
 - [Dec 2023] [Journal paper](https://arxiv.org/abs/2304.09941) extension of MIDL paper published in Medical Image Analysis. Instructions under "IXI-trained, half-resolution models".
 - [Feb 2022] [Conference paper](https://openreview.net/forum?id=OrNzjERFybh) published in MIDL 2021.
 
-## Requirements
-Install the packages with `pip install -r requirements.txt`.
+## Installation
 
-You might need to install Pytorch separately, according to your GPU and CUDA version.
-Install Pytorch [here](https://pytorch.org/get-started/locally/).
+We recommend using pip to install keymorph:
+```bash
+pip install keymorph
+```
+
+To run scripts and/or contribute to keymorph, you should install from source:
+```bash
+git clone git@github.com:alanqrwang/keymorph.git
+cd keymorph
+pip install -e .
+```
+
+### Requirements
+The keymorph package depends on the following requirements:
+
+- "numpy>=1.19.1",
+- "ogb>=1.2.6",
+- "outdated>=0.2.0",
+- "pandas>=1.1.0",
+- "ogb>=1.2.6",
+- "pytz>=2020.4",
+- "torch>=1.7.0",
+- "torchvision>=0.8.2",
+- "scikit-learn>=0.20.0",
+- "scipy>=1.5.4",
+- "torchio>=0.19.6",
+
+Running `pip install keymorph` or `pip install -e .` will automatically check for and install all of these requirements.
 
 ## Downloading Trained Weights
 You can find all full-resolution trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
