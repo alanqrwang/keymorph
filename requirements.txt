@@ -1,8 +1,0 @@
-matplotlib==3.7.2
-nibabel==5.1.0
-numpy==1.25.2
-scipy==1.11.2
-skimage==0.0
-torch==2.0.1
-torchio==0.19.1
-tqdm==4.66.1
