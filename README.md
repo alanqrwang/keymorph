@@ -160,7 +160,7 @@ The `kp_aligner` variable is a keypoint alignment module. It has a function `gri
 
 ## Training KeyMorph
 Use `scripts/run.py` to train KeyMorph.
-Some example bash commands are provided in `bash_scripts/`.
+<!-- Some example bash commands are provided in `bash_scripts/`. -->
 
 I'm in the process of updating the code to make it more user-friendly, and will update this repository soon.
 In the meantime, feel free to open an issue if you have any training questions.
