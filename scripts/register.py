@@ -10,7 +10,7 @@ from pathlib import Path
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
-from keymorph.net import ConvNet, RXFM_Net, MedNeXt
+from keymorph.net import ConvNet
 from scripts.pairwise_register_eval import run_eval
 
 
@@ -258,12 +258,6 @@ def get_model(args):
                     is_segmentation=False,
                     conv_padding=1,
                 )
-        elif args.backbone == "se3cnn":
-            network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
-        elif args.backbone == "mednext":
-            network = MedNeXt(
-                1, args.num_keypoints, model_id="L", norm_type=args.norm_type
-            )
         else:
             raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
         network = torch.nn.DataParallel(network)

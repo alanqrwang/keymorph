@@ -1,11 +1,5 @@
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from .unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from . import layers
-
-from nnunet_mednext import create_mednext_v1
-from se3cnn.image.gated_block import GatedBlock
 
 h_dims = [32, 64, 64, 128, 128, 256, 256, 512]
 
@@ -40,58 +34,3 @@ class ConvNet(nn.Module):
         out = self.block8(out)
         out = self.block9(out)
         return out
-
-
-class RXFM_Net(nn.Module):
-    def __init__(self, n_in, output_chans, norm_type):
-        super(RXFM_Net, self).__init__()
-
-        chan_config = [[16, 16, 4], [16, 16, 4], [16, 16, 4], [16, 16, 4]]
-        features = [[n_in]] + chan_config + [[output_chans]]
-
-        common_block_params = {
-            "size": 5,
-            "stride": 2,
-            "padding": 2,
-            "normalization": norm_type,
-            "capsule_dropout_p": None,
-            "smooth_stride": False,
-        }
-
-        block_params = [{"activation": F.relu}] * (len(features) - 2) + [
-            {"activation": F.relu}
-        ]
-
-        assert len(block_params) + 1 == len(features)
-
-        blocks = [
-            GatedBlock(
-                features[i],
-                features[i + 1],
-                **common_block_params,
-                **block_params[i],
-                dyn_iso=True
-            )
-            for i in range(len(block_params))
-        ]
-
-        self.sequence = torch.nn.Sequential(*blocks)
-
-    def forward(self, x):
-        x = self.sequence(x)
-        return x
-
-
-class MedNeXt(nn.Module):
-    def __init__(self, input_ch, out_dim, model_id="L", norm_type="group"):
-        super(MedNeXt, self).__init__()
-        self.backbone = create_mednext_v1(
-            num_input_channels=input_ch,
-            num_classes=out_dim,
-            model_id=model_id,  # S, B, M and L are valid model ids
-            kernel_size=3,  # 3x3x3 and 5x5x5 were tested in publication
-            deep_supervision=False,  # was used in publication
-        )
-
-    def forward(self, x):
-        return self.backbone(x)

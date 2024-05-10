@@ -11,7 +11,7 @@ import json
 from copy import deepcopy
 from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 
-from keymorph.net import ConvNet, RXFM_Net, MedNeXt
+from keymorph.net import ConvNet
 from keymorph.model import KeyMorph
 from keymorph import utils
 from keymorph.utils import (
@@ -19,7 +19,7 @@ from keymorph.utils import (
     initialize_wandb,
     save_dict_as_json,
 )
-from dataset import ixi, gigamed, synthbrain
+from dataset import ixi, gigamed
 import scripts.gigamed_hyperparameters as gigamed_hps
 import scripts.ixi_hyperparameters as ixi_hps
 from scripts.train import run_train
@@ -375,77 +375,6 @@ def get_data(args):
         train_loader = gigamed_dataset_with_seg.get_train_loader()
         pretrain_loader = gigamed_dataset.get_pretrain_loader()
         ref_subject = gigamed_dataset.get_reference_subject()
-    elif args.train_dataset == "synthbrain":
-        synthbrain_dataset = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=False,
-            synthetic_brains_only=True,
-        )
-        synthbrain_dataset_with_seg = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=True,
-            synthetic_brains_only=True,
-        )
-        train_loader = synthbrain_dataset_with_seg.get_train_loader()
-        pretrain_loader = synthbrain_dataset.get_pretrain_loader()
-        ref_subject = synthbrain_dataset.get_reference_subject()
-    elif args.train_dataset == "synthbraingenerated":
-        synthbrain_dataset = synthbrain.SynthBrain(
-            args.batch_size,
-            args.num_workers,
-        )
-        train_loader = synthbrain_dataset.get_train_loader()
-        pretrain_loader = synthbrain_dataset.get_pretrain_loader()
-
-        # Use Gigamed's first subject as reference
-        synthbrain_dataset = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=False,
-            synthetic_brains_only=True,
-        )
-        ref_subject = synthbrain_dataset.get_reference_subject()
-    elif args.train_dataset == "gigamed+synthbrain":
-        gigamed_synthbrain_dataset = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=False,
-            include_synthetic_brains=True,
-        )
-        gigamed_synthbrain_dataset_with_seg = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=True,
-            include_synthetic_brains=True,
-        )
-        train_loader = gigamed_synthbrain_dataset_with_seg.get_train_loader()
-        pretrain_loader = gigamed_synthbrain_dataset.get_pretrain_loader()
-        ref_subject = gigamed_synthbrain_dataset.get_reference_subject()
-    elif args.train_dataset == "gigamed+synthbrain+randomanisotropy":
-        transform = tio.Compose(
-            [
-                tio.RandomAnisotropy(downsampling=(1, 3)),
-            ]
-        )
-        gigamed_synthbrain_dataset = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=False,
-            transform=transform,
-            include_synthetic_brains=True,
-        )
-        gigamed_synthbrain_dataset_with_seg = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=True,
-            transform=transform,
-            include_synthetic_brains=True,
-        )
-        train_loader = gigamed_synthbrain_dataset_with_seg.get_train_loader()
-        pretrain_loader = gigamed_synthbrain_dataset.get_pretrain_loader()
-        ref_subject = gigamed_synthbrain_dataset.get_reference_subject()
     else:
         raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
 
@@ -545,12 +474,6 @@ def get_model(args):
                     is_segmentation=False,
                     conv_padding=1,
                 )
-        elif args.backbone == "se3cnn":
-            network = RXFM_Net(1, args.num_keypoints, norm_type=args.norm_type)
-        elif args.backbone == "mednext":
-            network = MedNeXt(
-                1, args.num_keypoints, model_id="L", norm_type=args.norm_type
-            )
         else:
             raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
         network = torch.nn.DataParallel(network)
@@ -568,21 +491,21 @@ def get_model(args):
         registration_model.to(args.device)
         utils.summary(registration_model)
     elif args.registration_model == "itkelastix":
-        from keymorph.baselines.itkelastix import ITKElastix
+        from baselines.itkelastix import ITKElastix
 
         registration_model = ITKElastix()
     elif args.registration_model == "synthmorph":
 
-        from keymorph.baselines.voxelmorph import VoxelMorph
+        from baselines.voxelmorph import VoxelMorph
 
         registration_model = VoxelMorph(perform_preaffine_register=True)
     elif args.registration_model == "synthmorph-no-preaffine":
 
-        from keymorph.baselines.voxelmorph import VoxelMorph
+        from baselines.voxelmorph import VoxelMorph
 
         registration_model = VoxelMorph(perform_preaffine_register=False)
     elif args.registration_model == "ants":
-        from keymorph.baselines.ants import ANTs
+        from baselines.ants import ANTs
 
         registration_model = ANTs()
     else:
