@@ -25,17 +25,17 @@ pip install -e .
 ### Requirements
 The keymorph package depends on the following requirements:
 
-- "numpy>=1.19.1",
-- "ogb>=1.2.6",
-- "outdated>=0.2.0",
-- "pandas>=1.1.0",
-- "ogb>=1.2.6",
-- "pytz>=2020.4",
-- "torch>=1.7.0",
-- "torchvision>=0.8.2",
-- "scikit-learn>=0.20.0",
-- "scipy>=1.5.4",
-- "torchio>=0.19.6",
+- numpy>=1.19.1
+- ogb>=1.2.6
+- outdated>=0.2.0
+- pandas>=1.1.0
+- ogb>=1.2.6
+- pytz>=2020.4
+- torch>=1.7.0
+- torchvision>=0.8.2
+- scikit-learn>=0.20.0
+- scipy>=1.5.4
+- torchio>=0.19.6
 
 Running `pip install keymorph` or `pip install -e .` will automatically check for and install all of these requirements.
 
