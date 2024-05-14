@@ -17,7 +17,7 @@ pip install keymorph
 
 To run scripts and/or contribute to keymorph, you should install from source:
 ```bash
-git clone git@github.com:alanqrwang/keymorph.git
+git clone https://github.com/alanqrwang/keymorph.git
 cd keymorph
 pip install -e .
 ```
