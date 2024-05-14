@@ -3,8 +3,8 @@
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
 
 ## Updates
-- [May 2024] Released full set of foundation models on [Box](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i). Detailed instructions under "Foundation model".
-- [Apr 2024] Released foundational model of KeyMorph for brain MRIs which is trained on over 100K images at full resolution (256^3). Instructions under "Foundation model".
+- [May 2024] Released full set of BrainMorph models on [Box](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i). Detailed instructions under "BrainMorph" (paper to come!).
+- [Apr 2024] Released foundational model of KeyMorph for brain MRIs, called BrainMorph, which is trained on over 100K images at full resolution (256^3). Instructions under "BrainMorph".
 - [Dec 2023] [Journal paper](https://arxiv.org/abs/2304.09941) extension of MIDL paper published in Medical Image Analysis. Instructions under "IXI-trained, half-resolution models".
 - [Feb 2022] [Conference paper](https://openreview.net/forum?id=OrNzjERFybh) published in MIDL 2021.
 
@@ -40,13 +40,13 @@ The keymorph package depends on the following requirements:
 Running `pip install keymorph` or `pip install -e .` will automatically check for and install all of these requirements.
 
 ## Downloading Trained Weights
-You can find all full-resolution trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
+You can find all full-resolution, BrainMorph trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
 Half-resolution trained weights are under [Releases](https://github.com/alanqrwang/keymorph/releases).
-Download them and put them in the `./weights/` folder.
+Download your preferred model(s) and put them in the folder specified by `--weights_dir` in the commands below.
 
 ## Registering brain volumes 
-### Foundation model
-The foundation model is trained on over 100,000 brain MR images at full resolution (256x256x256). 
+### BrainMorph
+BrainMorph is trained on over 100,000 brain MR images at full resolution (256x256x256). 
 The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
 
 `--num_keypoints` and `num_levels_for_unet` will determine which model will be used to perform the registration.
