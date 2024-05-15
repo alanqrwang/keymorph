@@ -1,8 +1,10 @@
 # KeyMorph and BrainMorph: Robust and Flexible Multi-modal Registration via Keypoint Detection
 
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
+It supports unimodal/multimodal pairwise and groupwise registration.
 
-BrainMorph is a foundation model based on the KeyMorph framework, which supports pairwise and groupwise registration and is trained on over 100,000 brain MR images at full resolution (256x256x256).
+BrainMorph is a foundation model based on the KeyMorph framework, trained on over 100,000 brain MR images at full resolution (256x256x256).
+The model is robust to normal and diseased brains, a variety of MRI modalities, and skullstripped and non-skullstripped images.
 
 ## Updates
 - [May 2024] Released full set of BrainMorph models on [Box](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i). Detailed instructions under "BrainMorph" (paper to come!).
@@ -61,10 +63,10 @@ python scripts/register.py \
     --num_keypoints 256 \
     --num_levels_for_unet 4 \
     --weights_dir ./weights/ \
-    --moving ./example_data/images/IXI_000001_0000.nii.gz \
-    --fixed ./example_data/images/IXI_000002_0000.nii.gz \
-    --moving_seg ./example_data/labels/IXI_000001_0000.nii.gz \
-    --fixed_seg ./example_data/labels/IXI_000002_0000.nii.gz \
+    --moving ./example_data/img_m/IXI_000001_0000.nii.gz \
+    --fixed ./example_data/img_m/IXI_000002_0000.nii.gz \
+    --moving_seg ./example_data/seg_m/IXI_000001_0000.nii.gz \
+    --fixed_seg ./example_data/seg_m/IXI_000002_0000.nii.gz \
     --list_of_aligns rigid affine tps_1 \
     --list_of_metrics mse harddice \
     --save_eval_to_disk \
@@ -86,10 +88,27 @@ python scripts/register.py \
     --num_keypoints 256 \
     --num_levels_for_unet 4 \
     --weights_dir ./weights/ \
-    --moving ./example_data/images/ \
-    --fixed ./example_data/images/ \
-    --moving_seg ./example_data/labels/ \
-    --fixed_seg ./example_data/labels/ \
+    --moving ./example_data/img_m/ \
+    --fixed ./example_data/img_m/ \
+    --moving_seg ./example_data/seg_m/ \
+    --fixed_seg ./example_data/seg_m/ \
+    --list_of_aligns rigid affine tps_1 \
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
+```
+
+### Groupwise registration
+```
+python scripts/register.py \
+    --groupwise \
+    --num_keypoints 256 \
+    --num_levels_for_unet 4 \
+    --weights_dir ./weights/ \
+    --moving ./example_data/ \
+    --fixed ./example_data/ \
+    --moving_seg ./example_data/ \
+    --fixed_seg ./example_data/ \
     --list_of_aligns rigid affine tps_1 \
     --list_of_metrics mse harddice \
     --save_eval_to_disk \
@@ -108,11 +127,11 @@ python scripts/register.py \
     --half_resolution \
     --num_keypoints 512 \
     --backbone conv \
-    --moving ./example_data/images_half/IXI_001_128x128x128.nii.gz \
-    --fixed ./example_data/images_half/IXI_002_128x128x128.nii.gz \
+    --moving ./example_data_half/img_m/IXI_001_128x128x128.nii.gz \
+    --fixed ./example_data_half/img_m/IXI_002_128x128x128.nii.gz \
     --load_path ./weights/numkey512_tps0_dice.4760.h5 \
-    --moving_seg ./example_data/labels_half/IXI_001_128x128x128.nii.gz \
-    --fixed_seg ./example_data/labels_half/IXI_002_128x128x128.nii.gz \
+    --moving_seg ./example_data_half/seg_m/IXI_001_128x128x128.nii.gz \
+    --fixed_seg ./example_data_half/seg_m/IXI_002_128x128x128.nii.gz \
     --list_of_aligns affine tps_1 \
     --list_of_metrics mse harddice \
     --save_eval_to_disk \
@@ -161,11 +180,13 @@ The `network` variable is a CNN with center-of-mass layer which extracts keypoin
 The `kp_aligner` variable is a keypoint alignment module. It has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be rigid, affine, or nonlinear (TPS).
 
 ## Training KeyMorph
-Use `scripts/run.py` to train KeyMorph.
+Use `scripts/run.py` with `--run_mode train` to train KeyMorph.
 <!-- Some example bash commands are provided in `bash_scripts/`. -->
+You will likely need to customize some of the dataloading code in `./dataset` for your own datasets and data formats.
+See `./dataset/gigamed.py` for an example of how to load the data used for training BrainMorph.
 
-I'm in the process of updating the code to make it more user-friendly, and will update this repository soon.
-In the meantime, feel free to open an issue if you have any training questions.
+<!-- I'm in the process of updating the code to make it more user-friendly, and will update this repository soon. -->
+<!-- In the meantime, feel free to open an issue if you have any training questions. -->
 
 <!-- We use the weights from the pretraining step to initialize our model. 
 Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
