@@ -1,6 +1,8 @@
-# KeyMorph: Robust Multi-modal Registration via Keypoint Detection
+# KeyMorph and BrainMorph: Robust and Flexible Multi-modal Registration via Keypoint Detection
 
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
+
+BrainMorph is a foundation model based on the KeyMorph framework, which supports pairwise and groupwise registration and is trained on over 100,000 brain MR images at full resolution (256x256x256).
 
 ## Updates
 - [May 2024] Released full set of BrainMorph models on [Box](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i). Detailed instructions under "BrainMorph" (paper to come!).
