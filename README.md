@@ -1,7 +1,7 @@
 # KeyMorph and BrainMorph: Robust and Flexible Multi-modal Registration via Keypoint Detection
 
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
-It supports unimodal/multimodal pairwise and groupwise registration.
+It supports unimodal/multimodal pairwise and groupwise registration using rigid, affine, or nonlinear transformations.
 
 BrainMorph is a foundation model based on the KeyMorph framework, trained on over 100,000 brain MR images at full resolution (256x256x256).
 The model is robust to normal and diseased brains, a variety of MRI modalities, and skullstripped and non-skullstripped images.
@@ -83,7 +83,7 @@ Description of other important flags:
 
 You can also replace filenames with directories to register all images in the directory.
 Note that the script expects corresponding image and segmentation pairs to have the same filename.
-```
+```bash
 python scripts/register.py \
     --num_keypoints 256 \
     --num_levels_for_unet 4 \
@@ -99,7 +99,7 @@ python scripts/register.py \
 ```
 
 ### Groupwise registration
-```
+```bash
 python scripts/register.py \
     --groupwise \
     --num_keypoints 256 \
@@ -122,7 +122,7 @@ All other model weights are trained on half-resolution (128x128x128) on the (sma
 The script will automatically min-max normalize the images.
 To register two volumes with our best-performing model:
 
-```
+```bash
 python scripts/register.py \
     --half_resolution \
     --num_keypoints 512 \
@@ -142,7 +142,7 @@ python scripts/register.py \
 The crux of the code is in the `forward()` function in `keymorph/model.py`, which performs one forward pass through the entire KeyMorph pipeline.
 
 Here's a pseudo-code version of the function:
-```
+```python
 def forward(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
     '''Forward pass for one mini-batch step. 
     Variables with (_f, _m, _a) denotes (fixed, moving, aligned).
