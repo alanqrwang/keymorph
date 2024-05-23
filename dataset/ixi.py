@@ -124,7 +124,6 @@ def get_loaders(data_dir, batch_size, num_workers, num_test_subjects, mix_modali
                 transform=transform,
             )
         )
-    print(pretrain_datasets)
     pretrain_loader = DataLoader(
         InfiniteRandomAggregatedDataset(pretrain_datasets),
         batch_size=batch_size,
