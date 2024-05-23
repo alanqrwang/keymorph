@@ -36,6 +36,14 @@ def run_eval(
         _metrics.update({key: [] for key in list_of_all_test})
         return _metrics
 
+    print(
+        list_of_eval_metrics,
+        list_of_eval_names,
+        list_of_eval_augs,
+        list_of_eval_aligns,
+        args.save_dir,
+    )
+
     test_metrics = _build_metric_dict(list_of_eval_names)
     for dataset_name in list_of_eval_names:
         for aug in list_of_eval_augs:
@@ -69,6 +77,7 @@ def run_eval(
                         save_dir = None
 
                     # Load metrics (for all alignment types) if they exist, else run registration
+                    print(aug, list_of_eval_aligns, save_dir)
                     all_metrics_paths = {
                         align_type_str: save_dir
                         / f"metrics-{aug}-{align_type_str}.json"

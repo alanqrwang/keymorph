@@ -1,14 +1,18 @@
-# KeyMorph and BrainMorph: Robust and Flexible Multi-modal Registration via Keypoint Detection
+# KeyMorph: Robust and Flexible Multi-modal Registration via Keypoint Detection
 
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
 It supports unimodal/multimodal pairwise and groupwise registration using rigid, affine, or nonlinear transformations.
 
-BrainMorph is a foundation model based on the KeyMorph framework, trained on over 100,000 brain MR images at full resolution (256x256x256).
+This repository contains the code for KeyMorph, as well as example scripts for training your own KeyMorph model.
+As an example, it uses data from the [IXI dataset](https://brain-development.org/ixi-dataset/) to train and evaluate the model.
+
+[BrainMorph](https://github.com/alanqrwang/brainmorph) is a foundation model based on the KeyMorph framework, trained on over 100,000 brain MR images at full resolution (256x256x256).
 The model is robust to normal and diseased brains, a variety of MRI modalities, and skullstripped and non-skullstripped images.
+Check out the dedicated repository for the latest updates and models!
 
 ## Updates
-- [May 2024] Released full set of BrainMorph models on [Box](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i). Detailed instructions under "BrainMorph" (paper to come!).
-- [Apr 2024] Released foundational model of KeyMorph for brain MRIs, called BrainMorph, which is trained on over 100K images at full resolution (256^3). Instructions under "BrainMorph".
+- [May 2024] [BrainMorph](https://github.com/alanqrwang/brainmorph) has been moved to its own dedicated repository. See the repository for the latest updates and models.
+- [May 2024] [BrainMorph](https://github.com/alanqrwang/brainmorph) is released, a foundational keypoint model based on KeyMorph for robust and flexible brain MRI registration!
 - [Dec 2023] [Journal paper](https://arxiv.org/abs/2304.09941) extension of MIDL paper published in Medical Image Analysis. Instructions under "IXI-trained, half-resolution models".
 - [Feb 2022] [Conference paper](https://openreview.net/forum?id=OrNzjERFybh) published in MIDL 2021.
 
@@ -33,7 +37,6 @@ The keymorph package depends on the following requirements:
 - ogb>=1.2.6
 - outdated>=0.2.0
 - pandas>=1.1.0
-- ogb>=1.2.6
 - pytz>=2020.4
 - torch>=1.7.0
 - torchvision>=0.8.2
@@ -50,6 +53,8 @@ Download your preferred model(s) and put them in the folder specified by `--weig
 
 ## Registering brain volumes 
 ### BrainMorph
+Warning: Please see the [BrainMorph repository](https://github.com/alanqrwang/brainmorph) for the latest updates and models! This is a legacy version of the code and is not guaranteed to be maintained.
+
 BrainMorph is trained on over 100,000 brain MR images at full resolution (256x256x256). 
 The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
 
@@ -181,89 +186,110 @@ The `kp_aligner` variable is a keypoint alignment module. It has a function `gri
 
 ## Training KeyMorph
 Use `scripts/run.py` with `--run_mode train` to train KeyMorph.
-<!-- Some example bash commands are provided in `bash_scripts/`. -->
-You will likely need to customize some of the dataloading code in `./dataset` for your own datasets and data formats.
-See `./dataset/gigamed.py` for an example of how to load the data used for training BrainMorph.
+To train on your own data, you can follow the examples of dataloading and training provided in `./dataset/ixi.py` and `./scripts/train.py`.
 
-<!-- I'm in the process of updating the code to make it more user-friendly, and will update this repository soon. -->
-<!-- In the meantime, feel free to open an issue if you have any training questions. -->
-
-<!-- We use the weights from the pretraining step to initialize our model. 
+We use the weights from the pretraining step to initialize our model.
 Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
 
 The `--num_keypoints <num_key>` flag specifies the number of keypoints to extract per image as `<num_key>`.
-For all commands, optionally add the `--use_wandb` flag to log results to Weights & Biases.
+
+For all commands, optionally add:
++ `--visualize` flag to visualize results with matplotlib
++ `--debug_mode` flag to print some debugging information
++ `--use_wandb` flag to log results to Weights & Biases
 
 This repository supports several variants of training KeyMorph.
 Here's a overview of the variants:
 
-### Supervised vs. unsupervised
+### Supervised or unsupervised
 Unsupervised only requires intensity images and minimizes MSE loss, while supervised assumes availability of corresponding segmentation maps for each image and minimizes soft Dice loss.
 
 To specify unsupervised, set `--loss_fn mse`.
 To specify supervised, set `--loss_fn dice`.
 
 
-### Affine vs. TPS
+### Rigid, Affine, or TPS
 Affine uses an affine transformation to align the corresponding keypoints.
 
-TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter `--tps_lmbda` controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
+TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter lambda controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
 
-To specify affine, set `--kp_align_method affine`.
-To specify tps, set `--kp_align_method tps` and the lmbda value `--tps_lmbda 0`.
+To specify rigid, set `--transform_type rigid`.
+To specify affine, set `--transform_type affine`.
+To specify tps, set `--transform_type tps_<lambda>` where `<lmbda> ` is the lambda value, e.g. `tps_0`.
 
 ### Example commands
 **Affine, Unsupervised**
 
 To train unsupervised KeyMorph with affine transformation and 128 keypoints, use `mse` as the loss function:
 
-```
-python run.py --num_keypoints 128 --kp_align_method affine --loss_fn mse \
-                --data_dir ./data/centered_IXI/ \
-                --load_path ./weights/numkey128_pretrain.2500.h5
+```bash
+python scripts/run.py \
+    --run_mode train \
+    --num_keypoints 128 \
+    --loss_fn mse \
+    --transform_type affine \
+    --data_dir ./data/centered_IXI/ \
+    --load_path ./weights/numkey128_pretrain.2500.h5
 ```
 
-For unsupervised KeyMorph, optionally add `--kpconsistency_coeff` to optimize keypoint consistency across modalities for same subject:
+<!-- For unsupervised KeyMorph, optionally add `--kpconsistency_coeff` to optimize keypoint consistency across modalities for same subject: -->
 
-```
-python run.py --num_keypoints 128 --kp_align_method affine --loss_fn mse --kpconsistency_coeff 10 \
-                --data_dir ./data/centered_IXI/ \
-                --load_path ./weights/numkey128_pretrain.2500.h5
-```
+<!-- ```bash
+python scripts/run.py \
+    --run_mode train \
+    --num_keypoints 128 \
+    --kp_align_method affine \
+    --loss_fn mse \
+    --kpconsistency_coeff 10 \
+    --data_dir ./data/centered_IXI/ \
+    --load_path ./weights/numkey128_pretrain.2500.h5
+``` -->
 
 **Affine, Supervised**
 
 To train supervised KeyMorph, use `dice` as the loss function:
 
-```
-python run.py --num_keypoints 128 --kp_align_method affine --loss_fn dice --mix_modalities \
-                --data_dir ./data/centered_IXI/ \
-                --load_path ./weights/numkey128_pretrain.2500.h5
+```bash
+python scripts/run.py \
+    --run_mode train \
+    --num_keypoints 128 \
+    --transform_type affine \
+    --loss_fn dice \
+    --mix_modalities \
+    --data_dir ./data/centered_IXI/ \
+    --load_path ./weights/numkey128_pretrain.2500.h5
 ```
 
 Note that the `--mix_modalities` flag allows fixed and moving images to be of different modalities during training. This should not be set for unsupervised training, which uses MSE as the loss function.
 
 **Nonlinear thin-plate-spline (TPS)**
 
-To train the TPS variant of KeyMorph which allows for nonlinear registrations, specify `tps` as the keypoint alignment method and specify the tps lambda value: 
+To train the TPS variant of KeyMorph which allows for nonlinear registrations, specify `tps_<lambda>` as the keypoint alignment method and specify the tps lambda value: 
 
-```
-python run.py --num_keypoints 128 --kp_align_method tps --tps_lmbda 0 --loss_fn dice \
-                --data_dir ./data/centered_IXI/ \
-                --load_path ./weights/numkey128_pretrain.2500.h5
+```bash
+python scripts/run.py \
+    --run_mode train \
+    --num_keypoints 128 \
+    --transform_type tps_0 \
+    --loss_fn dice \
+    --data_dir ./data/centered_IXI/ \
+    --load_path ./weights/numkey128_pretrain.2500.h5
 ```
 
 The code also supports sampling lambda according to some distribution (`uniform`, `lognormal`, `loguniform`). For example, to sample from the `loguniform` distribution during training:
 
-```
-python run.py --num_keypoints 128 --kp_align_method tps --tps_lmbda loguniform --loss_fn dice \
-                --data_dir ./data/centered_IXI/ \
-                --load_path ./weights/numkey128_pretrain.2500.h5
+```bash
+python scripts/run.py \
+    --num_keypoints 128 \
+    --transform_type tps_loguniform \
+    --loss_fn dice \
+    --data_dir ./data/centered_IXI/ \
+    --load_path ./weights/numkey128_pretrain.2500.h5
 ```
 
-Note that supervised/unsupervised variants can be run similarly to affine, as described above. -->
+Note that supervised/unsupervised variants can be run similarly to affine, as described above. 
 
-<!-- ## Step-by-step guide for reproducing our results
+## Step-by-step guide for reproducing our results
 
 ### Dataset 
 [A] Scripts in `./notebooks/[A] Download Data` will download the IXI data and perform some basic preprocessing
@@ -278,8 +304,13 @@ This step helps with the convergence of our model. We pick 1 subject and random 
 
 To pretrain, run:
  
-```
-python pretraining.py --num_keypoints 128 --data_dir ./data/centered_IXI/ 
+```bash
+python scripts/run.py \
+    --run_mode pretrain \
+    --num_keypoints 128 \
+    --loss_fn mse \
+    --transform_type tps_0 \
+    --data_dir ./centered_IXI
 ```
 
 ### Training KeyMorph
@@ -288,17 +319,21 @@ Follow instructions for "Training KeyMorph" above, depending on the variant you 
 ### Evaluating KeyMorph
 To evaluate on the test set, simply add the `--eval` flag to any of the above commands. For example, for affine, unsupervised KeyMorph evaluation:
 
+```bash
+python scripts/run.py \
+    --run_mode eval \
+    --num_keypoints 128 \
+    --loss_fn dice \
+    --transform_type tps_0 \
+    --data_dir ./centered_IXI \
+    --load_path ./weights/best_trained_model.h5
+    --visualize \
+    --save_eval_to_disk
 ```
-python run.py --kp_align_method affine --num_keypoints 128 --loss_fn mse --eval \
-                --load_path ./weights/best_trained_model.h5
-```
-
-Evaluation proceeds by looping through all test augmentations in `list_of_test_augs`, all test modality pairs in `list_of_test_mods`, and all pairs of volumes in the test set.
-Set `--save_preds` flag to save all outputs to disk.
 
 **Automatic Delineation/Segmentation of the Brain**
 
-For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. -->
+For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 
 
 ## Issues
 This repository is being actively maintained. Feel free to open an issue for any problems or questions.

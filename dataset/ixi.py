@@ -4,6 +4,9 @@ import numpy as np
 import torchio as tio
 import torch.nn.functional as F
 from pathlib import Path
+from torch.utils.data import Dataset, IterableDataset, DataLoader
+import random
+from itertools import combinations
 
 
 def read_subjects_from_disk(directory, start_end, modality):
@@ -95,6 +98,172 @@ def one_hot(asegs):
     return one_hot
 
 
+def get_loaders(data_dir, batch_size, num_workers, num_test_subjects, mix_modalities):
+    modalities = ["T1", "T2", "PD"]
+
+    transform = tio.Compose(
+        [
+            tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
+            tio.Mask(masking_method="mask"),
+            tio.Resize(128),
+            # tio.Lambda(one_hot, include=("seg",)),
+        ]
+    )
+
+    # Pretrain
+    pretrain_datasets = []
+    for mod in modalities:
+        subjects_list = read_subjects_from_disk(
+            data_dir,
+            (0, 428),
+            mod,
+        )
+        pretrain_datasets.append(
+            InfiniteRandomSingleDataset(
+                subjects_list,
+                transform=transform,
+            )
+        )
+    print(pretrain_datasets)
+    pretrain_loader = DataLoader(
+        InfiniteRandomAggregatedDataset(pretrain_datasets),
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
+
+    # Train
+    train_datasets = {}
+    for mod in modalities:
+        train_datasets[mod] = read_subjects_from_disk(
+            data_dir,
+            (0, 428),
+            mod,
+        )
+    if mix_modalities:
+        mod_pairs = list(combinations(modalities, 2))
+    else:
+        mod_pairs = [(m, m) for m in modalities]
+
+    paired_datasets = []
+    for mod1, mod2 in mod_pairs:
+        paired_datasets.append(
+            InfiniteRandomPairedDataset(
+                train_datasets[mod1],
+                train_datasets[mod2],
+                transform=transform,
+            )
+        )
+    train_loader = DataLoader(
+        InfiniteRandomAggregatedDataset(paired_datasets),
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
+
+    # Test
+    test_loaders = {}
+    for mod in modalities:
+        test_subjects = read_subjects_from_disk(
+            data_dir, (428, 428 + num_test_subjects), mod
+        )
+        test_loaders[mod] = DataLoader(
+            tio.data.SubjectsDataset(test_subjects, transform=transform),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+        )
+
+    return pretrain_loader, train_loader, test_loaders
+
+
+class InfiniteRandomPairedDataset(IterableDataset):
+    """General paired dataset.
+    Given pair of subject lists, samples pairs of subjects without restriction."""
+
+    def __init__(
+        self,
+        subject_list1,
+        subject_list2,
+        transform=None,
+    ):
+        super().__init__()
+        self.subject_list1 = subject_list1
+        self.subject_list2 = subject_list2
+        self.transform = transform
+
+    def __iter__(self):
+        while True:
+            sub1 = random.sample(self.subject_list1, 1)[0]
+            sub2 = random.sample(self.subject_list2, 1)[0]
+            sub1.load()
+            sub2.load()
+            if self.transform:
+                sub1 = self.transform(sub1)
+                sub2 = self.transform(sub2)
+            yield sub1, sub2
+
+
+class InfiniteRandomSingleDataset(IterableDataset):
+    """Random single dataset."""
+
+    def __init__(
+        self,
+        subject_list,
+        transform=None,
+    ):
+        super().__init__()
+        self.subject_list = subject_list
+        self.transform = transform
+
+    def __iter__(self):
+        while True:
+            sub1 = random.sample(self.subject_list, 1)[0]
+            sub1.load()
+            if self.transform:
+                sub1 = self.transform(sub1)
+            yield sub1
+
+
+class SimpleDatasetIterator:
+    """Simple replacement to DataLoader"""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+        self.index = 0
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __iter__(self):
+        # Reset the index each time iter is called.
+        self.index = 0
+        return self
+
+    def __next__(self):
+        if self.index < len(self.dataset):
+            item = self.dataset[self.index]
+            self.index += 1
+            return item
+        else:
+            # No more data, stop the iteration.
+            raise StopIteration
+
+
+class InfiniteRandomAggregatedDataset(IterableDataset):
+    """Aggregates multiple iterable datasets and returns random samples from them."""
+
+    def __init__(self, datasets):
+        super().__init__()
+        self.datasets = datasets
+
+    def __iter__(self):
+        iterators = [iter(dataset) for dataset in self.datasets]
+        while True:
+            # Randomly choose one of the iterators
+            chosen_iterator = random.choice(iterators)
+            sample = next(chosen_iterator)
+            yield sample
+
+
 def create_simple(directory, transform, modality):
     """
     Create dataloader
@@ -131,51 +300,3 @@ def create_simple(directory, transform, modality):
     dataset = tio.SubjectsDataset(loaded_subjects, transform=transform)
 
     return dataset
-
-
-def print_dataset_stats(datasets, prefix=""):
-    print(f"{prefix} dataset has {len(datasets)} modalities.")
-    for mod_name, mod_dataset in datasets.items():
-        print(
-            "-> Modality {} has {} subjects ({} images, {} masks and {} segmentations)".format(
-                mod_name,
-                len(mod_dataset),
-                sum("img" in s for s in mod_dataset.dry_iter()),
-                sum("mask" in s for s in mod_dataset.dry_iter()),
-                sum("seg" in s for s in mod_dataset.dry_iter()),
-            )
-        )
-
-
-def get_loaders():
-    modalities = ["T1", "T2", "PD"]
-
-    transform = tio.Compose(
-        [
-            #                 RandomBiasField(),
-            #                 RandomNoise(),
-            tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
-            tio.Mask(masking_method="mask"),
-            tio.Resize(128),
-            tio.Lambda(ixi.one_hot, include=("seg")),
-        ]
-    )
-
-    fixed_datasets = {}
-    moving_datasets = {}
-    test_datasets = {}
-    for mod in modalities:
-        train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
-        fixed_datasets[mod] = tio.data.SubjectsDataset(
-            train_subjects, transform=transform
-        )
-        train_subjects = ixi.read_subjects_from_disk(args.data_dir, (0, 427), mod)
-        moving_datasets[mod] = tio.data.SubjectsDataset(
-            train_subjects, transform=transform
-        )
-        test_subjects = ixi.read_subjects_from_disk(
-            args.data_dir, (428, 428 + args.num_test_subjects), mod
-        )
-        test_datasets[mod] = tio.data.SubjectsDataset(
-            test_subjects, transform=transform
-        )

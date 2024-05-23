@@ -12,6 +12,7 @@ from keymorph import utils
 from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from keymorph.net import ConvNet
 from scripts.pairwise_register_eval import run_eval
+from scripts.groupwise_register_eval import run_group_eval
 
 
 def parse_args():
@@ -137,7 +138,9 @@ def parse_args():
 
     parser.add_argument("--use_amp", action="store_true", help="Use AMP")
 
-    parser.add_argument("--groupwise", action="store_true", help="Use AMP")
+    parser.add_argument(
+        "--groupwise", action="store_true", help="Perform groupwise registration"
+    )
 
     parser.add_argument(
         "--use_checkpoint",
@@ -370,7 +373,18 @@ if __name__ == "__main__":
         )
 
     if args.groupwise:
-        pass
+        print("running groupwise")
+        run_group_eval(
+            group_loader,
+            registration_model,
+            args.list_of_metrics,
+            list_of_eval_names,
+            list_of_eval_augs,
+            args.list_of_aligns,
+            list_of_group_sizes,
+            args,
+            save_dir_prefix="group_eval",
+        )
     else:
         run_eval(
             loaders,

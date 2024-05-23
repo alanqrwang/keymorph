@@ -12,13 +12,12 @@ from keymorph.augmentation import random_affine_augment
 import keymorph.loss_ops as loss_ops
 
 
-def run_train(train_loader, registration_model, optimizer, train_params, args):
+def run_train(train_loader, registration_model, optimizer, args):
     """Train for one epoch.
 
     Args:
-        fixed_loaders: list of Dataloaders for fixed images
-        moving_loaders: list of Dataloaders for moving images
-        network: keypoint extractor
+        train_loader: Dataloader which returns pair of TorchIO subjects per iteration
+        registration_model: Registration model
         optimizer: Pytorch optimizer
         args: Other script arguments
     """
@@ -31,17 +30,14 @@ def run_train(train_loader, registration_model, optimizer, train_params, args):
 
     res = []
 
-    for step_idx, (subjects, family_name) in enumerate(train_loader):
+    transform_type = args.transform_type
+    loss_fn = args.loss_fn
+    max_random_params = args.max_random_augment_params
+
+    for step_idx, subjects in enumerate(train_loader):
         fixed, moving = subjects
-        family_name = family_name[0]
         if step_idx == args.steps_per_epoch:
             break
-
-        # Get training parameters given family name
-        transform_type = train_params[family_name]["transform_type"]
-        loss_fn = train_params[family_name]["loss_fn"]
-        max_random_params = train_params[family_name]["max_random_params"]
-        transform_type = train_params[family_name]["transform_type"]
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
@@ -196,7 +192,6 @@ def run_train(train_loader, registration_model, optimizer, train_params, args):
 
         if args.debug_mode:
             print("\nDebugging info:")
-            print(f"-> Family name: {family_name}")
             print(f"-> Alignment: {align_type} ")
             print(f"-> Max random params: {max_random_params} ")
             print(f"-> TPS lambda: {tps_lmbda} ")

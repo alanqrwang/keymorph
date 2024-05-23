@@ -21,7 +21,7 @@ def run_pretrain(loader, random_points, keymorph_model, optimizer, args):
     res = []
 
     random_points = random_points.to(args.device)
-    for step_idx, (subject, _) in enumerate(loader):
+    for step_idx, subject in enumerate(loader):
         if step_idx == args.steps_per_epoch:
             break
         x_fixed = subject["img"][tio.DATA].float().to(args.device)

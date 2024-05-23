@@ -142,11 +142,9 @@ def imshow_img_and_points_3d(
     all_points=None,
     all_weights=None,
     projection=False,
-    center_slices=(128, 128, 128),
     slab_thickness=10,
     axes=None,
     rotate_90_deg=0,
-    img_dims=(256, 256, 256),
     markers=(".", "x"),
 ):
     """
@@ -160,6 +158,10 @@ def imshow_img_and_points_3d(
         The code converts Pytorch grids to image grids by internally checking if
     all_weights: (N,) or (1, N) or (2, N) array of weights
     """
+    print(img.shape)
+    print(all_points.shape)
+    img_dims = img.shape[-3:]
+    center_slices = (img_dims[0] // 2, img_dims[1] // 2, img_dims[2] // 2)
 
     def normalize(data):
         return (data - np.min(data)) / (np.max(data) - np.min(data))

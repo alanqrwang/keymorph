@@ -19,7 +19,7 @@ from keymorph.utils import (
     initialize_wandb,
     save_dict_as_json,
 )
-from dataset import ixi, gigamed
+from dataset import ixi
 import scripts.gigamed_hyperparameters as gigamed_hps
 import scripts.ixi_hyperparameters as ixi_hps
 from scripts.train import run_train
@@ -44,42 +44,36 @@ def parse_args():
         default="./output/",
         help="Path to the folder where outputs are saved",
     )
-
     parser.add_argument(
         "--load_path", type=str, default=None, help="Load checkpoint at .h5 path"
     )
-
     parser.add_argument(
         "--resume", action="store_true", help="Resume checkpoint, must set --load_path"
     )
-
     parser.add_argument(
         "--resume_latest",
         action="store_true",
         help="Resume latest checkpoint available",
     )
-
     parser.add_argument(
         "--save_eval_to_disk",
         action="store_true",
         help="Save evaluation results to disk",
     )
-
     parser.add_argument(
         "--visualize", action="store_true", help="Visualize images and points"
     )
-
     parser.add_argument(
         "--log_interval", type=int, default=25, help="Frequency of logs"
     )
 
     # KeyMorph
     parser.add_argument(
-        "--registration_model", type=str, required=True, help="Registration model"
-    )
-
-    parser.add_argument(
         "--num_keypoints", type=int, required=True, help="Number of keypoints"
+    )
+    parser.add_argument("--loss_fn", type=str, required=True, help="Loss function")
+    parser.add_argument(
+        "--transform_type", type=str, required=True, help="Type of keypoint alignment"
     )
     parser.add_argument(
         "--max_train_keypoints",
@@ -90,9 +84,48 @@ def parse_args():
     parser.add_argument(
         "--max_train_seg_channels",
         type=int,
-        default=14,
+        default=None,
         help="Number of channels to compute Dice loss, to save memory",
     )
+    parser.add_argument(
+        "--kp_layer",
+        type=str,
+        default="com",
+        choices=["com", "linear"],
+        help="Keypoint layer module to use",
+    )
+    parser.add_argument(
+        "--kpconsistency_coeff",
+        type=float,
+        default=0,
+        help="Minimize keypoint consistency loss",
+    )
+    parser.add_argument(
+        "--weighted_kp_align",
+        type=str,
+        default=None,
+        choices=["variance", "power"],
+        help="Type of weighting to use for keypoints",
+    )
+    parser.add_argument(
+        "--compute_subgrids_for_tps",
+        action="store_true",
+        help="Use subgrids for computing TPS",
+    )
+    parser.add_argument(
+        "--num_subgrids",
+        type=int,
+        default=4,
+        help="Number of subgrids for computing TPS",
+    )
+    parser.add_argument(
+        "--max_random_augment_params",
+        nargs="*",
+        default=(0.2, 0.2, 3.1416, 0.1),
+        help="Maximum of affine augmentations during training",
+    )
+
+    # CNN backbone
     parser.add_argument(
         "--backbone",
         type=str,
@@ -112,89 +145,25 @@ def parse_args():
         help="Number of levels for unet",
     )
 
-    parser.add_argument(
-        "--use_checkpoint",
-        action="store_true",
-        help="Use torch.utils.checkpoint",
-    )
-
-    parser.add_argument(
-        "--use_profiler",
-        action="store_true",
-        help="Use torch profiler",
-    )
-
-    parser.add_argument(
-        "--kp_layer",
-        type=str,
-        default="com",
-        choices=["com", "linear"],
-        help="Keypoint layer module to use",
-    )
-
-    parser.add_argument(
-        "--kpconsistency_coeff",
-        type=float,
-        default=0,
-        help="Minimize keypoint consistency loss",
-    )
-
-    parser.add_argument(
-        "--weighted_kp_align",
-        type=str,
-        default=None,
-        choices=["variance", "power"],
-        help="Type of weighting to use for keypoints",
-    )
-
-    parser.add_argument(
-        "--compute_subgrids_for_tps",
-        action="store_true",
-        help="Use subgrids for computing TPS",
-    )
-
-    parser.add_argument(
-        "--num_subgrids",
-        type=int,
-        default=4,
-        help="Number of subgrids for computing TPS",
-    )
-
-    parser.add_argument(
-        "--train_family_params",
-        type=str,
-        default="default",
-        choices=["default", "mse_only", "tps0_only"],
-        help="Type of training family parameters to use",
-    )
-
     # Data
     parser.add_argument(
-        "--train_dataset", help="<Required> Train datasets", required=True
+        "--data_dir",
+        type=str,
+        required=True,
+        help="Whether or not to mix modalities amongst image pairs",
     )
-    parser.add_argument("--test_dataset", type=str, required=True, help="Test Dataset")
-
     parser.add_argument(
         "--mix_modalities",
         action="store_true",
         help="Whether or not to mix modalities amongst image pairs",
     )
-
     parser.add_argument("--num_workers", type=int, default=1, help="Num workers")
-
     parser.add_argument(
-        "--seg_available",
-        action="store_true",
-        help="Whether or not segmentation maps are available for the dataset",
-    )
-
-    parser.add_argument(
-        "--crop_dims_for_train", type=int, default=256, help="Num workers"
+        "--num_test_subjects", type=int, default=100, help="Num test subjects"
     )
 
     # ML
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
-
     parser.add_argument(
         "--norm_type",
         type=str,
@@ -202,20 +171,14 @@ def parse_args():
         choices=["none", "instance", "batch", "group"],
         help="Normalization type",
     )
-
     parser.add_argument("--lr", type=float, default=3e-6, help="Learning rate")
-
-    parser.add_argument("--transform", type=str, default="none")
-
     parser.add_argument("--epochs", type=int, default=2000, help="Training Epochs")
-
     parser.add_argument(
         "--steps_per_epoch",
         type=int,
         default=32,
         help="Number of gradient steps per epoch",
     )
-
     parser.add_argument(
         "--affine_slope",
         type=int,
@@ -230,17 +193,12 @@ def parse_args():
         choices=["train", "pretrain", "eval"],
         help="Run mode",
     )
-
     parser.add_argument("--debug_mode", action="store_true", help="Debug mode")
-
     parser.add_argument(
         "--seed", type=int, default=23, help="Random seed use to sort the training data"
     )
-
     parser.add_argument("--dim", type=int, default=3)
-
     parser.add_argument("--use_amp", action="store_true", help="Use AMP")
-
     parser.add_argument(
         "--early_stop_eval_subjects",
         type=int,
@@ -250,16 +208,24 @@ def parse_args():
     parser.add_argument(
         "--num_resolutions_for_itkelastix", type=int, default=4, help="Num resolutions"
     )
+    parser.add_argument(
+        "--use_checkpoint",
+        action="store_true",
+        help="Use torch.utils.checkpoint",
+    )
+    parser.add_argument(
+        "--use_profiler",
+        action="store_true",
+        help="Use torch profiler",
+    )
 
     # Weights & Biases
     parser.add_argument("--use_wandb", action="store_true", help="Use Wandb")
-
     parser.add_argument(
         "--wandb_api_key_path",
         type=str,
         help="Path to Weights & Biases API Key. If use_wandb is set to True and this argument is not specified, user will be prompted to authenticate.",
     )
-
     parser.add_argument(
         "--wandb_kwargs",
         nargs="*",
@@ -278,20 +244,13 @@ def create_dirs(args):
     # Path to save outputs
     if args.run_mode == "eval":
         prefix = "__eval__"
-        dataset_str = args.test_dataset
     elif args.run_mode == "pretrain":
         prefix = "__pretrain__"
-        dataset_str = args.train_dataset
     else:
         prefix = "__training__"
-        dataset_str = args.train_dataset
     arguments = (
         prefix
         + args.job_name
-        + "_dataset"
-        + dataset_str
-        + "_model"
-        + str(args.registration_model)
         + "_keypoints"
         + str(args.num_keypoints)
         + "_batch"
@@ -333,185 +292,86 @@ def set_seed(args):
 
 
 def get_data(args):
-    # Train dataset
-    if args.train_dataset == "ixi":
-        train_loader, _ = ixi.get_loaders()
-    elif args.train_dataset == "gigamed":
-        crop_dims = (args.crop_dims_for_train,) * args.dim
-        transform = tio.Compose(
-            [
-                tio.CropOrPad(crop_dims, padding_mode=0, include=("img",)),
-                tio.CropOrPad(crop_dims, padding_mode=0, include=("seg",)),
-            ]
-        )
-        gigamed_dataset = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=False,
-            transform=transform,
-        )
-        gigamed_dataset_with_seg = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=True,
-            transform=transform,
-        )
-        train_loader = gigamed_dataset_with_seg.get_train_loader()
-        pretrain_loader = gigamed_dataset.get_pretrain_loader()
-        ref_subject = gigamed_dataset.get_reference_subject()
-    elif args.train_dataset == "gigamednb":
-        gigamed_dataset = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=False,
-            normal_brains_only=True,
-        )
-        gigamed_dataset_with_seg = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=True,
-            normal_brains_only=True,
-        )
-        train_loader = gigamed_dataset_with_seg.get_train_loader()
-        pretrain_loader = gigamed_dataset.get_pretrain_loader()
-        ref_subject = gigamed_dataset.get_reference_subject()
-    else:
-        raise ValueError('Invalid train datasets "{}"'.format(args.train_dataset))
-
-    # Eval dataset
-    if args.test_dataset == "ixi":
-        _, id_eval_loaders = ixi.get_loaders()
-
-        return train_loader, {
-            "id": id_eval_loaders,
-        }
-    elif args.test_dataset == "gigamed":
-        eval_transform = tio.Compose(
-            [
-                tio.ToCanonical(),
-                tio.Resample(1),
-                tio.Resample("img"),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img",)),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg",)),
-            ],
-            include=("img", "seg"),
-        )
-        eval_dataset = gigamed.GigaMed(
-            args.batch_size,
-            args.num_workers,
-            include_seg=True,
-            transform=eval_transform,
-        )
-
-        return {
-            "pretrain": pretrain_loader,
-            "train": train_loader,
-            "eval": {
-                "ss_unimodal": eval_dataset.get_eval_loaders(ss=True),
-                "ss_multimodal": eval_dataset.get_eval_loaders(ss=True),
-                "ss_lesion": eval_dataset.get_eval_lesion_loaders(ss=True),
-                "ss_group": eval_dataset.get_eval_group_loaders(ss=True),
-                "ss_long": eval_dataset.get_eval_longitudinal_loaders(ss=True),
-                "nss_unimodal": eval_dataset.get_eval_loaders(ss=False),
-                "nss_multimodal": eval_dataset.get_eval_loaders(ss=False),
-                "nss_lesion": eval_dataset.get_eval_lesion_loaders(ss=False),
-                "nss_group": eval_dataset.get_eval_group_loaders(ss=False),
-                "nss_long": eval_dataset.get_eval_longitudinal_loaders(ss=False),
-            },
-            "ref_subject": ref_subject,
-        }
-    else:
-        raise ValueError('Invalid test dataset "{}"'.format(args.test_dataset))
+    pretrain_loader, train_loader, id_eval_loaders = ixi.get_loaders(
+        args.data_dir,
+        args.batch_size,
+        args.num_workers,
+        args.num_test_subjects,
+        args.mix_modalities,
+    )
+    args.seg_available = True
+    return {
+        "pretrain": pretrain_loader,
+        "train": train_loader,
+        "eval": id_eval_loaders,
+    }
 
 
 def get_model(args):
-    if args.registration_model == "keymorph":
-        # CNN, i.e. keypoint extractor
-        if args.backbone == "conv":
-            network = ConvNet(
-                args.dim,
+    # CNN, i.e. keypoint extractor
+    if args.backbone == "conv":
+        network = ConvNet(
+            args.dim,
+            1,
+            args.num_keypoints,
+            norm_type=args.norm_type,
+        )
+    elif args.backbone == "unet":
+        if args.dim == 2:
+            network = UNet2D(
                 1,
                 args.num_keypoints,
-                norm_type=args.norm_type,
+                final_sigmoid=False,
+                f_maps=64,
+                layer_order="gcr",
+                num_groups=8,
+                num_levels=args.num_levels_for_unet,
+                is_segmentation=False,
+                conv_padding=1,
             )
-        elif args.backbone == "unet":
-            if args.dim == 2:
-                network = UNet2D(
-                    1,
-                    args.num_keypoints,
-                    final_sigmoid=False,
-                    f_maps=64,
-                    layer_order="gcr",
-                    num_groups=8,
-                    num_levels=args.num_levels_for_unet,
-                    is_segmentation=False,
-                    conv_padding=1,
-                )
-            if args.dim == 3:
-                network = UNet3D(
-                    1,
-                    args.num_keypoints,
-                    final_sigmoid=False,
-                    f_maps=32,  # Used by nnUNet
-                    layer_order="gcr",
-                    num_groups=8,
-                    num_levels=args.num_levels_for_unet,
-                    is_segmentation=False,
-                    conv_padding=1,
-                    use_checkpoint=args.use_checkpoint,
-                )
-        elif args.backbone == "truncatedunet":
-            if args.dim == 3:
-                network = TruncatedUNet3D(
-                    1,
-                    args.num_keypoints,
-                    args.num_truncated_layers_for_truncatedunet,
-                    final_sigmoid=False,
-                    f_maps=32,  # Used by nnUNet
-                    layer_order="gcr",
-                    num_groups=8,
-                    num_levels=args.num_levels_for_unet,
-                    is_segmentation=False,
-                    conv_padding=1,
-                )
-        else:
-            raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
-        network = torch.nn.DataParallel(network)
-
-        # Keypoint model
-        registration_model = KeyMorph(
-            network,
-            args.num_keypoints,
-            args.dim,
-            use_amp=args.use_amp,
-            use_checkpoint=args.use_checkpoint,
-            max_train_keypoints=args.max_train_keypoints,
-            weight_keypoints=args.weighted_kp_align,
-        )
-        registration_model.to(args.device)
-        utils.summary(registration_model)
-    elif args.registration_model == "itkelastix":
-        from baselines.itkelastix import ITKElastix
-
-        registration_model = ITKElastix()
-    elif args.registration_model == "synthmorph":
-
-        from baselines.voxelmorph import VoxelMorph
-
-        registration_model = VoxelMorph(perform_preaffine_register=True)
-    elif args.registration_model == "synthmorph-no-preaffine":
-
-        from baselines.voxelmorph import VoxelMorph
-
-        registration_model = VoxelMorph(perform_preaffine_register=False)
-    elif args.registration_model == "ants":
-        from baselines.ants import ANTs
-
-        registration_model = ANTs()
+        if args.dim == 3:
+            network = UNet3D(
+                1,
+                args.num_keypoints,
+                final_sigmoid=False,
+                f_maps=32,  # Used by nnUNet
+                layer_order="gcr",
+                num_groups=8,
+                num_levels=args.num_levels_for_unet,
+                is_segmentation=False,
+                conv_padding=1,
+                use_checkpoint=args.use_checkpoint,
+            )
+    elif args.backbone == "truncatedunet":
+        if args.dim == 3:
+            network = TruncatedUNet3D(
+                1,
+                args.num_keypoints,
+                args.num_truncated_layers_for_truncatedunet,
+                final_sigmoid=False,
+                f_maps=32,  # Used by nnUNet
+                layer_order="gcr",
+                num_groups=8,
+                num_levels=args.num_levels_for_unet,
+                is_segmentation=False,
+                conv_padding=1,
+            )
     else:
-        raise ValueError(
-            'Invalid registration model "{}"'.format(args.registration_model)
-        )
+        raise ValueError('Invalid keypoint extractor "{}"'.format(args.backbone))
+    network = torch.nn.DataParallel(network)
+
+    # Keypoint model
+    registration_model = KeyMorph(
+        network,
+        args.num_keypoints,
+        args.dim,
+        use_amp=args.use_amp,
+        use_checkpoint=args.use_checkpoint,
+        max_train_keypoints=args.max_train_keypoints,
+        weight_keypoints=args.weighted_kp_align,
+    )
+    registration_model.to(args.device)
+    utils.summary(registration_model)
     return registration_model
 
 
@@ -563,160 +423,58 @@ def main():
         )
 
     if args.run_mode == "eval":
-        if args.registration_model == "keymorph":
-            assert args.load_path is not None, "Need to load a checkpoint for eval"
+        assert args.load_path is not None, "Need to load a checkpoint for eval"
         assert args.batch_size == 1, ":("
         registration_model.eval()
 
-        if args.test_dataset == "ixi":
-            list_of_eval_unimodal_names = ixi_hps.EVAL_UNI_NAMES
-            list_of_eval_multimodal_names = ixi_hps.EVAL_MULTI_NAMES
-            list_of_eval_lesion_names = ixi_hps.EVAL_LESION_NAMES
-            list_of_eval_group_names = ixi_hps.EVAL_GROUP_NAMES
-            list_of_eval_long_names = ixi_hps.EVAL_LONG_NAMES
-        elif args.test_dataset == "gigamed":
-            list_of_eval_metrics = gigamed_hps.EVAL_METRICS
-            list_of_eval_augs = gigamed_hps.EVAL_AUGS
-            list_of_eval_aligns = gigamed_hps.MODEL_HPS[args.registration_model][
-                "aligns"
-            ]
-            list_of_eval_group_aligns = gigamed_hps.MODEL_HPS[args.registration_model][
-                "group_aligns"
-            ]
-            list_of_eval_long_aligns = gigamed_hps.MODEL_HPS[args.registration_model][
-                "long_aligns"
-            ]
-            list_of_eval_unimodal_names = gigamed_hps.EVAL_UNI_NAMES
-            list_of_eval_multimodal_names = gigamed_hps.EVAL_MULTI_NAMES
-            list_of_eval_lesion_names = gigamed_hps.EVAL_LESION_NAMES
-            list_of_eval_group_names = gigamed_hps.EVAL_GROUP_NAMES
-            list_of_eval_long_names = gigamed_hps.EVAL_LONG_NAMES
-            perform_groupwise_experiments = gigamed_hps.MODEL_HPS[
-                args.registration_model
-            ]["perform_groupwise_experiments"]
-            if perform_groupwise_experiments:
-                list_of_eval_group_sizes = gigamed_hps.MODEL_HPS[
-                    args.registration_model
-                ]["group_sizes"]
+        list_of_eval_unimodal_names = ixi_hps.EVAL_UNI_NAMES
+        list_of_eval_multimodal_names = ixi_hps.EVAL_MULTI_NAMES
+        list_of_eval_metrics = ixi_hps.EVAL_METRICS
+        list_of_eval_augs = ixi_hps.EVAL_AUGS
+        list_of_eval_aligns = ixi_hps.EVAL_KP_ALIGNS
 
         print("\n\nStarting evaluation...")
-        for dist in ["ss", "nss"]:
-            print("Perform eval on", dist)
-
-            # Pairwise Unimodal
-            experiment_name = f"{dist}_unimodal"
-            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            if not os.path.exists(json_path):
-                eval_metrics = run_eval(
-                    loaders["eval"][experiment_name],
-                    registration_model,
-                    list_of_eval_metrics,
-                    list_of_eval_unimodal_names[dist],
-                    list_of_eval_augs,
-                    list_of_eval_aligns,
-                    args,
-                    save_dir_prefix=experiment_name,
-                )
-                if not args.debug_mode:
-                    save_dict_as_json(eval_metrics, json_path)
-            else:
-                print("-> Skipping eval on", experiment_name)
-
-            # Pairwise Multimodal
-            experiment_name = f"{dist}_multimodal"
-            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            if not os.path.exists(json_path):
-                eval_metrics = run_eval(
-                    loaders["eval"][experiment_name],
-                    registration_model,
-                    list_of_eval_metrics,
-                    list_of_eval_multimodal_names[dist],
-                    list_of_eval_augs,
-                    list_of_eval_aligns,
-                    args,
-                    save_dir_prefix=experiment_name,
-                )
-                if not args.debug_mode:
-                    save_dict_as_json(eval_metrics, json_path)
-            else:
-                print("-> Skipping eval on", experiment_name)
-
-            # Lesions
-            experiment_name = f"{dist}_lesion"
-            json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-            if not os.path.exists(json_path) and list_of_eval_lesion_names is not None:
-                lesion_metrics = run_eval(
-                    loaders["eval"][experiment_name],
-                    registration_model,
-                    list_of_eval_metrics,
-                    list_of_eval_lesion_names[dist],
-                    list_of_eval_augs,
-                    list_of_eval_aligns,
-                    args,
-                    save_dir_prefix=experiment_name,
-                )
-                if not args.debug_mode:
-                    save_dict_as_json(
-                        lesion_metrics,
-                        json_path,
-                    )
-            else:
-                print("-> Skipping eval on", experiment_name)
-
-        if perform_groupwise_experiments:
-            for dist in ["ss", "nss"]:
-                print("Perform groupwise eval on", dist)
-                # Longitudinal
-                experiment_name = f"{dist}_long"
-                json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-                if (
-                    not os.path.exists(json_path)
-                    and list_of_eval_long_names is not None
-                ):
-                    long_metrics = run_long_eval(
-                        loaders["eval"][experiment_name],
-                        registration_model,
-                        list_of_eval_metrics,
-                        list_of_eval_long_names[dist],
-                        list_of_eval_augs,
-                        list_of_eval_long_aligns,
-                        args,
-                        save_dir_prefix=experiment_name,
-                    )
-                    if not args.debug_mode:
-                        save_dict_as_json(long_metrics, json_path)
-                else:
-                    print("-> Skipping eval on", experiment_name)
-
-                print("Perform groupwise eval on", dist)
-                experiment_name = f"{dist}_group"
-                json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
-                if (
-                    not os.path.exists(json_path)
-                    and list_of_eval_group_names is not None
-                ):
-                    group_metrics = run_group_eval(
-                        loaders["eval"][experiment_name],
-                        registration_model,
-                        list_of_eval_metrics,
-                        list_of_eval_group_names[dist],
-                        list_of_eval_augs[:1],  # Ignore augmentation for groupwise
-                        list_of_eval_group_aligns,
-                        list_of_eval_group_sizes,
-                        args,
-                        save_dir_prefix=experiment_name,
-                    )
-                    if not args.debug_mode:
-                        save_dict_as_json(group_metrics, json_path)
-                else:
-                    print("-> Skipping eval on", experiment_name)
+        # Pairwise Unimodal
+        experiment_name = "unimodal"
+        json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
+        if not os.path.exists(json_path):
+            eval_metrics = run_eval(
+                loaders["eval"],
+                registration_model,
+                list_of_eval_metrics,
+                list_of_eval_unimodal_names,
+                list_of_eval_augs,
+                list_of_eval_aligns,
+                args,
+                save_dir_prefix=experiment_name,
+            )
+            if not args.debug_mode:
+                save_dict_as_json(eval_metrics, json_path)
         else:
-            print("Skipping groupwise experiments!")
+            print("-> Skipping eval on", experiment_name)
+
+        # Pairwise Multimodal
+        experiment_name = "multimodal"
+        json_path = args.model_eval_dir / f"summary_{experiment_name}.json"
+        if not os.path.exists(json_path):
+            eval_metrics = run_eval(
+                loaders["eval"],
+                registration_model,
+                list_of_eval_metrics,
+                list_of_eval_multimodal_names,
+                list_of_eval_augs,
+                list_of_eval_aligns,
+                args,
+                save_dir_prefix=experiment_name,
+            )
+            if not args.debug_mode:
+                save_dict_as_json(eval_metrics, json_path)
+        else:
+            print("-> Skipping eval on", experiment_name)
+
         print("\nEvaluation done!")
 
     elif args.run_mode == "pretrain":
-        assert args.registration_model == "keymorph"
-
         registration_model.train()
         train_loss = []
 
@@ -729,9 +487,9 @@ def main():
             random_points = state["random_points"]
         else:
             start_epoch = 1
-            # Extract random keypoints from reference subject
-            ref_subject = loaders["ref_subject"]
-            ref_img = ref_subject["img"][tio.DATA].float().unsqueeze(0)
+            # Extract random keypoints from reference subject, which is any random training subject
+            ref_subject = next(iter(loaders["pretrain"]))
+            ref_img = ref_subject["img"][tio.DATA].float()
             print("sampling random keypoints...")
             random_points = utils.sample_valid_coordinates(
                 ref_img, args.num_keypoints, args.dim
@@ -788,18 +546,6 @@ def main():
         registration_model.train()
         train_loss = []
 
-        if args.train_dataset in ["gigamed", "synthbrain"]:
-            if args.train_family_params == "mse_only":
-                train_params = gigamed_hps.GIGAMED_FAMILY_TRAIN_PARAMS_MSE_ONLY
-            elif args.train_family_params == "tps0_only":
-                train_params = gigamed_hps.GIGAMED_FAMILY_TRAIN_PARAMS_TPS0_ONLY
-            else:
-                train_params = gigamed_hps.GIGAMED_FAMILY_TRAIN_PARAMS
-        else:
-            raise ValueError(
-                'No train parameters found for "{}"'.format(args.train_dataset)
-            )
-
         if args.use_wandb and not args.debug_mode:
             initialize_wandb(args)
 
@@ -814,7 +560,6 @@ def main():
                 loaders["train"],
                 registration_model,
                 optimizer,
-                train_params,
                 args,
             )
             train_loss.append(epoch_stats["loss"])

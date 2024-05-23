@@ -7,16 +7,16 @@ EVAL_METRICS = [
     "jdlessthan0",
 ]
 
-EVAL_NAMES = {
-    "id": [
-        ("T1", "T1"),
-        ("T2", "T2"),
-        ("PD", "PD"),
-        ("T1", "T2"),
-        ("T1", "PD"),
-        ("T2", "PD"),
-    ]
-}
+EVAL_UNI_NAMES = [
+    ("T1", "T1"),
+    ("T2", "T2"),
+    ("PD", "PD"),
+]
+EVAL_MULTI_NAMES = [
+    ("T1", "T2"),
+    ("T1", "PD"),
+    ("T2", "PD"),
+]
 EVAL_LESION_NAMES = None
 EVAL_GROUP_NAMES = None
 EVAL_LONG_NAMES = None
