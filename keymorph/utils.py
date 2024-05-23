@@ -4,12 +4,14 @@ import torch.nn.functional as F
 import math
 import numpy as np
 from collections import defaultdict
-import wandb
 import os
 import argparse
 import json
 
-# import itk
+try:
+    import wandb
+except ImportError as e:
+    pass
 
 
 def align_img(grid, x, mode="bilinear"):

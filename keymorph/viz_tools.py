@@ -147,17 +147,18 @@ def imshow_img_and_points_3d(
     axes=None,
     rotate_90_deg=0,
     img_dims=(256, 256, 256),
+    markers=(".", "x"),
 ):
     """
     Plots 3 orthogonal slices of a 3D image and overlays points on them.
 
     img: (H, W, D) image
-    all_points: (N, 3) or (B, N, 3) array of points.
+    all_points: (N, 3) or (1, N, 3) or (2, N, 3) array of points.
         Points can be defined on:
          1. the Pytorch grid, i.e. in [-1, 1]
          2. the image grid, e.g. in [0, 256]
         The code converts Pytorch grids to image grids by internally checking if
-    all_weights: (N,) or (B, N) array of weights
+    all_weights: (N,) or (1, N) or (2, N) array of weights
     """
 
     def normalize(data):
@@ -169,6 +170,8 @@ def imshow_img_and_points_3d(
     if plot_points:
         if len(all_points.shape) == 2:
             all_points = all_points[None]
+        if isinstance(markers, str):
+            markers = (markers,)
 
         # If points are in [-1, 1], convert to image coordinates
         if np.all(all_points >= -1) or np.all(all_points <= 1):
@@ -209,7 +212,6 @@ def imshow_img_and_points_3d(
         axes[2].imshow(img_yz, cmap="gray", vmin=vmin, vmax=vmax)
 
     if plot_points:
-        markers = [".", "+", "x"]
         for points, weights, marker in zip(all_points, all_weights, markers):
             points_xy, depth_xy = points[:, 1:], points[:, 0]
             points_xz, depth_xz = (
@@ -298,6 +300,7 @@ def imshow_registration_3d(
     weights=None,
     suptitle=None,
     save_path=None,
+    **kwargs,
 ):
     """
     Moved, aligned, and fixed should be volumes with 3 dimensions.
@@ -328,21 +331,21 @@ def imshow_registration_3d(
         points_m,
         weights,
         axes=(axes[0, 0], axes[1, 0], axes[2, 0]),
-        img_dims=(256, 256, 256),
+        **kwargs,
     )
     imshow_img_and_points_3d(
         img_f,
         points_f,
         weights,
         axes=(axes[0, 1], axes[1, 1], axes[2, 1]),
-        img_dims=(256, 256, 256),
+        **kwargs,
     )
     imshow_img_and_points_3d(
         img_a,
         points_af,
         weights,
         axes=(axes[0, 2], axes[1, 2], axes[2, 2]),
-        img_dims=(256, 256, 256),
+        **kwargs,
     )
 
     axes[0, 0].set_title("Moving")
