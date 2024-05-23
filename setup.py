@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="keymorph",
-    version="1.0.0",
+    version="1.0.1",
     author="Alan Q. Wang",
     author_email="alanqrwang@gmail.com",
     url="https://github.com/alanqrwang/keymorph",
