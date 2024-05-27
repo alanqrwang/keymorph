@@ -291,9 +291,11 @@ python scripts/run.py \
     --save_eval_to_disk
 ```
 
-**Automatic Delineation/Segmentation of the Brain**
-
-For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 
+## Related Projects
++ For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 
++ [BrainMorph](https://github.com/alanqrwang/brainmorph) is a foundation model based on the KeyMorph framework, trained on over 100,000 brain MR images at full resolution (256x256x256).
+The model is robust to normal and diseased brains, a variety of MRI modalities, and skullstripped and non-skullstripped images.
+Check out the dedicated repository for the latest updates and models!
 
 ## Issues
 This repository is being actively maintained. Feel free to open an issue for any problems or questions.
