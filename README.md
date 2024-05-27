@@ -128,8 +128,7 @@ python scripts/run.py \
     --loss_fn mse \
     --transform_type affine \
     --train_dataset csv \
-    --data_path /path/to/data_csv \
-    --load_path ./weights/numkey128_pretrain.2500.h5
+    --data_path /path/to/data_csv
 ```
 
 
@@ -140,7 +139,6 @@ Description of all flags:
 Transform to use for registration. Options are `rigid`, `affine`, `tps_<lambda>`.
 TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter lambda controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
 The code also supports sampling lambda according to some distribution (`tps_uniform`, `tps_lognormal`, `tps_loguniform`). 
-+ `--load_path <path>` specifies the path to the pretraining weights.
 
 Other optional flags:
 +  `--mix_modalities` flag, if set, mixes modalities between sampled pairs during training. You should probably set this when `--loss_fn dice` (supervised training), and not when `--loss_fn mse` (unsupervised training).
@@ -278,6 +276,8 @@ python scripts/run.py \
     --max_random_affine_augment_params (0.2, 0.2, 3.1416, 0.1) \
     --load_path ./weights/numkey128_pretrain.2500.h5 
 ```
+
+`--load_path <path>` specifies the path to the pretraining weights.
 
 ### Evaluating KeyMorph
 ```bash
