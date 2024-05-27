@@ -109,6 +109,8 @@ Then, simply pass the path to the CSV file as `--data_csv_path`.
 
 ### Editing pre-processing/augmentations
 You probably need to set the `TRANSFORM` variable in `scripts/hyperparameters.py` to correspond to the pre-processing/augmentations that you want to apply to your own data.
+The code uses `torchio` for pre-processing and augmentations. You can find the list of available transforms [here](https://torchio.readthedocs.io/transforms/augmentation.html).
+You can also use your own custom transforms by wrapping them in the [Lambda](https://torchio.readthedocs.io/transforms/others.html#torchio.transforms.Lambda) transform.
 
 Note, affine augmentations are applied separately and is determined by the `--max_random_affine_augment_params` flag in `scripts/run.py`. By default, it is set to `(0.0, 0.0, 0.0, 0.0)`. For example, `(0.2, 0.2, 3.1416, 0.1)` denotes:
 + Scaling by [1-0.2, 1+0.2]
