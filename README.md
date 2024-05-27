@@ -52,97 +52,6 @@ You can find all full-resolution, BrainMorph trained weights [here](https://corn
 Half-resolution trained weights are under [Releases](https://github.com/alanqrwang/keymorph/releases).
 Download your preferred model(s) and put them in the folder specified by `--weights_dir` in the commands below.
 
-## Registering brain volumes 
-### BrainMorph
-WARNING: Please see the [BrainMorph repository](https://github.com/alanqrwang/brainmorph) for the latest updates and models! This is a legacy version of the code and is not guaranteed to be maintained.
-
-BrainMorph is trained on over 100,000 brain MR images at full resolution (256x256x256). 
-The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
-
-`--num_keypoints` and `num_levels_for_unet` will determine which model will be used to perform the registration.
-Make sure the corresponding weights are present in `--weights_dir`.
-`--num_keypoints` can be set to `128, 256, 512` and `--num_levels_for_unet` can be set to `4, 5, 6, 7`, respectively (corresponding to 'S', 'M', 'L', 'H' in the paper).
-
-To register a single pair of volumes:
-```
-python scripts/register.py \
-    --num_keypoints 256 \
-    --num_levels_for_unet 4 \
-    --weights_dir ./weights/ \
-    --moving ./example_data/img_m/IXI_000001_0000.nii.gz \
-    --fixed ./example_data/img_m/IXI_000002_0000.nii.gz \
-    --moving_seg ./example_data/seg_m/IXI_000001_0000.nii.gz \
-    --fixed_seg ./example_data/seg_m/IXI_000002_0000.nii.gz \
-    --list_of_aligns rigid affine tps_1 \
-    --list_of_metrics mse harddice \
-    --save_eval_to_disk \
-    --visualize
-```
-
-Description of other important flags:
-+ `--moving` and `--fixed` are paths to moving and fixed images.
-+ `--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
-+ `--list_of_aligns` specifies the types of alignment to perform. Options are `rigid`, `affine` and `tps_<lambda>` (TPS with hyperparameter value equal to lambda). lambda=0 corresponds to exact keypoint alignment. lambda=10 is very similar to affine.
-+ `--list_of_metrics` specifies the metrics to report. Options are `mse`, `harddice`, `softdice`, `hausd`, `jdstd`, `jdlessthan0`. To compute Dice scores and surface distances, `--moving_seg` and `--fixed_seg` must be provided.
-+ `--save_eval_to_disk` saves all outputs to disk. The default location is `./register_output/`.
-+ `--visualize` plots a matplotlib figure of moving, fixed, and registered images overlaid with corresponding points.
-
-You can also replace filenames with directories to register all images in the directory.
-Note that the script expects corresponding image and segmentation pairs to have the same filename.
-```bash
-python scripts/register.py \
-    --num_keypoints 256 \
-    --num_levels_for_unet 4 \
-    --weights_dir ./weights/ \
-    --moving ./example_data/img_m/ \
-    --fixed ./example_data/img_m/ \
-    --moving_seg ./example_data/seg_m/ \
-    --fixed_seg ./example_data/seg_m/ \
-    --list_of_aligns rigid affine tps_1 \
-    --list_of_metrics mse harddice \
-    --save_eval_to_disk \
-    --visualize
-```
-
-### Groupwise registration
-```bash
-python scripts/register.py \
-    --groupwise \
-    --num_keypoints 256 \
-    --num_levels_for_unet 4 \
-    --weights_dir ./weights/ \
-    --moving ./example_data/ \
-    --fixed ./example_data/ \
-    --moving_seg ./example_data/ \
-    --fixed_seg ./example_data/ \
-    --list_of_aligns rigid affine tps_1 \
-    --list_of_metrics mse harddice \
-    --save_eval_to_disk \
-    --visualize
-```
-
-
-
-### IXI-trained, half-resolution models
-All other model weights are trained on half-resolution (128x128x128) on the (smaller) IXI dataset. 
-The script will automatically min-max normalize the images.
-To register two volumes with our best-performing model:
-
-```bash
-python scripts/register.py \
-    --half_resolution \
-    --num_keypoints 512 \
-    --backbone conv \
-    --moving ./example_data_half/img_m/IXI_001_128x128x128.nii.gz \
-    --fixed ./example_data_half/img_m/IXI_002_128x128x128.nii.gz \
-    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
-    --moving_seg ./example_data_half/seg_m/IXI_001_128x128x128.nii.gz \
-    --fixed_seg ./example_data_half/seg_m/IXI_002_128x128x128.nii.gz \
-    --list_of_aligns affine tps_1 \
-    --list_of_metrics mse harddice \
-    --save_eval_to_disk \
-    --visualize
-```
 
 ## TLDR in code
 The crux of the code is in the `forward()` function in `keymorph/model.py`, which performs one forward pass through the entire KeyMorph pipeline.
@@ -239,6 +148,97 @@ Other optional flags:
 + `--debug_mode` flag to print some debugging information
 + `--use_wandb` flag to log results to Weights & Biases
 
+## Registering brain volumes 
+### BrainMorph
+WARNING: Please see the [BrainMorph repository](https://github.com/alanqrwang/brainmorph) for the latest updates and models! This is a legacy version of the code and is not guaranteed to be maintained.
+
+BrainMorph is trained on over 100,000 brain MR images at full resolution (256x256x256). 
+The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
+
+`--num_keypoints` and `num_levels_for_unet` will determine which model will be used to perform the registration.
+Make sure the corresponding weights are present in `--weights_dir`.
+`--num_keypoints` can be set to `128, 256, 512` and `--num_levels_for_unet` can be set to `4, 5, 6, 7`, respectively (corresponding to 'S', 'M', 'L', 'H' in the paper).
+
+To register a single pair of volumes:
+```
+python scripts/register.py \
+    --num_keypoints 256 \
+    --num_levels_for_unet 4 \
+    --weights_dir ./weights/ \
+    --moving ./example_data/img_m/IXI_000001_0000.nii.gz \
+    --fixed ./example_data/img_m/IXI_000002_0000.nii.gz \
+    --moving_seg ./example_data/seg_m/IXI_000001_0000.nii.gz \
+    --fixed_seg ./example_data/seg_m/IXI_000002_0000.nii.gz \
+    --list_of_aligns rigid affine tps_1 \
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
+```
+
+Description of other important flags:
++ `--moving` and `--fixed` are paths to moving and fixed images.
++ `--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
++ `--list_of_aligns` specifies the types of alignment to perform. Options are `rigid`, `affine` and `tps_<lambda>` (TPS with hyperparameter value equal to lambda). lambda=0 corresponds to exact keypoint alignment. lambda=10 is very similar to affine.
++ `--list_of_metrics` specifies the metrics to report. Options are `mse`, `harddice`, `softdice`, `hausd`, `jdstd`, `jdlessthan0`. To compute Dice scores and surface distances, `--moving_seg` and `--fixed_seg` must be provided.
++ `--save_eval_to_disk` saves all outputs to disk. The default location is `./register_output/`.
++ `--visualize` plots a matplotlib figure of moving, fixed, and registered images overlaid with corresponding points.
+
+You can also replace filenames with directories to register all images in the directory.
+Note that the script expects corresponding image and segmentation pairs to have the same filename.
+```bash
+python scripts/register.py \
+    --num_keypoints 256 \
+    --num_levels_for_unet 4 \
+    --weights_dir ./weights/ \
+    --moving ./example_data/img_m/ \
+    --fixed ./example_data/img_m/ \
+    --moving_seg ./example_data/seg_m/ \
+    --fixed_seg ./example_data/seg_m/ \
+    --list_of_aligns rigid affine tps_1 \
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
+```
+
+### Groupwise registration
+```bash
+python scripts/register.py \
+    --groupwise \
+    --num_keypoints 256 \
+    --num_levels_for_unet 4 \
+    --weights_dir ./weights/ \
+    --moving ./example_data/ \
+    --fixed ./example_data/ \
+    --moving_seg ./example_data/ \
+    --fixed_seg ./example_data/ \
+    --list_of_aligns rigid affine tps_1 \
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
+```
+
+
+
+### IXI-trained, half-resolution models
+All other model weights are trained on half-resolution (128x128x128) on the (smaller) IXI dataset. 
+The script will automatically min-max normalize the images.
+To register two volumes with our best-performing model:
+
+```bash
+python scripts/register.py \
+    --half_resolution \
+    --num_keypoints 512 \
+    --backbone conv \
+    --moving ./example_data_half/img_m/IXI_001_128x128x128.nii.gz \
+    --fixed ./example_data_half/img_m/IXI_002_128x128x128.nii.gz \
+    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
+    --moving_seg ./example_data_half/seg_m/IXI_001_128x128x128.nii.gz \
+    --fixed_seg ./example_data_half/seg_m/IXI_002_128x128x128.nii.gz \
+    --list_of_aligns affine tps_1 \
+    --list_of_metrics mse harddice \
+    --save_eval_to_disk \
+    --visualize
+```
 
 ## Step-by-step guide for reproducing our results
 
