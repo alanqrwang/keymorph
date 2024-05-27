@@ -146,7 +146,7 @@ class KeyMorph(nn.Module):
         """Forward pass for one mini-batch step.
 
         :param img_f, img_m: Fixed and moving images
-        :param align_type: str or tuple of str of keypoint alignment types. Used for finding registrations
+        :param transform_type: str or tuple of str of keypoint alignment types. Used for finding registrations
             for multiple alignment types in one forward pass, without having to extract keypoints
             every time.
 

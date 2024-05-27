@@ -1,6 +1,8 @@
-from torch.utils.data import Dataset, IterableDataset
 import random
 import itertools
+import torchio as tio
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
+from itertools import combinations
 
 
 class PairedDataset(Dataset):
@@ -28,54 +30,6 @@ class PairedDataset(Dataset):
             sub1 = self.transform(sub1)
             sub2 = self.transform(sub2)
         return sub1, sub2
-
-
-class InfiniteRandomPairedDataset(IterableDataset):
-    """General paired dataset.
-    Given pair of subject lists, samples pairs of subjects without restriction."""
-
-    def __init__(
-        self,
-        subject_list1,
-        subject_list2,
-        transform=None,
-    ):
-        super().__init__()
-        self.subject_list1 = subject_list1
-        self.subject_list2 = subject_list2
-        self.transform = transform
-
-    def __iter__(self):
-        while True:
-            sub1 = random.sample(self.subject_list1, 1)[0]
-            sub2 = random.sample(self.subject_list2, 1)[0]
-            sub1.load()
-            sub2.load()
-            if self.transform:
-                sub1 = self.transform(sub1)
-                sub2 = self.transform(sub2)
-            yield sub1, sub2
-
-
-class InfiniteRandomSingleDataset(IterableDataset):
-    """Random single dataset."""
-
-    def __init__(
-        self,
-        subject_list,
-        transform=None,
-    ):
-        super().__init__()
-        self.subject_list = subject_list
-        self.transform = transform
-
-    def __iter__(self):
-        while True:
-            sub1 = random.sample(self.subject_list, 1)[0]
-            sub1.load()
-            if self.transform:
-                sub1 = self.transform(sub1)
-            yield sub1
 
 
 class SimpleDatasetIterator:
@@ -118,17 +72,74 @@ class RandomAggregatedDataset(Dataset):
         return chosen_dataset[i]
 
 
-class InfiniteRandomAggregatedDataset(IterableDataset):
-    """Aggregates multiple iterable datasets and returns random samples from them."""
+class KeyMorphDataset:
+    def _get_subjects_dict(self, train):
+        raise NotImplementedError
 
-    def __init__(self, datasets):
-        super().__init__()
-        self.datasets = datasets
+    def get_pretrain_loader(self, batch_size, num_workers, transform):
+        pretrain_mod_dict = self._get_subjects_dict(
+            train=True,
+        )
+        pretrain_datasets = [
+            tio.data.SubjectsDataset(
+                subjects_list,
+                transform=transform,
+            )
+            for subjects_list in pretrain_mod_dict.values()
+        ]
+        aggr_dataset = ConcatDataset(pretrain_datasets)
 
-    def __iter__(self):
-        iterators = [iter(dataset) for dataset in self.datasets]
-        while True:
-            # Randomly choose one of the iterators
-            chosen_iterator = random.choice(iterators)
-            sample = next(chosen_iterator)
-            yield sample
+        return DataLoader(
+            aggr_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+        )
+
+    def get_train_loader(self, batch_size, num_workers, mix_modalities, transform):
+        train_mod_dict = self._get_subjects_dict(
+            train=True,
+        )
+        train_mods = list(train_mod_dict.keys())
+        if mix_modalities:
+            mod_pairs = list(combinations(train_mods, 2))
+        else:
+            mod_pairs = [(m, m) for m in train_mods]
+
+        paired_datasets = []
+        for mod1, mod2 in mod_pairs:
+            paired_datasets.append(
+                PairedDataset(
+                    train_mod_dict[mod1],
+                    train_mod_dict[mod2],
+                    transform=transform,
+                )
+            )
+        train_loader = DataLoader(
+            ConcatDataset(paired_datasets),
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+        )
+        return train_loader
+
+    def get_test_loaders(self, batch_size, num_workers, transform):
+        test_mod_dict = self._get_subjects_dict(
+            train=False,
+        )
+        test_loaders = {}
+        for mod, test_subjects in test_mod_dict.items():
+            test_loaders[mod] = DataLoader(
+                tio.data.SubjectsDataset(test_subjects, transform=transform),
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+            )
+        return test_loaders
+
+    def get_loaders(self, batch_size, num_workers, mix_modalities, transform):
+        return (
+            self.get_pretrain_loader(batch_size, num_workers, transform),
+            self.get_train_loader(batch_size, num_workers, mix_modalities, transform),
+            self.get_test_loaders(batch_size, num_workers, transform),
+        )

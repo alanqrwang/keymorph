@@ -53,7 +53,7 @@ Download your preferred model(s) and put them in the folder specified by `--weig
 
 ## Registering brain volumes 
 ### BrainMorph
-Warning: Please see the [BrainMorph repository](https://github.com/alanqrwang/brainmorph) for the latest updates and models! This is a legacy version of the code and is not guaranteed to be maintained.
+WARNING: Please see the [BrainMorph repository](https://github.com/alanqrwang/brainmorph) for the latest updates and models! This is a legacy version of the code and is not guaranteed to be maintained.
 
 BrainMorph is trained on over 100,000 brain MR images at full resolution (256x256x256). 
 The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
@@ -184,110 +184,60 @@ def forward(img_f, img_m, seg_f, seg_m, network, optimizer, kp_aligner):
 The `network` variable is a CNN with center-of-mass layer which extracts keypoints from the input images.
 The `kp_aligner` variable is a keypoint alignment module. It has a function `grid_from_points()` which returns a flow-field grid encoding the transformation to perform on the moving image. The transformation can either be rigid, affine, or nonlinear (TPS).
 
-## Training KeyMorph
-Use `scripts/run.py` with `--run_mode train` to train KeyMorph.
-To train on your own data, you can follow the examples of dataloading and training provided in `./dataset/ixi.py` and `./scripts/train.py`.
+## Training KeyMorph on your own data
+`scripts/run.py` with `--run_mode train` allows you to easily train KeyMorph on your own data.
 
+### Create a CSV file
+The CSV file should contain the following columns: `img_path`, `seg_path`, `mask_path`, `modality`, `train`.
++ `img_path` is the path to the intensity image.
++ `seg_path` is the (optional )path to the corresponding segmentation map. Set to "None" if not available.
++ `mask_path` is the (optional) path to the mask. Set to "None" if not available.
++ `modality` is the modality of the image.
++ `train` is a boolean indicating whether the image is in the train or test set.
+
+Then, simply pass the path to the CSV file as `--data_csv_path`.
+
+### Editing pre-processing/augmentations
+You probably need to set the `TRANSFORM` variable in `scripts/hyperparameters.py` to correspond to the pre-processing/augmentations that you want to apply to your own data.
+
+Note, affine augmentations are applied separately and is determined by the `--max_random_affine_augment_params` flag in `scripts/run.py`. By default, it is set to `(0.0, 0.0, 0.0, 0.0)`. For example, `(0.2, 0.2, 3.1416, 0.1)` denotes:
++ Scaling by [1-0.2, 1+0.2]
++ Translation by [-0.2, 0.2], as a fraction of the image size
++ Rotation by [-3.1416, 3.1416] radians
++ Shearing by [-0.1, 0.1]
+
+### Run the training script
 We use the weights from the pretraining step to initialize our model.
 Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
 
-The `--num_keypoints <num_key>` flag specifies the number of keypoints to extract per image as `<num_key>`.
 
-For all commands, optionally add:
+```bash
+python scripts/run.py \
+    --run_mode train \
+    --num_keypoints 128 \
+    --loss_fn mse \
+    --transform_type affine \
+    --train_dataset csv \
+    --data_path /path/to/data_csv \
+    --load_path ./weights/numkey128_pretrain.2500.h5
+```
+
+
+Description of all flags:
++ `--num_keypoints <num_key>` flag specifies the number of keypoints to extract per image as `<num_key>`.
++ `--loss_fn <loss>` specifies the loss function to train. Options are `mse` (unsupervised training) and `dice` (supervised training). Unsupervised only requires intensity images and minimizes MSE loss, while supervised assumes availability of corresponding segmentation maps for each image and minimizes soft Dice loss.
++ `--transform_type <ttype>`. 
+Transform to use for registration. Options are `rigid`, `affine`, `tps_<lambda>`.
+TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter lambda controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
+The code also supports sampling lambda according to some distribution (`tps_uniform`, `tps_lognormal`, `tps_loguniform`). 
++ `--load_path <path>` specifies the path to the pretraining weights.
+
+Other optional flags:
++  `--mix_modalities` flag, if set, mixes modalities between sampled pairs during training. You should probably set this when `--loss_fn dice` (supervised training), and not when `--loss_fn mse` (unsupervised training).
 + `--visualize` flag to visualize results with matplotlib
 + `--debug_mode` flag to print some debugging information
 + `--use_wandb` flag to log results to Weights & Biases
 
-This repository supports several variants of training KeyMorph.
-Here's a overview of the variants:
-
-### Supervised or unsupervised
-Unsupervised only requires intensity images and minimizes MSE loss, while supervised assumes availability of corresponding segmentation maps for each image and minimizes soft Dice loss.
-
-To specify unsupervised, set `--loss_fn mse`.
-To specify supervised, set `--loss_fn dice`.
-
-
-### Rigid, Affine, or TPS
-Affine uses an affine transformation to align the corresponding keypoints.
-
-TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter lambda controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
-
-To specify rigid, set `--transform_type rigid`.
-To specify affine, set `--transform_type affine`.
-To specify tps, set `--transform_type tps_<lambda>` where `<lmbda> ` is the lambda value, e.g. `tps_0`.
-
-### Example commands
-**Affine, Unsupervised**
-
-To train unsupervised KeyMorph with affine transformation and 128 keypoints, use `mse` as the loss function:
-
-```bash
-python scripts/run.py \
-    --run_mode train \
-    --num_keypoints 128 \
-    --loss_fn mse \
-    --transform_type affine \
-    --data_dir ./data/centered_IXI/ \
-    --load_path ./weights/numkey128_pretrain.2500.h5
-```
-
-<!-- For unsupervised KeyMorph, optionally add `--kpconsistency_coeff` to optimize keypoint consistency across modalities for same subject: -->
-
-<!-- ```bash
-python scripts/run.py \
-    --run_mode train \
-    --num_keypoints 128 \
-    --kp_align_method affine \
-    --loss_fn mse \
-    --kpconsistency_coeff 10 \
-    --data_dir ./data/centered_IXI/ \
-    --load_path ./weights/numkey128_pretrain.2500.h5
-``` -->
-
-**Affine, Supervised**
-
-To train supervised KeyMorph, use `dice` as the loss function:
-
-```bash
-python scripts/run.py \
-    --run_mode train \
-    --num_keypoints 128 \
-    --transform_type affine \
-    --loss_fn dice \
-    --mix_modalities \
-    --data_dir ./data/centered_IXI/ \
-    --load_path ./weights/numkey128_pretrain.2500.h5
-```
-
-Note that the `--mix_modalities` flag allows fixed and moving images to be of different modalities during training. This should not be set for unsupervised training, which uses MSE as the loss function.
-
-**Nonlinear thin-plate-spline (TPS)**
-
-To train the TPS variant of KeyMorph which allows for nonlinear registrations, specify `tps_<lambda>` as the keypoint alignment method and specify the tps lambda value: 
-
-```bash
-python scripts/run.py \
-    --run_mode train \
-    --num_keypoints 128 \
-    --transform_type tps_0 \
-    --loss_fn dice \
-    --data_dir ./data/centered_IXI/ \
-    --load_path ./weights/numkey128_pretrain.2500.h5
-```
-
-The code also supports sampling lambda according to some distribution (`uniform`, `lognormal`, `loguniform`). For example, to sample from the `loguniform` distribution during training:
-
-```bash
-python scripts/run.py \
-    --num_keypoints 128 \
-    --transform_type tps_loguniform \
-    --loss_fn dice \
-    --data_dir ./data/centered_IXI/ \
-    --load_path ./weights/numkey128_pretrain.2500.h5
-```
-
-Note that supervised/unsupervised variants can be run similarly to affine, as described above. 
 
 ## Step-by-step guide for reproducing our results
 
@@ -310,15 +260,25 @@ python scripts/run.py \
     --num_keypoints 128 \
     --loss_fn mse \
     --transform_type tps_0 \
-    --data_dir ./centered_IXI
+    --data_dir ./centered_IXI 
 ```
 
 ### Training KeyMorph
-Follow instructions for "Training KeyMorph" above, depending on the variant you want.
+Follow instructions for "Training KeyMorph" above, for more options.
+
+```bash
+python scripts/run.py \
+    --run_mode train \
+    --num_keypoints 128 \
+    --loss_fn mse \
+    --transform_type affine \
+    --train_dataset ixi \
+    --data_path ./centered_IXI \
+    --max_random_affine_augment_params (0.2, 0.2, 3.1416, 0.1) \
+    --load_path ./weights/numkey128_pretrain.2500.h5 
+```
 
 ### Evaluating KeyMorph
-To evaluate on the test set, simply add the `--eval` flag to any of the above commands. For example, for affine, unsupervised KeyMorph evaluation:
-
 ```bash
 python scripts/run.py \
     --run_mode eval \
@@ -326,8 +286,7 @@ python scripts/run.py \
     --loss_fn dice \
     --transform_type tps_0 \
     --data_dir ./centered_IXI \
-    --load_path ./weights/best_trained_model.h5
-    --visualize \
+    --load_path ./weights/best_trained_model.h5 \
     --save_eval_to_disk
 ```
 

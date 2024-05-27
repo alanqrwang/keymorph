@@ -19,13 +19,11 @@ from keymorph.utils import (
     initialize_wandb,
     save_dict_as_json,
 )
-from dataset import ixi
-import scripts.gigamed_hyperparameters as gigamed_hps
-import scripts.ixi_hyperparameters as ixi_hps
+from dataset import csv_dataset, ixi_dataset
+import scripts.hyperparameters as hps
 from scripts.train import run_train
 from scripts.pretrain import run_pretrain
 from scripts.pairwise_register_eval import run_eval
-from scripts.groupwise_register_eval import run_group_eval, run_long_eval
 
 
 def parse_args():
@@ -119,9 +117,9 @@ def parse_args():
         help="Number of subgrids for computing TPS",
     )
     parser.add_argument(
-        "--max_random_augment_params",
+        "--max_random_affine_augment_params",
         nargs="*",
-        default=(0.2, 0.2, 3.1416, 0.1),
+        default=(0.0, 0.0, 0.0, 0.0),
         help="Maximum of affine augmentations during training",
     )
 
@@ -147,10 +145,16 @@ def parse_args():
 
     # Data
     parser.add_argument(
-        "--data_dir",
+        "--data_path",
         type=str,
         required=True,
-        help="Whether or not to mix modalities amongst image pairs",
+        help="Path to data",
+    )
+    parser.add_argument(
+        "--train_dataset",
+        type=str,
+        required=True,
+        help="Training dataset to use",
     )
     parser.add_argument(
         "--mix_modalities",
@@ -255,8 +259,6 @@ def create_dirs(args):
         + str(args.num_keypoints)
         + "_batch"
         + str(args.batch_size)
-        + "_normType"
-        + str(args.norm_type)
         + "_lr"
         + str(args.lr)
     )
@@ -291,15 +293,21 @@ def set_seed(args):
     torch.manual_seed(args.seed)
 
 
-def get_data(args):
-    pretrain_loader, train_loader, id_eval_loaders = ixi.get_loaders(
-        args.data_dir,
+def get_data(transform, args):
+    if args.train_dataset == "csv":
+        dataset = csv_dataset.CSVDataset(args.data_path)
+    elif args.train_dataset == "ixi":
+        dataset = ixi_dataset.IXIDataset(args.data_path)
+    else:
+        raise ValueError('Invalid dataset "{}"'.format(args.train_dataset))
+
+    pretrain_loader, train_loader, id_eval_loaders = dataset.get_loaders(
         args.batch_size,
         args.num_workers,
-        args.num_test_subjects,
         args.mix_modalities,
+        transform=transform,
     )
-    args.seg_available = True
+    args.seg_available = dataset.seg_available
     return {
         "pretrain": pretrain_loader,
         "train": train_loader,
@@ -397,7 +405,8 @@ def main():
     set_seed(args)
 
     # Data
-    loaders = get_data(args)
+    transform = hps.TRANSFORM
+    loaders = get_data(transform, args)
 
     # Model
     registration_model = get_model(args)
@@ -427,11 +436,11 @@ def main():
         assert args.batch_size == 1, ":("
         registration_model.eval()
 
-        list_of_eval_unimodal_names = ixi_hps.EVAL_UNI_NAMES
-        list_of_eval_multimodal_names = ixi_hps.EVAL_MULTI_NAMES
-        list_of_eval_metrics = ixi_hps.EVAL_METRICS
-        list_of_eval_augs = ixi_hps.EVAL_AUGS
-        list_of_eval_aligns = ixi_hps.EVAL_KP_ALIGNS
+        list_of_eval_unimodal_names = hps.EVAL_UNI_NAMES
+        list_of_eval_multimodal_names = hps.EVAL_MULTI_NAMES
+        list_of_eval_metrics = hps.EVAL_METRICS
+        list_of_eval_augs = hps.EVAL_AUGS
+        list_of_eval_aligns = hps.EVAL_KP_ALIGNS
 
         print("\n\nStarting evaluation...")
         # Pairwise Unimodal

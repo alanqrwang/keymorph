@@ -32,7 +32,7 @@ def run_train(train_loader, registration_model, optimizer, args):
 
     transform_type = args.transform_type
     loss_fn = args.loss_fn
-    max_random_params = args.max_random_augment_params
+    max_random_params = args.max_random_affine_augment_params
 
     for step_idx, subjects in enumerate(train_loader):
         fixed, moving = subjects
@@ -197,10 +197,8 @@ def run_train(train_loader, registration_model, optimizer, args):
             print(f"-> TPS lambda: {tps_lmbda} ")
             print(f"-> Loss: {loss_fn}")
             print(f"-> Img shapes: {img_f.shape}, {img_m.shape}")
-            print(
-                f"-> Point shapes: {points_f.shape}, {points_m.shape}, {points_a.shape}"
-            )
-            print(f"-> Point weights: {points_weights}")
+            print(f"-> Point shapes: {points_f.shape}, {points_m.shape}")
+            # print(f"-> Point weights: {points_weights}")
             print(f"-> Float16: {args.use_amp}")
             if args.seg_available:
                 print(f"-> Seg shapes: {seg_f.shape}, {seg_m.shape}")
