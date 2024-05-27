@@ -138,7 +138,9 @@ Description of all flags:
 + `--transform_type <ttype>`. 
 Transform to use for registration. Options are `rigid`, `affine`, `tps_<lambda>`.
 TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter lambda controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
-The code also supports sampling lambda according to some distribution (`tps_uniform`, `tps_lognormal`, `tps_loguniform`). 
+The code also supports sampling lambda according to some distribution (`tps_uniform`, `tps_lognormal`, `tps_loguniform`).
++ `--train_dataset csv` specifies that we are training on a csv dataset specified by...
++ `--data_path <path>` specifies the path to the CSV file containing the dataset.
 
 Other optional flags:
 +  `--mix_modalities` flag, if set, mixes modalities between sampled pairs during training. You should probably set this when `--loss_fn dice` (supervised training), and not when `--loss_fn mse` (unsupervised training).
@@ -259,8 +261,12 @@ python scripts/run.py \
     --num_keypoints 128 \
     --loss_fn mse \
     --transform_type tps_0 \
+    --max_random_affine_augment_params (0.2, 0.2, 3.1416, 0.1) \
+    --affine_slope 1000 \
     --data_dir ./centered_IXI 
 ```
+
+`--affine_slope` linearly ramps up the ``max_random_affine_augment_params` such that it starts at 0 for all parameters and reaches their maximum values at epoch 1000. This helps the model to learn the keypoints under increasing affine transformations.
 
 ### Training KeyMorph
 Follow instructions for "Training KeyMorph" above, for more options.
