@@ -35,9 +35,13 @@ def align_img(grid, x, mode="bilinear"):
 #     return res
 
 
-def displacement2flow(displacement_field):
-    """displacement_field: (N, D, H, W, 3).
-    Assumes original space is physical space (voxel units), 256x256x256."""
+def displacement2pytorchflow(displacement_field):
+    """Converts displacement field in index coordinates into a flow-field usable by F.grid_sample.
+    Assumes original space is in index (voxel) units, 256x256x256.
+    Output will be in the [-1, 1] space.
+
+    :param: displacement_field: (N, D, H, W, 3).
+    """
     W, H, D = displacement_field.shape[1:-1]
 
     # Step 1: Create the original grid for 3D
@@ -61,6 +65,28 @@ def displacement2flow(displacement_field):
 
     # Step 3: Add the displacement field to the original grid to get the transformed coordinates
     return coords + displacement_field
+
+
+def pytorchflow2displacement(flow):
+    """Converts pytorch flow-field in [-1, 1] to a displacement field in index (voxel) units
+
+    :param: flow: (N, D, H, W, 3).
+    """
+    flow = flow.permute(0, 4, 1, 2, 3)  # Bring channels to second dimension
+    shape = flow.shape[2:]
+
+    # Scale normalized flow to pixel indices
+    for i in range(3):
+        flow[:, i, ...] = (flow[:, i, ...] + 1) / 2 * (shape[i] - 1)
+
+    # Create an image grid for the target size
+    vectors = [torch.arange(0, s) for s in shape]
+    grids = torch.meshgrid(vectors, indexing="ij")
+    grid = torch.stack(grids, dim=0).unsqueeze(0).to(flow.device, dtype=torch.float32)
+
+    # Calculate displacements from the image grid
+    disp = flow - grid
+    return disp
 
 
 def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
