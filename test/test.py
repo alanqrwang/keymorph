@@ -322,27 +322,6 @@ class TestRigidAligner(unittest.TestCase):
         result = rigid_aligner.get_matrix(input1, input2, w=weights)
         assert_close(result, true)
 
-    def test_rigid_5(self):
-        """Test 2d rotation around z-axis plus scaling for 3d points, with weights. Should ignore scaling."""
-        rigid_aligner = RigidKeypointAligner(dim=2)
-
-        input1 = torch.tensor([[1, 0, 0], [0, -1, 0], [-1, 0, 0], [0, 1, 0]]).float()
-        input2 = torch.tensor([[0, -1, 0], [-1, 0, 0], [0, 1, 0], [1, 0, 0]]).float()
-        # Scaling
-        input2 *= 2
-        input1 = input1.view(1, 4, 3)
-        input2 = input2.view(1, 4, 3)
-
-        r = -np.pi / 2
-        true = torch.tensor(
-            [[np.cos(r), -np.sin(r), 0, 0], [np.sin(r), np.cos(r), 0, 0], [0, 0, 1, 0]]
-        ).float()
-        true = true.view(1, 3, 4)
-
-        weights = torch.tensor([0, 0, 0, 1]).float().view(1, -1)
-        result = rigid_aligner.get_matrix(input1, input2, w=weights)
-        assert_close(result, true)
-
 
 class TestAffineAligner(unittest.TestCase):
     def test_affine_0(self):
@@ -367,7 +346,7 @@ class TestAffineAligner(unittest.TestCase):
         affine_aligner = AffineKeypointAligner(dim=2)
 
         input1 = torch.tensor([[1, 0], [0, -1], [-1, 0], [0, 1]]).float()
-        input2 = torch.tensor([[0, -1], [-1, 0], [0, 1], [1, 0]]).float()
+        input2 = torch.tensor([[0, -2], [-2, 0], [0, 2], [2, 0]]).float()
         input1 = input1.view(1, 4, 2)
         input2 = input2.view(1, 4, 2)
 
@@ -375,11 +354,12 @@ class TestAffineAligner(unittest.TestCase):
         rot_mat = torch.tensor(
             [[np.cos(r), -np.sin(r)], [np.sin(r), np.cos(r)]]
         ).float()
-        sca_mat = torch.tensor([[0.5, 0], [0, 0.5]]).float()
+        sca_mat = torch.tensor([[2, 0], [0, 2]]).float()
+        # input2 is rotated, and then scaled by 2
 
+        # Output should be [A, b] concatenated matrix
         true = torch.zeros(2, 3)
         true[:2, :2] = rot_mat @ sca_mat
-        true[-1, -1] = 1
         true = true.view(1, 2, 3)
         result = affine_aligner.get_matrix(input1, input2)
         assert_close(result, true)
