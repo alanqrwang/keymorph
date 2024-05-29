@@ -5,11 +5,16 @@ from torch.utils import checkpoint
 
 
 class MatrixKeypointAligner(nn.Module):
+    """Keypoint aligner for transformations that can be represented as a matrix."""
+
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
 
     def get_matrix(self, p1, p2, w=None):
+        """Get matrix given point sets p1 and p2.
+        For transformation y = A x + b, returns [A, b] concatenated matrix.
+        """
         pass
 
     def forward(self, *args, **kwargs):

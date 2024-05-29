@@ -246,6 +246,10 @@ class KeyMorph(nn.Module):
                 "time_align": align_time,
                 "time": keypoint_extract_time + align_time,
             }
+            if align_type in ["rigid", "affine"]:
+                res["matrix"] = keypoint_aligner.get_matrix(
+                    points_m, points_f, w=weights
+                )
             if return_aligned_points:
                 points_a = keypoint_aligner.points_from_points(
                     points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
