@@ -119,10 +119,6 @@ Note, affine augmentations are applied separately and is determined by the `--ma
 + Shearing by [-0.1, 0.1]
 
 ### Run the training script
-We use the weights from the pretraining step to initialize our model.
-Our pretraining weights are provided in [Releases](https://github.com/evanmy/keymorph/releases/tag/weights).
-
-
 ```bash
 python scripts/run.py \
     --run_mode train \
