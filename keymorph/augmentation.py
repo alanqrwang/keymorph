@@ -6,7 +6,7 @@ class AffineDeformation2d:
     def __init__(self, device="cuda:0"):
         self.device = device
 
-    def build_affine_matrix_2d(self, batch_size, params):
+    def build_affine_matrix(self, batch_size, params):
         """
         Return a affine transformation matrix
         size: size of input .size() method
@@ -55,7 +55,7 @@ class AffineDeformation2d:
         return M
 
     def deform_img(self, img, params):
-        Ma = self.build_affine_matrix_2d(len(img), params)
+        Ma = self.build_affine_matrix(len(img), params)
         phi_inv = F.affine_grid(
             torch.inverse(Ma)[:, :2, :], img.size(), align_corners=False
         ).cuda()
@@ -67,7 +67,7 @@ class AffineDeformation2d:
 
     def deform_points(self, points, params):
         batch_size, num_points, dim = points.shape
-        Ma = self.build_affine_matrix_2d(batch_size, params)
+        Ma = self.build_affine_matrix(batch_size, params)
         points = torch.cat(
             (points, torch.ones(batch_size, num_points, 1).to(self.device)), dim=-1
         )
@@ -79,7 +79,7 @@ class AffineDeformation3d:
     def __init__(self, device="cuda:0"):
         self.device = device
 
-    def build_affine_matrix_3d(self, batch_size, params):
+    def build_affine_matrix(self, batch_size, params):
         """
         Return a affine transformation matrix
         batch_size: size of batch
@@ -155,7 +155,7 @@ class AffineDeformation3d:
         return M
 
     def deform_img(self, img, params, interp_mode="bilinear"):
-        Ma = self.build_affine_matrix_3d(len(img), params)
+        Ma = self.build_affine_matrix(len(img), params)
         phi_inv = F.affine_grid(
             torch.inverse(Ma)[:, :3, :], img.size(), align_corners=False
         ).to(self.device)
@@ -170,7 +170,7 @@ class AffineDeformation3d:
 
     def deform_points(self, points, params):
         batch_size, num_points, dim = points.shape
-        Ma = self.build_affine_matrix_3d(batch_size, params)
+        Ma = self.build_affine_matrix(batch_size, params)
         points = torch.cat(
             (points, torch.ones(batch_size, num_points, 1).to(self.device)), dim=-1
         )
@@ -190,6 +190,7 @@ def random_affine_augment(
     points=None,
     max_random_params=(0.2, 0.2, 3.1416, 0.1),
     scale_params=1,
+    return_affine_matrix=False,
 ):
     """Randomly augment moving image. Optionally augments corresponding segmentation and keypoints.
 
@@ -225,6 +226,8 @@ def random_affine_augment(
     if points is not None:
         points = augmenter.deform_points(points, params)
         res += (points,)
+    if return_affine_matrix:
+        res += (augmenter.build_affine_matrix(len(img), params),)
     return res[0] if len(res) == 1 else res
 
 

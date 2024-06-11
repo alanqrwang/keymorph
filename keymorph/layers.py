@@ -62,7 +62,7 @@ class CenterOfMass2d(nn.Module):
 class CenterOfMass3d(nn.Module):
     def forward(self, vol):
         """
-        x: tensor of shape [n_batch, chs, dimz, dimy, dimx]
+        vol: tensor of shape [n_batch, chs, dimz, dimy, dimx]
         returns: center of mass in normalized coordinates [-1,1]x[-1,1]x[-1,1], shape [n_batch, chs, 2]
         """
         vol = F.relu(vol)
