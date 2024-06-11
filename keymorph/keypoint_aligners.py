@@ -88,11 +88,12 @@ class RigidKeypointAligner(MatrixKeypointAligner):
           A: [n_batch, dim, dim+1]
         """
         # Take transpose as columns should be the points
-        p1 = p1.permute(0, 2, 1)
-        p2 = p2.permute(0, 2, 1)
+        p1 = p1.permute(0, 2, 1).float()
+        p2 = p2.permute(0, 2, 1).float()
 
         # Calculate centroids
         if w is not None:
+            w = w.float()
             # find weighed mean column wise
             p1_c = torch.sum(p1 * w, axis=2, keepdims=True)
             p2_c = torch.sum(p2 * w, axis=2, keepdims=True)
@@ -160,14 +161,14 @@ class AffineKeypointAligner(MatrixKeypointAligner):
           A: [n_batch, dim, dim+1]
         """
         # Take transpose as columns should be the points
-        x = x.permute(0, 2, 1)
-        y = y.permute(0, 2, 1)
+        x = x.permute(0, 2, 1).float()
+        y = y.permute(0, 2, 1).float()
 
         if w is not None:
-            w = torch.diag_embed(w)
+            w = torch.diag_embed(w).float()
 
         # Convert y to homogenous coordinates
-        one = torch.ones(x.shape[0], 1, x.shape[2]).float().to(x.device)
+        one = torch.ones(x.shape[0], 1, x.shape[2]).to(x)
         x = torch.cat([x, one], 1)
 
         if w is not None:
