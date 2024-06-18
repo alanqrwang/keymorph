@@ -97,7 +97,26 @@ The `kp_aligner` variable is a keypoint alignment module. It has a function `gri
 ## Training KeyMorph on your own data
 `scripts/run.py` with `--run_mode train` allows you to easily train KeyMorph on your own data.
 
-### Create a CSV file
+### Create a CSV file for your data
+#### Option 1: Explicit pairs
+The simplest way is to create a CSV with the following columns: 
++ `fixed_img_path` 
++ `moving_img_path` 
++ `fixed_seg_path` 
++ `moving_seg_path` 
++ `fixed_mask_path` 
++ `moving_mask_path` 
++ `train`
+
+`fixed_*_path` and `moving_*_path` are paths to the fixed and moving images, segmentations, and masks, respectively.
+Every fixed/moving pair must be an explicit row in the CSV.
+`train` is a boolean indicating whether the image pair is in the train or test set.
+
+Then, simply pass the path to the CSV file as `--data_csv_path`.
+
+#### Option 2. Modality-based
+Alternatively, instead of explicitly enumerating all pairs you want to train, you can just include all img/seg/mask paths in your dataset and the code can automatically sample pairs for you.
+A `modality` column can enable additional control of how pairs are sampled (see Other optional flags below).
 The CSV file should contain the following columns: `img_path`, `seg_path`, `mask_path`, `modality`, `train`.
 + `img_path` is the path to the intensity image.
 + `seg_path` is the (optional )path to the corresponding segmentation map. Set to "None" if not available.
@@ -108,15 +127,16 @@ The CSV file should contain the following columns: `img_path`, `seg_path`, `mask
 Then, simply pass the path to the CSV file as `--data_csv_path`.
 
 ### Editing pre-processing/augmentations
-You probably need to set the `TRANSFORM` variable in `scripts/hyperparameters.py` to correspond to the pre-processing/augmentations that you want to apply to your own data.
+The `scripts/hyperparameters.py` file contains all hyperparameters for training KeyMorph.
+For training, the most important you'll need to set is the `TRANSFORM` variable, which corresponds to the pre-processing/augmentations that you want to apply to your own data.
 The code uses `torchio` for pre-processing and augmentations. You can find the list of available transforms [here](https://torchio.readthedocs.io/transforms/augmentation.html).
 You can also use your own custom transforms by wrapping them in the [Lambda](https://torchio.readthedocs.io/transforms/others.html#torchio.transforms.Lambda) transform.
 
 Note, affine augmentations are applied separately and is determined by the `--max_random_affine_augment_params` flag in `scripts/run.py`. By default, it is set to `(0.0, 0.0, 0.0, 0.0)`. For example, `(0.2, 0.2, 3.1416, 0.1)` denotes:
-+ Scaling by [1-0.2, 1+0.2]
-+ Translation by [-0.2, 0.2], as a fraction of the image size
-+ Rotation by [-3.1416, 3.1416] radians
-+ Shearing by [-0.1, 0.1]
++ Scaling by `[1-0.2, 1+0.2]`
++ Translation by `[-0.2, 0.2]`, as a fraction of the image size
++ Rotation by `[-3.1416, 3.1416]` radians
++ Shearing by `[-0.1, 0.1]`
 
 ### Run the training script
 We use the weights from the pretraining step to initialize our model.
@@ -129,8 +149,10 @@ python scripts/run.py \
     --num_keypoints 128 \
     --loss_fn mse \
     --transform_type affine \
+    --backbone truncatedunet \
+    --use_amp \
     --train_dataset csv \
-    --data_path /path/to/data_csv
+    --data_path /path/to/data_csv 
 ```
 
 
@@ -141,6 +163,8 @@ Description of all flags:
 Transform to use for registration. Options are `rigid`, `affine`, `tps_<lambda>`.
 TPS uses a (non-linear) thin-plate-spline interpolant to align the corresponding keypoints. A hyperparameter lambda controls the degree of non-linearity for TPS. A value of 0 corresponds to exact keypoint alignment (resulting in a maximally nonlinear transformation while still minimizing bending energy), while higher values result in the transformation becoming more and more affine-like. In practice, we find a value of 10 is very similar to an affine transformation.
 The code also supports sampling lambda according to some distribution (`tps_uniform`, `tps_lognormal`, `tps_loguniform`).
++ `--backbone truncatedunet` sets the keypoint extractor backbone to a truncated U-Net. Other options are `conv` (a simple convolutional encoder network) and `unet` (a full U-Net).
++ `--use_amp` flag to use automatic mixed precision training.
 + `--train_dataset csv` specifies that we are training on a csv dataset specified by...
 + `--data_path <path>` specifies the path to the CSV file containing the dataset.
 

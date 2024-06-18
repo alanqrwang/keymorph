@@ -15,7 +15,7 @@ class IXIDataset(KeyMorphDataset):
         self.seg_available = True
         self.modalities = ["T1", "T2", "PD"]
 
-    def _get_subjects_dict(self, train):
+    def get_subjects(self, train):
         """
         Get list of TorchIO subjects from disk. Each subject has an image,
         and optionally a mask and segmentation. Each subject is restricted

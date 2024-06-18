@@ -11,12 +11,11 @@ class PairedDataset(Dataset):
 
     def __init__(
         self,
-        subject_list1,
-        subject_list2,
+        subject_pairs_list,
         transform=None,
     ):
         super().__init__()
-        self.subject_list = list(itertools.product(subject_list1, subject_list2))
+        self.subject_list = subject_pairs_list
         self.transform = transform
 
     def __len__(self):
@@ -73,73 +72,115 @@ class RandomAggregatedDataset(Dataset):
 
 
 class KeyMorphDataset:
-    def _get_subjects_dict(self, train):
+    def _parse_test_mod(self, mod):
+        if isinstance(mod, str):
+            mod1, mod2 = mod.split("_")
+        else:
+            mod1, mod2 = mod
+        return mod1, mod2
+
+    def get_subjects(self, train):
         raise NotImplementedError
 
     def get_pretrain_loader(self, batch_size, num_workers, transform):
-        pretrain_mod_dict = self._get_subjects_dict(
+        subjects = self.get_subjects(
             train=True,
         )
-        pretrain_datasets = [
-            tio.data.SubjectsDataset(
-                subjects_list,
+        if isinstance(subjects, dict):
+            pretrain_datasets = [
+                tio.data.SubjectsDataset(
+                    subjects_list,
+                    transform=transform,
+                )
+                for subjects_list in subjects.values()
+            ]
+            pretrain_dataset = ConcatDataset(pretrain_datasets)
+        else:
+            pretrain_dataset = tio.data.SubjectsDataset(
+                subjects[0] + subjects[1],
                 transform=transform,
             )
-            for subjects_list in pretrain_mod_dict.values()
-        ]
-        aggr_dataset = ConcatDataset(pretrain_datasets)
 
         return DataLoader(
-            aggr_dataset,
+            pretrain_dataset,
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
         )
 
     def get_train_loader(self, batch_size, num_workers, mix_modalities, transform):
-        train_mod_dict = self._get_subjects_dict(
+        subjects = self.get_subjects(
             train=True,
         )
-        train_mods = list(train_mod_dict.keys())
-        if mix_modalities:
-            mod_pairs = list(combinations(train_mods, 2))
-        else:
-            mod_pairs = [(m, m) for m in train_mods]
+        if isinstance(subjects, dict):
+            train_mods = list(subjects.keys())
+            if mix_modalities:
+                mod_pairs = list(combinations(train_mods, 2))
+            else:
+                mod_pairs = [(m, m) for m in train_mods]
 
-        paired_datasets = []
-        for mod1, mod2 in mod_pairs:
-            paired_datasets.append(
-                PairedDataset(
-                    train_mod_dict[mod1],
-                    train_mod_dict[mod2],
-                    transform=transform,
+            paired_datasets = []
+            for mod1, mod2 in mod_pairs:
+                paired_datasets.append(
+                    PairedDataset(
+                        list(itertools.product(subjects[mod1], subjects[mod2])),
+                        transform=transform,
+                    )
                 )
+            train_dataset = ConcatDataset(paired_datasets)
+        else:
+            train_dataset = PairedDataset(
+                list(zip(subjects[0], subjects[1])),
+                transform=transform,
             )
         train_loader = DataLoader(
-            ConcatDataset(paired_datasets),
+            train_dataset,
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
         )
         return train_loader
 
-    def get_test_loaders(self, batch_size, num_workers, transform):
-        test_mod_dict = self._get_subjects_dict(
+    def get_test_loaders(self, batch_size, num_workers, transform, list_of_mods):
+        subjects = self.get_subjects(
             train=False,
         )
-        test_loaders = {}
-        for mod, test_subjects in test_mod_dict.items():
-            test_loaders[mod] = DataLoader(
-                tio.data.SubjectsDataset(test_subjects, transform=transform),
+        if isinstance(subjects, dict):
+            test_datasets = []
+            for dataset_name in list_of_mods:
+                mod1, mod2 = self._parse_test_mod(dataset_name)
+                subjects1 = subjects[mod1]
+                subjects2 = subjects[mod2]
+                test_datasets.append(
+                    PairedDataset(list(zip(subjects1, subjects2)), transform=transform)
+                )
+            test_dataset = ConcatDataset(test_datasets)
+
+            test_loader = DataLoader(
+                test_dataset,
                 batch_size=batch_size,
                 shuffle=False,
                 num_workers=num_workers,
             )
-        return test_loaders
+        else:
+            test_dataset = PairedDataset(
+                list(zip(subjects[0], subjects[1])), transform=transform
+            )
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+            )
+        return test_loader
 
-    def get_loaders(self, batch_size, num_workers, mix_modalities, transform):
+    def get_loaders(
+        self, batch_size, num_workers, mix_modalities, transform, list_of_test_mods
+    ):
         return (
             self.get_pretrain_loader(batch_size, num_workers, transform),
             self.get_train_loader(batch_size, num_workers, mix_modalities, transform),
-            self.get_test_loaders(batch_size, num_workers, transform),
+            self.get_test_loaders(
+                batch_size, num_workers, transform, list_of_test_mods
+            ),
         )
