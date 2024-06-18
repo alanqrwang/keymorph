@@ -4,9 +4,9 @@ import torch.nn.functional as F
 
 
 class LinearRegressor2d(nn.Module):
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, out_dim):
         super(LinearRegressor2d, self).__init__()
-        self.fc = nn.Linear(in_dim, out_dim)
+        self.fc = nn.LazyLinear(out_dim)
 
     def forward(self, x):
         x = F.avg_pool2d(x, kernel_size=x.size()[-1]).view(x.size()[0], -1)
@@ -16,9 +16,9 @@ class LinearRegressor2d(nn.Module):
 
 
 class LinearRegressor3d(nn.Module):
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, out_dim):
         super(LinearRegressor3d, self).__init__()
-        self.fc = nn.Linear(in_dim, out_dim)
+        self.fc = nn.LazyLinear(out_dim)
 
     def forward(self, x):
         x = F.avg_pool3d(x, kernel_size=x.size()[-1]).view(x.size()[0], -1)
@@ -28,6 +28,19 @@ class LinearRegressor3d(nn.Module):
 
 
 class CenterOfMass2d(nn.Module):
+    def __init__(self, indexing="xy") -> None:
+        """2d center-of0mass layer.
+
+        Args:
+            indexing (str, optional): Can be 'ij' or 'xy'.
+                If 'ij', uses matrix/image/voxel ordering.
+                If 'xy', uses Cartesian ordering.
+                See also: https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html.
+        """
+        super().__init__()
+        assert indexing in ["xy", "ij"]
+        self.indexing = indexing
+
     def forward(self, img):
         """
         x: tensor of shape [n_batch, chs, dimy, dimx]
@@ -56,14 +69,30 @@ class CenterOfMass2d(nn.Module):
         cy = (arangey * my).sum(dim=-1, keepdim=True) / My
 
         # center of mass, shape [n_batch, chs, 2]
-        return torch.cat([cx, cy], dim=-1) * 2 - 1
+        if self.indexing == "xy":
+            return torch.cat([cx, cy], dim=-1) * 2 - 1
+        else:
+            return torch.cat([cy, cx], dim=-1) * 2 - 1
 
 
 class CenterOfMass3d(nn.Module):
+    def __init__(self, indexing="xy") -> None:
+        """3d center-of-mass layer.
+
+        Args:
+            indexing (str, optional): Can be 'ij' or 'xy'.
+                If 'ij', uses matrix/image/voxel ordering.
+                If 'xy', uses Cartesian ordering.
+                See also: https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html.
+        """
+        super().__init__()
+        assert indexing in ["xy", "ij"]
+        self.indexing = indexing
+
     def forward(self, vol):
         """
         vol: tensor of shape [n_batch, chs, dimz, dimy, dimx]
-        returns: center of mass in normalized coordinates [-1,1]x[-1,1]x[-1,1], shape [n_batch, chs, 2]
+        returns: center of mass in normalized coordinates [-1,1]x[-1,1]x[-1,1], shape [n_batch, chs, 3]
         """
         vol = F.relu(vol)
         n_batch, chs, dimz, dimy, dimx = vol.shape
@@ -99,7 +128,10 @@ class CenterOfMass3d(nn.Module):
         cz = (arangez * mz).sum(dim=-1, keepdim=True) / Mz
 
         # center of mass, shape [n_batch, chs, 3]
-        return torch.cat([cx, cy, cz], dim=-1) * 2 - 1
+        if self.indexing == "xy":
+            return torch.cat([cx, cy, cz], dim=-1) * 2 - 1
+        else:
+            return torch.cat([cz, cy, cx], dim=-1) * 2 - 1
 
 
 class ConvBlock(nn.Module):
