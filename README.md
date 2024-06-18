@@ -110,6 +110,7 @@ The simplest way is to create a CSV with the following columns:
 
 `fixed_*_path` and `moving_*_path` are paths to the fixed and moving images, segmentations, and masks, respectively.
 Every fixed/moving pair must be an explicit row in the CSV.
+If segmentations or masks are not available, set those entries to "None".
 `train` is a boolean indicating whether the image pair is in the train or test set.
 
 Then, simply pass the path to the CSV file as `--data_csv_path`.
@@ -119,7 +120,7 @@ Alternatively, instead of explicitly enumerating all pairs you want to train, yo
 A `modality` column can enable additional control of how pairs are sampled (see Other optional flags below).
 The CSV file should contain the following columns: `img_path`, `seg_path`, `mask_path`, `modality`, `train`.
 + `img_path` is the path to the intensity image.
-+ `seg_path` is the (optional )path to the corresponding segmentation map. Set to "None" if not available.
++ `seg_path` is the (optional) path to the corresponding segmentation map. Set to "None" if not available.
 + `mask_path` is the (optional) path to the mask. Set to "None" if not available.
 + `modality` is the modality of the image.
 + `train` is a boolean indicating whether the image is in the train or test set.
