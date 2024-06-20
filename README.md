@@ -179,6 +179,8 @@ This reference space is commonly recorded for medical images and is encoded by a
 
 This code has support for aligning keypoints in real-world space. To do this, simply add the flag `--align_keypoints_in_real_world_space`. Currently, only rigid and affine transformations are supported for real-world space alignment, but TPS is coming soon!
 
+Note, this flag should not be used if you are registering between different subjects, as the real-world space alignment assumes a common reference space, or if you don't have the affine matrices (or you suspect they are inaccurate) for each volume.
+
 ## Registering brain volumes 
 ### BrainMorph
 WARNING: Please see the [BrainMorph repository](https://github.com/alanqrwang/brainmorph) for the latest updates and models! This is a legacy version of the code and is not guaranteed to be maintained.
