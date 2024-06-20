@@ -109,21 +109,21 @@ def imshow_registration_2d(
     plt.close()
 
 
-def rot90_points(points, k):
+def rot90_points(points, k, img_dims=(256, 256)):
     assert k in [0, 1, 2, 3]
     rotated_points = np.zeros_like(points)
 
     # Calculate the center of the image
-    center_y, center_x = (np.array((256, 256)) - 1) / 2.0
+    center_y, center_x = (np.array(img_dims) - 1) / 2.0
 
     # Translate points to origin for rotation
     translated_points = points - np.array([center_x, center_y])
 
     rotated_points = np.zeros_like(translated_points)
-    if k == 1:
+    if k == 3:
         rotated_points[:, 0] = translated_points[:, 1]
         rotated_points[:, 1] = -translated_points[:, 0]
-    elif k == 3:
+    elif k == 1:
         rotated_points[:, 0] = -translated_points[:, 1]
         rotated_points[:, 1] = translated_points[:, 0]
     elif k == 2:
@@ -137,6 +137,25 @@ def rot90_points(points, k):
     return rotated_points
 
 
+def convert_points_norm2voxel(points, grid_sizes):
+    """
+    Rescale points from [-1, 1] to a uniform voxel grid with different sizes along each dimension.
+
+    Args:
+        points (bs, num_points, dim): Array of points in the normalized space [-1, 1].
+        grid_sizes (bs, dim): Array of grid sizes for each dimension.
+
+    Returns:
+        Array of points in voxel space.
+    """
+    grid_sizes = np.array(grid_sizes)
+    assert grid_sizes.shape[-1] == points.shape[-1], "Dimensions don't match"
+    translated_points = points + 1
+    scaled_points = (translated_points * grid_sizes) / 2
+    rescaled_points = scaled_points - 0.5
+    return rescaled_points
+
+
 def imshow_img_and_points_3d(
     img=None,
     all_points=None,
@@ -146,25 +165,42 @@ def imshow_img_and_points_3d(
     axes=None,
     rotate_90_deg=0,
     markers=(".", "x"),
+    point_space="norm",
+    suptitle=None,
+    keypoint_indexing="ij",
 ):
     """
-    Plots 3 orthogonal slices of a 3D image and overlays points on them.
+    Plots 3 orthogonal views of a 3D image and overlays points on them.
 
-    img: (H, W, D) image
-    all_points: (N, 3) or (1, N, 3) or (2, N, 3) array of points.
-        Points can be defined on:
-         1. the Pytorch grid, i.e. in [-1, 1]
-         2. the image grid, e.g. in [0, 256]
-        The code converts Pytorch grids to image grids by internally checking if
-    all_weights: (N,) or (1, N) or (2, N) array of weights
+    Points are assumed to lie in voxel ordering (also called ij indexing). So:
+        - If img view is img[ind, :, :], then overlaid 2d points must be in dimension axes (1, 2).
+        - If img view is img[:, ind, :], then overlaid 2d points must be in dimension axes (0, 2).
+        - If img view is img[:, :, ind], then overlaid 2d points must be in dimension axes (0, 1).
+
+    Args:
+        img: (H, W, D) image
+        all_points: (N, 3) or (1, N, 3) or (2, N, 3) array of points.
+        point_space: 'norm' or 'voxel'. Points can be defined on:
+            1. the normalized Pytorch grid, i.e. in [-1, 1]
+            2. the voxel (image) grid, e.g. in [0, 256]
+        all_weights: (N,) or (1, N) or (2, N) array of weights
+        projection: If True, plot all points keypoints in each view, regardless of depth.
+            Color will be different for every point, but the same across views.
+            If False, plot only points in a slab around the center of the image.
+            Color will correspond to depth of the point within the slab.
+        slab_thickness: Thickness of the slab in which to plot points. Only used if projection=False.
     """
-    print(img.shape)
-    print(all_points.shape)
-    img_dims = img.shape[-3:]
-    center_slices = (img_dims[0] // 2, img_dims[1] // 2, img_dims[2] // 2)
+    img_dims = img.shape
+    assert len(img_dims) == 3, "Image must be 3D"
+    ind_12, ind_02, ind_01 = img_dims[0] // 2, img_dims[1] // 2, img_dims[2] // 2
 
-    def normalize(data):
-        return (data - np.min(data)) / (np.max(data) - np.min(data))
+    def _normalize(data):
+        # Don't normalize if there's only one datapoint to avoid division by 0
+        # Or, if the data is constant
+        if data.shape[0] != 1 and np.max(data) != np.min(data):
+            return (data - np.min(data)) / (np.max(data) - np.min(data))
+        else:
+            return data
 
     plot_img = True if img is not None else None
     plot_points = True if all_points is not None else None
@@ -175,119 +211,123 @@ def imshow_img_and_points_3d(
         if isinstance(markers, str):
             markers = (markers,)
 
-        # If points are in [-1, 1], convert to image coordinates
-        if np.all(all_points >= -1) or np.all(all_points <= 1):
-            print("Converting points from [-1, 1] to image coordinates")
-            all_points = (all_points + 1) / 2 * img_dims[-1]
-        if np.any(all_points < 0):
-            raise ValueError("Points must be non-negative")
+        if keypoint_indexing == "xy":
+            print("Flipping points into ij indexing...")
+            all_points = np.flip(all_points, axis=-1)
+
+        if point_space == "norm":
+            print("Converting points from [-1, 1] to image coordinates...")
+            all_points = convert_points_norm2voxel(all_points, img_dims)
 
         if all_weights is None:
             all_weights = np.ones(all_points.shape[:2])
         else:
             if len(all_weights.shape) == 1:
                 all_weights = all_weights[None]
-            all_weights = normalize(all_weights)
+            all_weights = _normalize(all_weights)
 
     if axes is None:
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-    xy_ind, xz_ind, yz_ind = center_slices
     if plot_img:
-        # Set global vmin and vmax so intensities values are comparable relative to each other
-        vmin = min(img.min(), img.min(), img.min())
-        vmax = max(img.max(), img.max(), img.max())
-
-        [ax.set_xticks([]) for ax in axes]
-        [ax.set_yticks([]) for ax in axes]
-
-        img_xy = img[:, :, xy_ind]
-        img_xz = img[:, xz_ind, :]
-        img_yz = img[yz_ind, :, :]
+        img_12 = img[ind_12, :, :]
+        img_02 = img[:, ind_02, :]
+        img_01 = img[:, :, ind_01]
 
         if rotate_90_deg != 0:
-            img_xy = np.rot90(img_xy, k=rotate_90_deg)
-            img_xz = np.rot90(img_xz, k=rotate_90_deg)
-            img_yz = np.rot90(img_yz, k=rotate_90_deg)
+            img_12 = np.rot90(img_12, k=rotate_90_deg)
+            img_02 = np.rot90(img_02, k=rotate_90_deg)
+            img_01 = np.rot90(img_01, k=rotate_90_deg)
 
-        axes[0].imshow(img_xy, cmap="gray", vmin=vmin, vmax=vmax)
-        axes[1].imshow(img_xz, cmap="gray", vmin=vmin, vmax=vmax)
-        axes[2].imshow(img_yz, cmap="gray", vmin=vmin, vmax=vmax)
+        axes[0].imshow(img_12, cmap="gray")
+        axes[1].imshow(img_02, cmap="gray")
+        axes[2].imshow(img_01, cmap="gray")
 
     if plot_points:
+        cmap = matplotlib.colormaps["bwr"]
         for points, weights, marker in zip(all_points, all_weights, markers):
-            points_xy, depth_xy = points[:, 1:], points[:, 0]
-            points_xz, depth_xz = (
-                np.stack((points[:, 0], points[:, 2]), axis=-1),
-                points[:, 1],
-            )
-            points_yz, depth_yz = points[:, :2], points[:, 2]
+            points_12, depth_12 = points[:, [1, 2]], points[:, 0]
+            points_02, depth_02 = points[:, [0, 2]], points[:, 1]
+            points_01, depth_01 = points[:, [0, 1]], points[:, 2]
+
             if projection:
-                colors_xy = [[1, 0, 0, 1] for _ in range(len(points))]
-                weights_xy = weights
-
-                colors_xz = [[1, 0, 0, 1] for _ in range(len(points))]
-                weights_xy = weights
-
-                colors_yz = [[1, 0, 0, 1] for _ in range(len(points))]
-                weights_xy = weights
+                colors_12 = cmap(np.linspace(0, 1, len(points)))
+                colors_02 = cmap(np.linspace(0, 1, len(points)))
+                colors_01 = cmap(np.linspace(0, 1, len(points)))
 
             else:
-                cmap = matplotlib.colormaps["bwr"]
+                start, stop = ind_12 - slab_thickness / 2, ind_12 + slab_thickness / 2
+                indices = (depth_12 > start).nonzero() and (depth_12 < stop).nonzero()
+                if len(indices[0]) == 0:
+                    raise ValueError(
+                        "No points in the slab, try increasing slab_thickness or set projection=True."
+                    )
+                points_12 = points_12[indices]
+                depth_12 = depth_12[indices]
+                weights_12 = weights[indices]
 
-                start, stop = xy_ind - slab_thickness / 2, xy_ind + slab_thickness / 2
-                indices = (depth_xy > start).nonzero() and (depth_xy < stop).nonzero()
-                points_xy = points_xy[indices]
-                depth_xy = depth_xy[indices]
-                weights_xy = weights[indices]
+                start, stop = ind_02 - slab_thickness / 2, ind_02 + slab_thickness / 2
+                indices = (depth_02 > start).nonzero() and (depth_02 < stop).nonzero()
+                if len(indices[0]) == 0:
+                    raise ValueError(
+                        "No points in the slab, try increasing slab_thickness or set projection=True."
+                    )
+                points_02 = points_02[indices]
+                depth_02 = depth_02[indices]
+                weights_02 = weights[indices]
 
-                start, stop = xz_ind - slab_thickness / 2, xz_ind + slab_thickness / 2
-                indices = (depth_xz > start).nonzero() and (depth_xz < stop).nonzero()
-                points_xz = points_xz[indices]
-                depth_xz = depth_xz[indices]
-                weights_xz = weights[indices]
+                start, stop = ind_01 - slab_thickness / 2, ind_01 + slab_thickness / 2
+                indices = (depth_01 > start).nonzero() and (depth_01 < stop).nonzero()
+                if len(indices[0]) == 0:
+                    raise ValueError(
+                        "No points in the slab, try increasing slab_thickness or set projection=True."
+                    )
+                points_01 = points_01[indices]
+                depth_01 = depth_01[indices]
+                weights_01 = weights[indices]
 
-                start, stop = yz_ind - slab_thickness / 2, yz_ind + slab_thickness / 2
-                indices = (depth_yz > start).nonzero() and (depth_yz < stop).nonzero()
-                points_yz = points_yz[indices]
-                depth_yz = depth_yz[indices]
-                weights_yz = weights[indices]
-
-            # Set alpha to be proportional to weights
-            colors_xy = cmap(normalize(depth_xy))
-            colors_xy[:, -1] = weights_xy
-            colors_xz = cmap(normalize(depth_xz))
-            colors_xz[:, -1] = weights_xz
-            colors_yz = cmap(normalize(depth_yz))
-            colors_yz[:, -1] = weights_yz
+                # Set alpha to be proportional to weights
+                colors_12 = cmap(_normalize(depth_12))
+                colors_12[:, -1] = _normalize(weights_12)
+                colors_02 = cmap(_normalize(depth_02))
+                colors_02[:, -1] = _normalize(weights_02)
+                colors_01 = cmap(_normalize(depth_01))
+                colors_01[:, -1] = _normalize(weights_01)
 
             if rotate_90_deg != 0:
-                points_xy = rot90_points(points_xy, rotate_90_deg)
-                points_xz = rot90_points(points_xz, rotate_90_deg)
-                points_yz = rot90_points(points_yz, rotate_90_deg)
+                points_12 = rot90_points(
+                    points_12, rotate_90_deg, img_dims=img_12.shape
+                )
+                points_02 = rot90_points(
+                    points_02, rotate_90_deg, img_dims=img_02.shape
+                )
+                points_01 = rot90_points(
+                    points_01, rotate_90_deg, img_dims=img_01.shape
+                )
 
+            # Note: plt.scatter plots points in (x, y) order, which flips voxel ordering
             axes[0].scatter(
-                points_xy[:, 0],
-                points_xy[:, 1],
+                points_12[:, 1],
+                points_12[:, 0],
                 marker=marker,
                 s=100,
-                color=colors_xy,
+                color=colors_12,
             )
             axes[1].scatter(
-                points_xz[:, 0],
-                points_xz[:, 1],
+                points_02[:, 1],
+                points_02[:, 0],
                 marker=marker,
                 s=100,
-                color=colors_xz,
+                color=colors_02,
             )
             axes[2].scatter(
-                points_yz[:, 0],
-                points_yz[:, 1],
+                points_01[:, 1],
+                points_01[:, 0],
                 marker=marker,
                 s=100,
-                color=colors_yz,
+                color=colors_01,
             )
-    [ax.set_xlim([0, img_dims[-1]]) for ax in axes]
-    [ax.set_ylim([img_dims[-1], 0]) for ax in axes]
+    if suptitle:
+        fig.suptitle(suptitle)
 
     return axes
 
@@ -300,31 +340,57 @@ def imshow_registration_3d(
     points_f=None,
     points_a=None,
     weights=None,
+    resize=None,
+    projection=False,
+    slab_thickness=10,
+    rotate_90_deg=0,
     suptitle=None,
     save_path=None,
-    **kwargs,
 ):
     """
     Moved, aligned, and fixed should be volumes with 3 dimensions.
     Points should be normalized in [-1,1].
 
-    Convention is that (-1, -1, -1) is on the top left, front-most
-    corner. x-values get bigger to the right, y-values get bigger
-    going down, and z-values get bigger going back.
-    Thus, when using plt.imshow(), I must set origin='upper', so that
-    the origin is at the upper left-hand corner.
+    Plots 3 orthogonal views of a 3D image and overlays points on them.
 
-    What this implies is that in generating the grid that goes into
-    F.grid_sample, the grid must follow this same convention; i.e.
-    the first coordinate corresponds to the x-coordinate and the second
-    coordinate correspond to the y-coordinate. This means that when
-    the grid is "linearized" or "flattened", the first coordinate must
-    vary first, i.e. (-1, -1), (0, -1), (1, -1), (-1, 0) ....
-    This way, when you do normal C-style reshaping where the last dimension
-    gets filled in first, the rows get filled with varying first coordinates,
-    as we desire.
+    Points are assumed to lie in voxel ordering (also called ij indexing). So:
+        - If img view is img[ind, :, :], then overlaid 2d points must be in dimension axes (1, 2).
+        - If img view is img[:, ind, :], then overlaid 2d points must be in dimension axes (0, 2).
+        - If img view is img[:, :, ind], then overlaid 2d points must be in dimension axes (0, 1).
+
+    Args:
+        img: (H, W, D) image
+        all_points: (N, 3) or (1, N, 3) or (2, N, 3) array of points.
+        all_weights: (N,) or (1, N) or (2, N) array of weights
+        resize: tuple, resizes the images to be the same size for easier spatial comparison. Use if your images have different resolutions.
+        projection: If True, plot all keypoints in each view, regardless of depth.
+            Color will be different for every point, but the same across views.
+            If False, plot only points in a slab around the center of the image.
+            Color will correspond to depth of the point within the slab.
+        slab_thickness: Thickness of the slab in which to plot points. Only used if projection=False.
     """
-    points_af = np.stack([points_a, points_f], axis=0)
+
+    if resize is not None:
+        import torchio as tio
+
+        subject_m = tio.Subject(img=tio.ScalarImage(tensor=img_m[None]))
+        subject_f = tio.Subject(img=tio.ScalarImage(tensor=img_f[None]))
+        subject_a = tio.Subject(img=tio.ScalarImage(tensor=img_a[None]))
+        transform = tio.Resize(resize)
+        subject_m = transform(subject_m)
+        subject_f = transform(subject_f)
+        subject_a = transform(subject_a)
+        img_m = subject_m.img.data[0]
+        img_f = subject_f.img.data[0]
+        img_a = subject_a.img.data[0]
+
+    if len(points_m.shape) == 2:
+        points_m = points_m[None]
+    if len(points_f.shape) == 2:
+        points_f = points_f[None]
+    if len(points_a.shape) == 2:
+        points_a = points_a[None]
+    points_af = np.concatenate([points_a, points_f], axis=0)
 
     fig, axes = plt.subplots(3, 3, figsize=(16, 16))
 
@@ -332,22 +398,34 @@ def imshow_registration_3d(
         img_m,
         points_m,
         weights,
+        markers=".",
         axes=(axes[0, 0], axes[1, 0], axes[2, 0]),
-        **kwargs,
+        projection=projection,
+        slab_thickness=slab_thickness,
+        rotate_90_deg=rotate_90_deg,
+        point_space="norm",
     )
     imshow_img_and_points_3d(
         img_f,
         points_f,
         weights,
+        markers="x",
         axes=(axes[0, 1], axes[1, 1], axes[2, 1]),
-        **kwargs,
+        projection=projection,
+        slab_thickness=slab_thickness,
+        rotate_90_deg=rotate_90_deg,
+        point_space="norm",
     )
     imshow_img_and_points_3d(
         img_a,
         points_af,
         weights,
+        markers=(".", "x"),
         axes=(axes[0, 2], axes[1, 2], axes[2, 2]),
-        **kwargs,
+        projection=projection,
+        slab_thickness=slab_thickness,
+        rotate_90_deg=rotate_90_deg,
+        point_space="norm",
     )
 
     axes[0, 0].set_title("Moving")

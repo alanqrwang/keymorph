@@ -19,6 +19,7 @@ from keymorph.utils import (
     initialize_wandb,
     save_dict_as_json,
 )
+from keymorph.viz_tools import imshow_img_and_points_3d
 from dataset import csv_dataset, ixi_dataset
 import scripts.hyperparameters as hps
 from scripts.train import run_train
@@ -52,11 +53,6 @@ def parse_args():
         "--resume_latest",
         action="store_true",
         help="Resume latest checkpoint available",
-    )
-    parser.add_argument(
-        "--save_eval_to_disk",
-        action="store_true",
-        help="Save evaluation results to disk",
     )
     parser.add_argument(
         "--visualize", action="store_true", help="Visualize images and points"
@@ -119,8 +115,14 @@ def parse_args():
     parser.add_argument(
         "--max_random_affine_augment_params",
         nargs="*",
+        type=float,
         default=(0.0, 0.0, 0.0, 0.0),
         help="Maximum of affine augmentations during training",
+    )
+    parser.add_argument(
+        "--align_keypoints_in_real_world_coords",
+        action="store_true",
+        help="Align keypoints in real world coordinates",
     )
 
     # CNN backbone
@@ -186,7 +188,7 @@ def parse_args():
     parser.add_argument(
         "--affine_slope",
         type=int,
-        default=1,
+        default=-1,
         help="Constant to control how slow to increase augmentation. If negative, disabled.",
     )
 
@@ -221,6 +223,11 @@ def parse_args():
         "--use_profiler",
         action="store_true",
         help="Use torch profiler",
+    )
+    parser.add_argument(
+        "--skip_if_completed",
+        action="store_true",
+        help="If set, skips the registration if the output exists",
     )
 
     # Weights & Biases
@@ -268,7 +275,7 @@ def create_dirs(args):
         print("Creating directory: {}".format(args.model_dir))
         os.makedirs(args.model_dir)
 
-    if args.run_mode == "eval" and args.save_eval_to_disk:
+    if args.run_mode == "eval":
         args.model_eval_dir = args.model_dir / "eval"
         if not os.path.exists(args.model_eval_dir) and not args.debug_mode:
             os.makedirs(args.model_eval_dir)
@@ -306,6 +313,7 @@ def get_data(transform, args):
         args.num_workers,
         args.mix_modalities,
         transform=transform,
+        list_of_test_mods=hps.EVAL_UNI_NAMES + hps.EVAL_MULTI_NAMES,
     )
     args.seg_available = dataset.seg_available
     return {
@@ -373,10 +381,12 @@ def get_model(args):
         network,
         args.num_keypoints,
         args.dim,
+        keypoint_layer=args.kp_layer,
         use_amp=args.use_amp,
         use_checkpoint=args.use_checkpoint,
         max_train_keypoints=args.max_train_keypoints,
         weight_keypoints=args.weighted_kp_align,
+        align_keypoints_in_real_world_coords=args.align_keypoints_in_real_world_coords,
     )
     registration_model.to(args.device)
     utils.summary(registration_model)
@@ -493,34 +503,57 @@ def main():
         if args.resume:
             start_epoch = ckpt_state["epoch"] + 1
             # Load random keypoints from checkpoint
-            random_points = state["random_points"]
+            ref_points = state["ref_points"]
         else:
             start_epoch = 1
             # Extract random keypoints from reference subject, which is any random training subject
             ref_subject = next(iter(loaders["pretrain"]))
             ref_img = ref_subject["img"][tio.DATA].float()
             print("sampling random keypoints...")
-            random_points = utils.sample_valid_coordinates(
-                ref_img, args.num_keypoints, args.dim
-            )
-            random_points = random_points * 2 - 1
-            random_points = random_points.repeat(args.batch_size, 1, 1)
-            # if args.visualize:
-            #     show_warped_vol(
-            #         ref_img[0, 0].cpu().detach().numpy(),
-            #         ref_img[0, 0].cpu().detach().numpy(),
-            #         ref_img[0, 0].cpu().detach().numpy(),
-            #         random_points[0].cpu().detach().numpy(),
-            #         random_points[0].cpu().detach().numpy(),
-            #         random_points[0].cpu().detach().numpy(),
-            #     )
-            del ref_subject
+            if args.align_keypoints_in_real_world_coords:
+                ref_points = utils.sample_valid_coordinates(
+                    ref_img,
+                    args.num_keypoints,
+                    args.dim,
+                    point_space="voxel",
+                    indexing='ij',
+                )
+                affine = ref_subject["img"]["affine"].float().to(ref_img.device)
+                voxel_shapes = torch.tensor(ref_img.shape[2:]).to(ref_img)
+                ref_points = utils.convert_points_voxel2real(ref_points, affine)
+
+            else:
+                ref_points = utils.sample_valid_coordinates(
+                    ref_img,
+                    args.num_keypoints,
+                    args.dim,
+                    point_space="norm",
+                    indexing='ij',
+                )
+                ref_points = ref_points * 2 - 1
+            ref_points = ref_points.repeat(args.batch_size, 1, 1)
+            ref_subject["points"] = ref_points
+            if args.visualize:
+                if args.align_keypoints_in_real_world_coords:
+                    ref_points_viz = utils.convert_points_real2norm(
+                        ref_points, affine, voxel_shapes
+                    )
+                else:
+                    ref_points_viz = ref_points
+                imshow_img_and_points_3d(
+                    ref_img[0, 0].cpu().detach().numpy(),
+                    ref_points_viz[0].cpu().detach().numpy(),
+                    suptitle="Reference subject img and points",
+                    projection=True,
+                    point_space="norm",
+                    keypoint_indexing='ij',
+                )
 
         for epoch in range(start_epoch, args.epochs + 1):
             args.curr_epoch = epoch
             epoch_stats = run_pretrain(
                 loaders["pretrain"],
-                random_points,
+                ref_subject,
                 registration_model,
                 optimizer,
                 args,
@@ -542,7 +575,7 @@ def main():
                     "args": args,
                     "state_dict": registration_model.backbone.state_dict(),
                     "optimizer": optimizer.state_dict(),
-                    "random_points": random_points,
+                    "ref_points": ref_points,
                 }
                 torch.save(
                     state,
@@ -565,6 +598,7 @@ def main():
 
         for epoch in range(start_epoch, args.epochs + 1):
             args.curr_epoch = epoch
+            print(f"\nEpoch {epoch}/{args.epochs}")
             epoch_stats = run_train(
                 loaders["train"],
                 registration_model,
@@ -573,7 +607,6 @@ def main():
             )
             train_loss.append(epoch_stats["loss"])
 
-            print(f"\nEpoch {epoch}/{args.epochs}")
             for metric_name, metric in epoch_stats.items():
                 print(f"[Train Stat] {metric_name}: {metric:.5f}")
 

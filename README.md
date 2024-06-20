@@ -11,6 +11,7 @@ The model is robust to normal and diseased brains, a variety of MRI modalities, 
 Check out the dedicated repository for the latest updates and models!
 
 ## Updates
+- [June 2024] Added support for keypoint alignment in real-world space. Use this if you are registering between different volumes in the same series, and there is a common reference space that the volumes share. See "Training KeyMorph on your own data" below for more details.
 - [May 2024] Added option to use CSV file to train KeyMorph on your own data. See "Training KeyMorph on your own data" below.
 - [May 2024] [BrainMorph](https://github.com/alanqrwang/brainmorph) has been moved to its own dedicated repository. See the repository for the latest updates and models.
 - [May 2024] [BrainMorph](https://github.com/alanqrwang/brainmorph) is released, a foundational keypoint model based on KeyMorph for robust and flexible brain MRI registration!
@@ -108,8 +109,8 @@ The simplest way is to create a CSV with the following columns:
 + `moving_mask_path` 
 + `train`
 
-`fixed_*_path` and `moving_*_path` are paths to the fixed and moving images, segmentations, and masks, respectively.
-Every fixed/moving pair must be an explicit row in the CSV.
+For each row, `fixed_*_path` and `moving_*_path` are paths to the pair of fixed/moving images, segmentations, and masks, respectively.
+That is, every fixed/moving pair must be an explicit row in the CSV.
 If segmentations or masks are not available, set those entries to "None".
 `train` is a boolean indicating whether the image pair is in the train or test set.
 
@@ -170,6 +171,13 @@ Other optional flags:
 + `--visualize` flag to visualize results with matplotlib
 + `--debug_mode` flag to print some debugging information
 + `--use_wandb` flag to log results to Weights & Biases
+
+#### Keypoint alignment in real-world space
+In aforementioned cases, keypoints are extracted and aligned in a normalized `[-1, 1]` space.
+In cases where you are registering multiple views of the same subject in a series, you can align keypoints in *real-world space*.
+This reference space is commonly recorded for medical images and is encoded by an affine matrix associated with each volume, which maps from *voxel coordinates/indices* to real world space (which usually has units in millimeters).
+
+This code has support for aligning keypoints in real-world space. To do this, simply add the flag `--align_keypoints_in_real_world_space`. Currently, only rigid and affine transformations are supported for real-world space alignment, but TPS is coming soon!
 
 ## Registering brain volumes 
 ### BrainMorph

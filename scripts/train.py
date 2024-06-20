@@ -41,6 +41,13 @@ def run_train(train_loader, registration_model, optimizer, args):
 
         # Get images and segmentations from TorchIO subject
         img_f, img_m = fixed["img"][tio.DATA], moving["img"][tio.DATA]
+        aff_f, aff_m = fixed["img"]["affine"], moving["img"]["affine"]
+        if np.prod(img_f.shape) >= 77594624:
+            print("Skipping large image")
+            continue
+        if np.prod(img_m.shape) >= 77594624:
+            print("Skipping large image")
+            continue
         if args.seg_available:
             seg_f, seg_m = fixed["seg"][tio.DATA], moving["seg"][tio.DATA]
             # One-hot encode segmentations
@@ -53,9 +60,6 @@ def run_train(train_loader, registration_model, optimizer, args):
                 seg_m = utils.one_hot(seg_m.long())
 
         assert (
-            img_f.shape == img_m.shape
-        ), f"Fixed and moving images must have same shape:\n --> {fixed['img']['path']}: {img_f.shape}\n --> {moving['img']['path']}: {img_m.shape}"
-        assert (
             img_f.shape[1] == 1
         ), f"Fixed image must have 1 channel:\n --> {fixed['img']['path']}: {img_f.shape}"
         assert (
@@ -65,6 +69,8 @@ def run_train(train_loader, registration_model, optimizer, args):
         # Move to device
         img_f = img_f.float().to(args.device)
         img_m = img_m.float().to(args.device)
+        aff_f = aff_f.float().to(args.device)
+        aff_m = aff_m.float().to(args.device)
         if args.seg_available:
             seg_f = seg_f.float().to(args.device)
             seg_m = seg_m.float().to(args.device)
@@ -75,16 +81,22 @@ def run_train(train_loader, registration_model, optimizer, args):
         else:
             scale_augment = 1
         if args.seg_available:
-            img_m, seg_m = random_affine_augment(
+            img_m, seg_m, aug_affine = random_affine_augment(
                 img_m,
                 seg=seg_m,
                 max_random_params=max_random_params,
                 scale_params=scale_augment,
+                return_affine_matrix=True,
             )
         else:
-            img_m = random_affine_augment(
-                img_m, max_random_params=max_random_params, scale_params=scale_augment
+            img_m, aug_affine = random_affine_augment(
+                img_m,
+                max_random_params=max_random_params,
+                scale_params=scale_augment,
+                return_affine_matrix=True,
             )
+        # New moving affine matrix is the composition of the original affine matrix and the augmentation matrix
+        aff_m = torch.bmm(aff_m, aug_affine)
 
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
@@ -104,6 +116,8 @@ def run_train(train_loader, registration_model, optimizer, args):
                             img_m,
                             transform_type=transform_type,
                             return_aligned_points=args.visualize,
+                            aff_f=aff_f,
+                            aff_m=aff_m,
                         )[transform_type]
                 print(
                     prof.key_averages(group_by_stack_n=5).table(
@@ -116,6 +130,8 @@ def run_train(train_loader, registration_model, optimizer, args):
                     img_m,
                     transform_type=transform_type,
                     return_aligned_points=args.visualize,
+                    aff_f=aff_f,
+                    aff_m=aff_m,
                 )[transform_type]
             grid = registration_results["grid"]
             align_type = transform_type
@@ -230,11 +246,29 @@ def run_train(train_loader, registration_model, optimizer, args):
                     points_m[0].cpu().detach().numpy(),
                     points_f[0].cpu().detach().numpy(),
                     points_a[0].cpu().detach().numpy(),
+                    projection=True,
                     save_path=(
                         None
                         if args.debug_mode
                         else os.path.join(
                             args.model_img_dir, f"img_{args.curr_epoch}.png"
+                        )
+                    ),
+                )
+                imshow_registration_3d(
+                    img_m[0, 0].cpu().detach().numpy(),
+                    img_f[0, 0].cpu().detach().numpy(),
+                    img_a[0, 0].cpu().detach().numpy(),
+                    points_m[0].cpu().detach().numpy(),
+                    points_f[0].cpu().detach().numpy(),
+                    points_a[0].cpu().detach().numpy(),
+                    projection=True,
+                    resize=(256, 256, 256),
+                    save_path=(
+                        None
+                        if args.debug_mode
+                        else os.path.join(
+                            args.model_img_dir, f"img_256x256x256_{args.curr_epoch}.png"
                         )
                     ),
                 )

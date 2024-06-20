@@ -3,79 +3,206 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils import checkpoint
 
+from keymorph import utils
+
 
 class MatrixKeypointAligner(nn.Module):
-    """Keypoint aligner for transformations that can be represented as a matrix."""
+    """Keypoint aligner for transformations that can be represented as a matrix.
 
-    def __init__(self, dim):
-        super().__init__()
-        self.dim = dim
+    All keypoints must be passed in with matrix/image/voxel ordering (aka 'ij' indexing).
+    When indexing into a 3D volume, volume[points[0], points[1], points[2]]
+    In a flattened grid, the first dimension varies the fastest.
+    """
 
-    def get_matrix(self, p1, p2, w=None):
-        """Get matrix given point sets p1 and p2.
-        For transformation y = A x + b, returns [A, b] concatenated matrix.
-        """
-        pass
-
-    def forward(self, *args, **kwargs):
-        return self.grid_from_points(*args, **kwargs)
-
-    def grid_from_points(
+    def __init__(
         self,
         points_m,
         points_f,
-        grid_shape,
-        weights=None,
-        lmbda=None,
-        compute_on_subgrids=False,
+        w=None,
+        dim=3,
+        align_in_real_world_coords=False,
+        aff_m=None,
+        aff_f=None,
+        shape_m=None,
+        shape_f=None,
     ):
+        """
+        Args:
+            points_m: Moving points (batch, num_points, dim)
+            points_f: Fixed points (batch, num_points, dim)
+            w: Weights for the points (batch, num_points)
+            dim: Dimensionality of the points (2 or 3)
+            align_in_real_world_coords: if True, the points are aligned in real-world coordinates via its corresponding affine matrix.
+                If set, the affine matrices must be passed in and points must be passed in as voxel coordinates.
+            aff_m: Affine matrix for moving image
+            aff_f: Affine matrix for fixed image
+            shape_f: (n_batch, n_ch, L, W, D) Shape of the fixed image
+            shape_m: (n_batch, n_ch, L, W, D) Shape of the moving image
+        """
+        super().__init__()
+        self.dim = dim
+        self.align_in_real_world_coords = align_in_real_world_coords
+        self.points_f = points_f
+        self.points_m = points_m
+        self.shape_f = shape_f
+        self.shape_m = shape_m
+        if align_in_real_world_coords:
+            assert aff_f is not None, "Need to provide aff_f for real-world coords"
+            assert aff_m is not None, "Need to provide aff_m for real-world coords"
+            assert shape_f is not None, "Need to provide shape_f for real-world coords"
+            assert shape_m is not None, "Need to provide shape_m for real-world coords"
+            assert points_f.shape[0] == 1, "Batch size must be 1 for real-world coords"
+            assert points_m.shape[0] == 1, "Batch size must be 1 for real-world coords"
+            self.aff_f = aff_f
+            self.aff_m = aff_m
+
+            # Convert voxel points to real-world points
+            self.points_m = utils.convert_points_voxel2real(self.points_m, aff_m)
+            self.points_f = utils.convert_points_voxel2real(self.points_f, aff_f)
+
         # Note we flip the order of the points here
-        matrix = self.get_matrix(points_f, points_m, w=weights)
-        grid = F.affine_grid(matrix, grid_shape, align_corners=False)
+        self.inverse_transform_matrix = self._square(
+            self.fit(self.points_f, self.points_m, w=w)
+        ).to(points_m)
+        self.transform_matrix = torch.inverse(self.inverse_transform_matrix).to(
+            points_m
+        )
+
+    def _square(self, matrix):
+        square = torch.eye(self.dim + 1)[None]
+        square[:, : self.dim, : self.dim + 1] = matrix
+        return square
+
+    def fit(self, x, y, w=None):
+        """Get matrix given point sets x (moving) and y (fixed).
+        For transformation y = A x + b, returns [A, b] concatenated (augmented) matrix.
+        """
+        pass
+
+    def uniform_voxel_grid(self, grid_shape):
+        if self.dim == 2:
+            x = torch.arange(grid_shape[2])
+            y = torch.arange(grid_shape[3])
+            grid = torch.meshgrid(x, y, indexing="ij")
+        else:
+            x = torch.arange(grid_shape[2])
+            y = torch.arange(grid_shape[3])
+            z = torch.arange(grid_shape[4])
+            grid = torch.meshgrid(x, y, z, indexing="ij")
+        grid = torch.stack(grid, dim=-1).float()
         return grid
 
-    def deform_points(self, points, matrix):
-        square_mat = torch.zeros(len(points), self.dim + 1, self.dim + 1).to(
-            points.device
-        )
-        square_mat[:, : self.dim, : self.dim + 1] = matrix
-        square_mat[:, -1, -1] = 1
-        batch_size, num_points, _ = points.shape
+    def uniform_norm_grid(self, grid_shape):
+        if self.dim == 2:
+            x = torch.linspace(-1, 1, grid_shape[2])
+            y = torch.linspace(-1, 1, grid_shape[3])
+            grid = torch.meshgrid(x, y, indexing="ij")
+        else:
+            x = torch.linspace(-1, 1, grid_shape[2])
+            y = torch.linspace(-1, 1, grid_shape[3])
+            z = torch.linspace(-1, 1, grid_shape[4])
+            grid = torch.meshgrid(x, y, z, indexing="ij")
+        grid = torch.stack(grid, dim=-1).float()
+        return grid
 
-        points = torch.cat(
-            (points, torch.ones(batch_size, num_points, 1).to(points.device)), dim=-1
-        )
-        warp_points = torch.bmm(square_mat[:, :3, :], points.permute(0, 2, 1)).permute(
-            0, 2, 1
-        )
-        return warp_points
+    def affine_grid(self, grid_shape):
+        """Create a grid of voxel coordinates with specified shape to be used in F.grid_sample().
 
-    def points_from_points(
-        self, moving_points, fixed_points, points, weights=None, **kwargs
+        Args:
+            grid_shape (bs, 1, H, W) or (bs, 1, H, W, D): Shape of the grid to create
+        """
+        # Create grid of voxel coordinates where leftmost dimension varies first
+        if self.align_in_real_world_coords:
+            grid = self.uniform_voxel_grid(grid_shape)
+        else:
+            grid = self.uniform_norm_grid(grid_shape)
+
+        # Flatten the grid to (N x dim) array of voxel coordinates
+        grid_flat = (
+            grid.reshape(-1, self.dim).unsqueeze(0).to(self.points_f)
+        )  # Add batch dimension
+
+        moving_voxel_coords = self.get_inverse_transformed_points(grid_flat)
+
+        transformed_grid = moving_voxel_coords.reshape(1, *grid_shape[2:], self.dim)
+
+        if self.align_in_real_world_coords:
+            transformed_grid = utils.convert_flow_voxel2norm(
+                transformed_grid, self.shape_m[2:]
+            )
+
+        return transformed_grid
+
+    def get_flow_field(
+        self,
+        grid_shape,
+        **kwargs,
     ):
-        affine_matrix = self.get_matrix(moving_points, fixed_points, w=weights)
-        square_mat = torch.zeros(len(points), self.dim + 1, self.dim + 1).to(
-            moving_points.device
-        )
-        square_mat[:, : self.dim, : self.dim + 1] = affine_matrix
-        square_mat[:, -1, -1] = 1
-        batch_size, num_points, _ = points.shape
+        """
+        If align_in_real_world_coords is False, we create the grid directly in [-1, 1] space.
+        If align_in_real_world_coords is True, we assume the points are in voxel coordinates.
+            Mathematically: y = A_f^-1 A A_m x = B x
+            But, F.grid_sample requires the inverse: B^-1 = A_m^-1 A^-1 A_f
+            Note that self.matrix already represents the inverse of A, because
+            we register the fixed keypoints to moving keypoints in fit().
 
-        points = torch.cat(
-            (points, torch.ones(batch_size, num_points, 1).to(moving_points.device)),
-            dim=-1,
-        )
-        warped_points = torch.bmm(
-            square_mat[:, :3, :], points.permute(0, 2, 1)
-        ).permute(0, 2, 1)
-        return warped_points
+        Args:
+            grid_shape (bs, 1, H, W, D): Shape of the grid to create
+        """
+        grid = self.affine_grid(grid_shape)
+        # Flip because grid_sample expects 'xy' ordering.
+        # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
+        return grid.flip(-1)
+
+    def get_forward_transformed_points(self, points):
+        """Transforms a set of points in moving space to fixed space using the fitted matrix.
+        If align_in_real_world_coords is False, computes:
+            p_f = A p_m.
+        If align_in_real_world_coords is True, points must be in voxel coordinates, computes:
+            p_f = A_f^-1 A A_m p_m.
+        """
+        batch_size, num_points, _ = points.shape
+        transform_matrix = self.transform_matrix[:, :-1, :]
+
+        if self.align_in_real_world_coords:
+            points = utils.convert_points_voxel2real(points, self.aff_m)
+
+        # Convert to homogeneous coordinates
+        ones = torch.ones(batch_size, num_points, 1).to(points.device)
+        points = torch.cat([points, ones], dim=2)
+        points = torch.bmm(transform_matrix, points.permute(0, 2, 1)).permute(0, 2, 1)
+
+        if self.align_in_real_world_coords:
+            points = utils.convert_points_real2voxel(points, self.aff_f)
+        return points
+
+    def get_inverse_transformed_points(self, points):
+        """Transforms a set of points in fixed space to moving space using the fitted matrix.
+        If align_in_real_world_coords is False, computes:
+            p_m = A p_f.
+        If align_in_real_world_coords is True, points must be in voxel coordinates, computes:
+            p_m = A_m^-1 A^-1 A_f p_f.
+        """
+        batch_size, num_points, _ = points.shape
+        transform_matrix = self.inverse_transform_matrix[:, :-1, :]
+
+        # Convert voxel coordinates to real-world coordinates in the fixed image space
+        if self.align_in_real_world_coords:
+            points = utils.convert_points_voxel2real(points, self.aff_f)
+
+        # Transform real-world coordinates to the moving image space using the registration affine
+        # Convert to homogeneous coordinates
+        ones = torch.ones(batch_size, num_points, 1).to(points.device)
+        points = torch.cat([points, ones], dim=2)
+        points = torch.bmm(transform_matrix, points.permute(0, 2, 1)).permute(0, 2, 1)
+
+        if self.align_in_real_world_coords:
+            points = utils.convert_points_real2voxel(points, self.aff_m)
+        return points
 
 
 class RigidKeypointAligner(MatrixKeypointAligner):
-    def __init__(self, dim):
-        super().__init__(dim)
-
-    def get_matrix(self, p1, p2, w=None):
+    def fit(self, p1, p2, w=None):
         """
         Find R and T which is the solution to argmin_{R, T} \sum_i ||p2_i - (R * p1_i + T)||_2
         See https://ieeexplore.ieee.org/document/4767965
@@ -141,11 +268,7 @@ class RigidKeypointAligner(MatrixKeypointAligner):
 
 
 class AffineKeypointAligner(MatrixKeypointAligner):
-    def __init__(self, dim):
-        super().__init__(dim)
-        self.dim = dim
-
-    def get_matrix(self, x, y, w=None):
+    def fit(self, x, y, w=None):
         """
         Find A which is the solution to argmin_A \sum_i ||y_i - Ax_i||_2 = argmin_A ||Ax - y||_F
         Computes the closed-form affine equation: A = y x^T (x x^T)^(-1).
@@ -189,13 +312,34 @@ class AffineKeypointAligner(MatrixKeypointAligner):
 class TPS(nn.Module):
     """See https://github.com/cheind/py-thin-plate-spline/blob/master/thinplate/numpy.py"""
 
-    def __init__(self, dim, num_subgrids=4, use_checkpoint=False):
+    def __init__(
+        self,
+        points_m,
+        points_f,
+        lmbda,
+        w=None,
+        dim=3,
+        num_subgrids=4,
+        use_checkpoint=False,
+    ):
         super().__init__()
         self.dim = dim
         self.num_subgrids = num_subgrids
         self.use_checkpoint = use_checkpoint
+        self.lmbda = lmbda
 
-    def fit(self, c, lmbda, w=None):
+        # Note we flip the order of the points here
+        if use_checkpoint:
+            self.inverse_theta = checkpoint.checkpoint(
+                self.fit, points_f, points_m, lmbda, w
+            )
+        else:
+            self.inverse_theta = self.fit(points_f, points_m, lmbda, weights=w)
+        self.points_m = points_m
+        self.points_f = points_f
+        self.weights = w
+
+    def fit_dim(self, c, lmbda, w=None):
         """Assumes last dimension of c contains target points.
 
           Set up and solve linear system:
@@ -260,7 +404,7 @@ class TPS(nn.Module):
         """Compute radial basis function."""
         return r**2 * torch.log(r + 1e-6)
 
-    def tps_theta_from_points(self, c_src, c_dst, lmbda, weights=None):
+    def fit(self, c_src, c_dst, lmbda, weights=None):
         """
         Args:
           c_src: (bs, T, dim)
@@ -274,10 +418,10 @@ class TPS(nn.Module):
         if self.dim == 3:
             cz = torch.cat((c_src, c_dst[..., 2:3]), dim=-1)
 
-        theta_dx = self.fit(cx, lmbda, w=weights).to(device)
-        theta_dy = self.fit(cy, lmbda, w=weights).to(device)
+        theta_dx = self.fit_dim(cx, lmbda, w=weights).to(device)
+        theta_dy = self.fit_dim(cy, lmbda, w=weights).to(device)
         if self.dim == 3:
-            theta_dz = self.fit(cz, lmbda, w=weights).to(device)
+            theta_dz = self.fit_dim(cz, lmbda, w=weights).to(device)
 
         if self.dim == 3:
             return torch.stack((theta_dx, theta_dy, theta_dz), -1)
@@ -372,7 +516,7 @@ class TPS(nn.Module):
         else:
             N, _, D, H, W = size
             grid_shape = (N, D, H, W, self.dim + 1)
-        grid = self.uniform_grid(grid_shape).to(device)
+        grid = self.uniform_grid_homogeneous(grid_shape).to(device)
 
         if compute_on_subgrids:
             output_shape = list(grid.shape)
@@ -417,8 +561,8 @@ class TPS(nn.Module):
             z = self.tps(theta, ctrl, grid)
         return z
 
-    def uniform_grid(self, shape):
-        """Uniform grid coordinates.
+    def uniform_grid_homogeneous(self, shape):
+        """Uniform grid coordinates in voxel ordering.
 
         Params
         ------
@@ -437,43 +581,37 @@ class TPS(nn.Module):
 
         if self.dim == 2:
             _, H, W, _ = shape
+            grid = torch.zeros(shape)
+            grid[..., 0] = 1.0
+            grid[..., 2] = torch.linspace(-1, 1, W)
+            grid[..., 1] = torch.linspace(-1, 1, H).unsqueeze(-1)
         else:
             _, D, H, W, _ = shape
-        grid = torch.zeros(shape)
-
-        grid[..., 0] = 1.0
-        grid[..., 1] = torch.linspace(-1, 1, W)
-        grid[..., 2] = torch.linspace(-1, 1, H).unsqueeze(-1)
-        if grid.shape[-1] == 4:
-            grid[..., 3] = torch.linspace(-1, 1, D).unsqueeze(-1).unsqueeze(-1)
+            grid = torch.zeros(shape)
+            grid[..., 0] = 1.0
+            grid[..., 3] = torch.linspace(-1, 1, W)
+            grid[..., 2] = torch.linspace(-1, 1, H).unsqueeze(-1)
+            grid[..., 1] = torch.linspace(-1, 1, D).unsqueeze(-1).unsqueeze(-1)
         return grid
 
-    def forward(self, *args, **kwargs):
-        return self.grid_from_points(*args, **kwargs)
-
-    def grid_from_points(
+    def get_flow_field(
         self,
-        points_m,
-        points_f,
         grid_shape,
-        weights=None,
-        lmbda=None,
         compute_on_subgrids=False,
     ):
-        # Note we flip the order of the points here
-        if self.use_checkpoint:
-            theta = checkpoint.checkpoint(
-                self.tps_theta_from_points, points_f, points_m, lmbda, weights
-            )
-        else:
-            theta = self.tps_theta_from_points(
-                points_f, points_m, lmbda, weights=weights
-            )
-        return self.tps_grid(
-            theta, points_f, grid_shape, compute_on_subgrids=compute_on_subgrids
+        # Use inverse_theta to get the flow field, where control points are the fixed points.
+        grid = self.tps_grid(
+            self.inverse_theta,
+            self.points_f,
+            grid_shape,
+            compute_on_subgrids=compute_on_subgrids,
         )
 
-    def deform_points(self, theta, ctrl, points):
+        # Flip because grid_sample expects 'xy' ordering.
+        # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
+        return grid.flip(-1)
+
+    def transform_points(self, theta, ctrl, points):
         weights, affine = theta[:, : -(self.dim + 1), :], theta[:, -(self.dim + 1) :, :]
         N, T, _ = ctrl.shape
         U = TPS.u(TPS.d(ctrl, points))
@@ -486,136 +624,268 @@ class TPS(nn.Module):
         z = torch.bmm(P.view(N, -1, self.dim + 1), affine)
         return z + b
 
-    def points_from_points(
-        self, ctl_points, tgt_points, points, weights=None, **kwargs
-    ):
-        lmbda = kwargs["lmbda"]
-        theta = self.tps_theta_from_points(
-            ctl_points, tgt_points, lmbda, weights=weights
+    def get_forward_transformed_points(self, points):
+        # Fit the forward version of TPS for transforming points
+        self.theta = self.fit(
+            self.points_m, self.points_f, self.lmbda, weights=self.weights
         )
-        return self.deform_points(theta, ctl_points, points)
+        # Control points in forward case are moving points
+        return self.transform_points(self.theta, self.points_m, points)
 
 
-class ApproximateTPS(TPS):
-    """Method 2 from ``Approximate TPS Mappings'' by Donato and Belongie"""
+# class ApproximateTPS(TPS):
+#     """Method 2 from ``Approximate TPS Mappings'' by Donato and Belongie"""
 
-    def fit(self, c, lmbda, subsample_indices, w=None):
-        """Assumes last dimension of c contains target points.
+#     def fit(self, c, lmbda, subsample_indices, w=None):
+#         """Assumes last dimension of c contains target points.
 
-          Set up and solve linear system:
-            [K + lmbda*I   P] [w] = [v]
-            [        P^T   0] [a]   [0]
+#           Set up and solve linear system:
+#             [K + lmbda*I   P] [w] = [v]
+#             [        P^T   0] [a]   [0]
 
-          If w is provided, solve weighted TPS:
-            [K + lmbda*1/diag(w)   P] [w] = [v]
-            [                P^T   0] [a]   [0]
+#           If w is provided, solve weighted TPS:
+#             [K + lmbda*1/diag(w)   P] [w] = [v]
+#             [                P^T   0] [a]   [0]
 
-          See https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=929618&tag=1, Eq. (8)
-        Args:
-          c: control points and target point (bs, T, d+1)
-          lmbda: Lambda values per batch (bs)
-        """
-        device = c.device
-        bs, T = c.shape[0], c.shape[1]
-        ctrl, tgt = c[:, :, : self.dim], c[:, :, -1]
-        num_subsample = len(subsample_indices)
-        print(num_subsample)
+#           See https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=929618&tag=1, Eq. (8)
+#         Args:
+#           c: control points and target point (bs, T, d+1)
+#           lmbda: Lambda values per batch (bs)
+#         """
+#         device = c.device
+#         bs, T = c.shape[0], c.shape[1]
+#         ctrl, tgt = c[:, :, : self.dim], c[:, :, -1]
+#         num_subsample = len(subsample_indices)
+#         print(num_subsample)
 
-        # Build K matrix
-        print("ctrl shape", ctrl.shape)
-        U = TPS.u(TPS.d(ctrl, ctrl[:, subsample_indices]))
-        print("U shape", U.shape)
-        if w is not None:
-            w = torch.diag_embed(w)
-            w = w[:, :, subsample_indices]
-            print("w shape", w.shape)
-            K = U + torch.reciprocal(w + 1e-6) * lmbda.view(
-                bs, 1, 1
-            )  # w are weights, TPS expects variances
-        else:
-            I = torch.eye(T).repeat(bs, 1, 1).float().to(device)
-            I = I[:, :, subsample_indices]
-            K = U + I * lmbda.view(bs, 1, 1)
+#         # Build K matrix
+#         print("ctrl shape", ctrl.shape)
+#         U = TPS.u(TPS.d(ctrl, ctrl[:, subsample_indices]))
+#         print("U shape", U.shape)
+#         if w is not None:
+#             w = torch.diag_embed(w)
+#             w = w[:, :, subsample_indices]
+#             print("w shape", w.shape)
+#             K = U + torch.reciprocal(w + 1e-6) * lmbda.view(
+#                 bs, 1, 1
+#             )  # w are weights, TPS expects variances
+#         else:
+#             I = torch.eye(T).repeat(bs, 1, 1).float().to(device)
+#             I = I[:, :, subsample_indices]
+#             K = U + I * lmbda.view(bs, 1, 1)
 
-        # Build P matrix
-        P = torch.ones((bs, T, self.dim + 1)).float()
-        P[:, :, 1:] = ctrl
-        P_tilde = P[:, subsample_indices]
-        print("P shapes", P.shape, P_tilde.shape)
+#         # Build P matrix
+#         P = torch.ones((bs, T, self.dim + 1)).float()
+#         P[:, :, 1:] = ctrl
+#         P_tilde = P[:, subsample_indices]
+#         print("P shapes", P.shape, P_tilde.shape)
 
-        # Build v vector
-        v = torch.zeros(bs, T + self.dim + 1).float()
-        v[:, :T] = tgt
+#         # Build v vector
+#         v = torch.zeros(bs, T + self.dim + 1).float()
+#         v[:, :T] = tgt
 
-        A = torch.zeros((bs, T + self.dim + 1, num_subsample + self.dim + 1)).float()
-        A[:, :T, :num_subsample] = K
-        A[:, :T, -(self.dim + 1) :] = P
-        A[:, -(self.dim + 1) :, :num_subsample] = P_tilde.transpose(1, 2)
+#         A = torch.zeros((bs, T + self.dim + 1, num_subsample + self.dim + 1)).float()
+#         A[:, :T, :num_subsample] = K
+#         A[:, :T, -(self.dim + 1) :] = P
+#         A[:, -(self.dim + 1) :, :num_subsample] = P_tilde.transpose(1, 2)
 
-        return torch.linalg.lstsq(A, v).solution
+#         return torch.linalg.lstsq(A, v).solution
 
-    def tps_theta_from_points(
-        self, c_src, c_dst, lmbda, subsample_indices, weights=None
-    ):
-        """
-        Args:
-          c_src: (bs, T, dim)
-          c_dst: (bs, T, dim)
-          lmbda: (bs)
-        """
-        device = c_src.device
+#     def tps_theta_from_points(
+#         self, c_src, c_dst, lmbda, subsample_indices, weights=None
+#     ):
+#         """
+#         Args:
+#           c_src: (bs, T, dim)
+#           c_dst: (bs, T, dim)
+#           lmbda: (bs)
+#         """
+#         device = c_src.device
 
-        cx = torch.cat((c_src, c_dst[..., 0:1]), dim=-1)
-        cy = torch.cat((c_src, c_dst[..., 1:2]), dim=-1)
-        if self.dim == 3:
-            cz = torch.cat((c_src, c_dst[..., 2:3]), dim=-1)
+#         cx = torch.cat((c_src, c_dst[..., 0:1]), dim=-1)
+#         cy = torch.cat((c_src, c_dst[..., 1:2]), dim=-1)
+#         if self.dim == 3:
+#             cz = torch.cat((c_src, c_dst[..., 2:3]), dim=-1)
 
-        theta_dx = self.fit(cx, lmbda, subsample_indices, w=weights).to(device)
-        theta_dy = self.fit(cy, lmbda, subsample_indices, w=weights).to(device)
-        if self.dim == 3:
-            theta_dz = self.fit(cz, lmbda, subsample_indices, w=weights).to(device)
+#         theta_dx = self.fit(cx, lmbda, subsample_indices, w=weights).to(device)
+#         theta_dy = self.fit(cy, lmbda, subsample_indices, w=weights).to(device)
+#         if self.dim == 3:
+#             theta_dz = self.fit(cz, lmbda, subsample_indices, w=weights).to(device)
 
-        if self.dim == 3:
-            return torch.stack((theta_dx, theta_dy, theta_dz), -1)
-        else:
-            return torch.stack((theta_dx, theta_dy), -1)
+#         if self.dim == 3:
+#             return torch.stack((theta_dx, theta_dy, theta_dz), -1)
+#         else:
+#             return torch.stack((theta_dx, theta_dy), -1)
 
-    def grid_from_points(
-        self,
-        points_m,
-        points_f,
-        grid_shape,
-        subsample_indices,
-        weights=None,
-        compute_on_subgrids=False,
-        **kwargs,
-    ):
-        lmbda = kwargs["lmbda"]
+#     def grid_from_points(
+#         self,
+#         points_m,
+#         points_f,
+#         grid_shape,
+#         subsample_indices,
+#         weights=None,
+#         compute_on_subgrids=False,
+#         **kwargs,
+#     ):
+#         lmbda = kwargs["lmbda"]
 
-        assert len(subsample_indices) < points_m.shape[1]
-        theta = self.tps_theta_from_points(
-            points_f,
-            points_m,
-            lmbda,
-            subsample_indices,
-            weights=weights,
-        )
-        return self.tps_grid(
-            theta,
-            points_f[:, subsample_indices],
-            grid_shape,
-            compute_on_subgrids=compute_on_subgrids,
-        )
+#         assert len(subsample_indices) < points_m.shape[1]
+#         theta = self.tps_theta_from_points(
+#             points_f,
+#             points_m,
+#             lmbda,
+#             subsample_indices,
+#             weights=weights,
+#         )
+#         return self.tps_grid(
+#             theta,
+#             points_f[:, subsample_indices],
+#             grid_shape,
+#             compute_on_subgrids=compute_on_subgrids,
+#         )
 
-    def points_from_points(
-        self, ctl_points, tgt_points, points, subsample_indices, weights=None, **kwargs
-    ):
-        lmbda = kwargs["lmbda"]
-        theta = self.tps_theta_from_points(
-            ctl_points,
-            tgt_points,
-            lmbda,
-            weights=weights,
-            subsample_indices=subsample_indices,
-        )
-        return self.deform_points(theta, ctl_points[:, subsample_indices], points)
+#     def points_from_points(
+#         self, ctl_points, tgt_points, points, subsample_indices, weights=None, **kwargs
+#     ):
+#         lmbda = kwargs["lmbda"]
+#         theta = self.tps_theta_from_points(
+#             ctl_points,
+#             tgt_points,
+#             lmbda,
+#             weights=weights,
+#             subsample_indices=subsample_indices,
+#         )
+#         return self.deform_points(theta, ctl_points[:, subsample_indices], points)
+
+
+# def transform_regulargridinterp(
+#     fixed_data, moving_data, fixed_affine, moving_affine, registration_affine
+# ):
+#     """Same as transform_gridsample but with RegularGridInterpolator instead of F.grid_sample.
+#     See https://github.com/sbarratt/torch_interpolations/tree/master."""
+#     # Get the shape of the fixed image
+#     fixed_shape = fixed_data.shape[2:]  # Exclude batch dimension
+
+#     # Create a grid of voxel coordinates in the fixed image space
+#     x = torch.arange(fixed_shape[0])
+#     y = torch.arange(fixed_shape[1])
+#     z = torch.arange(fixed_shape[2])
+#     grid = torch.meshgrid(x, y, z, indexing="ij")
+#     grid = torch.stack(grid, dim=-1).float()
+
+#     # Flatten the grid to N x 3 array of voxel coordinates and add batch dimension
+#     grid_flat = grid.reshape(-1, 3).unsqueeze(0)  # Add batch dimension
+
+#     moving_voxel_coords = points_real_world_affine_registration(
+#         grid_flat, fixed_affine, moving_affine, registration_affine
+#     )
+
+#     moving_voxel_coords = [moving_voxel_coords[..., i] for i in range(3)]
+#     print("transformed", moving_voxel_coords)
+
+#     # Interpolate the values in the moving image at the transformed coordinates
+#     # Assuming you have a RegularGridInterpolator function implemented in PyTorch
+#     points = [
+#         torch.arange(moving_data.shape[2]),
+#         torch.arange(moving_data.shape[3]),
+#         torch.arange(moving_data.shape[4]),
+#     ]
+#     values = moving_data.squeeze(0).squeeze(0)
+#     aligned_data_flat = RegularGridInterpolator(points, values)(moving_voxel_coords)
+
+#     aligned_data = (
+#         aligned_data_flat.reshape(fixed_shape).unsqueeze(0).unsqueeze(0)
+#     )  # Add batch dimension back
+#     return aligned_data
+
+
+# def transform_affinegrid_gridsample(
+#     fixed_data, moving_data, fixed_affine, moving_affine, registration_affine
+# ):
+
+#     def _build_rescaling_matrix(input_ranges, output_ranges):
+#         """
+#         Constructs an augmented affine matrix for rescaling from arbitrary input ranges to arbitrary output ranges.
+
+#         Parameters:
+#         input_ranges (list of tuples): List of tuples [(a1, b1), (a2, b2), ..., (an, bn)] representing input ranges for each dimension.
+#         output_ranges (list of tuples): List of tuples [(c1, d1), (c2, d2), ..., (cn, dn)] representing output ranges for each dimension.
+
+#         Returns:
+#         torch.Tensor: Augmented affine matrix (1, n+1, n+1) for the transformation.
+#         """
+#         assert len(input_ranges) == len(
+#             output_ranges
+#         ), "Input and output ranges must have the same length"
+#         # assert len(input_ranges) == self.dim
+
+#         n = len(input_ranges)
+#         A = torch.zeros((n, n))
+#         B = torch.zeros(n)
+
+#         for i in range(n):
+#             a, b = input_ranges[i]
+#             c, d = output_ranges[i]
+
+#             # Compute the scale factor
+#             scale = (d - c) / (b - a)
+
+#             # Compute the translation factor
+#             translation = (c + d) / 2 - scale * (a + b) / 2
+
+#             # Fill in the diagonal of A
+#             A[i, i] = scale
+
+#             # Fill in the translation vector
+#             B[i] = translation
+
+#         # Construct the augmented affine matrix
+#         augmented_matrix = torch.eye(n + 1)
+#         augmented_matrix[:n, :n] = A
+#         augmented_matrix[:n, n] = B
+
+#         return augmented_matrix[None]  # Add batch dimension
+
+#     fixed_dims = fixed_data.shape[2:]
+#     moving_dims = moving_data.shape[2:]
+#     print(fixed_dims, moving_dims)
+#     rescale_norm2voxel = _build_rescaling_matrix(
+#         [(-1, 1) for _ in range(3)],
+#         [(-0.5, D - 0.5) for D in fixed_dims],
+#     ).to(fixed_data)
+#     rescale_voxel2norm = _build_rescaling_matrix(
+#         [(-0.5, D - 0.5) for D in moving_dims],
+#         [(-1, 1) for _ in range(3)],
+#     ).to(fixed_data)
+
+#     perm_mat = torch.eye(4).to(fixed_data)
+#     perm_mat = perm_mat[None, [0, 2, 1, 3], :]  # 012, 021, 102, 120, 201, 210
+
+#     # Calculate the overall transformation matrix from moving to fixed image space
+#     overall_affine = torch.bmm(rescale_voxel2norm, torch.inverse(moving_affine))
+#     overall_affine = torch.bmm(overall_affine, torch.inverse(registration_affine))
+#     overall_affine = torch.bmm(overall_affine, fixed_affine)
+#     overall_affine = torch.bmm(overall_affine, rescale_norm2voxel)
+
+#     overall_affine = torch.bmm(perm_mat, overall_affine)
+
+#     # Convert the overall affine matrix to the format required by affine_grid
+#     overall_affine_3x4 = overall_affine[
+#         :, :3, :
+#     ]  # Extract the 3x4 part of the 4x4 matrix
+
+#     # Create a grid of coordinates in the fixed image space
+#     grid = F.affine_grid(overall_affine_3x4, fixed_data.size(), align_corners=False)
+#     print(grid.shape)
+
+#     # Grid_sample orders the dimensions differently.
+#     # We need to reorder the 3-d points in each grid location...
+#     grid = grid.flip(dims=[-1])
+#     # ...as well as the grid itself.
+#     # grid = grid.permute(0, 3, 2, 1, 4)
+
+#     # Use grid_sample to interpolate the moving image at the transformed coordinates
+#     aligned_data = F.grid_sample(
+#         moving_data, grid, mode="bilinear", padding_mode="border", align_corners=False
+#     )
+#     return aligned_data

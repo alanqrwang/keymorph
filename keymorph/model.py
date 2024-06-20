@@ -16,7 +16,12 @@ from keymorph.layers import (
     CenterOfMass2d,
     CenterOfMass3d,
 )
-from keymorph.utils import str_or_float, rescale_intensity
+from keymorph.utils import (
+    str_or_float,
+    rescale_intensity,
+    convert_points_norm2voxel,
+    convert_points_voxel2norm,
+)
 
 
 class KeyMorph(nn.Module):
@@ -30,6 +35,7 @@ class KeyMorph(nn.Module):
         use_amp=False,
         use_checkpoint=False,
         weight_keypoints=None,
+        align_keypoints_in_real_world_coords=False,
     ):
         """KeyMorph pipeline in a single module. Used for training.
 
@@ -45,23 +51,20 @@ class KeyMorph(nn.Module):
         self.dim = dim
         if keypoint_layer == "com":
             if dim == 2:
-                self.keypoint_layer = CenterOfMass2d()
+                self.keypoint_layer = CenterOfMass2d(indexing="ij")
             else:
-                self.keypoint_layer = CenterOfMass3d()
+                self.keypoint_layer = CenterOfMass3d(indexing="ij")
         else:
             if dim == 2:
-                self.keypoint_layer = LinearRegressor2d()
+                self.keypoint_layer = LinearRegressor2d(num_keypoints * dim)
             else:
-                self.keypoint_layer = LinearRegressor3d()
+                self.keypoint_layer = LinearRegressor3d(num_keypoints * dim)
         self.max_train_keypoints = max_train_keypoints
         self.use_amp = use_amp
         self.use_checkpoint = use_checkpoint
 
         # Keypoint alignment module
         self.supported_transform_type = ["rigid", "affine", "tps"]
-        self.rigid_aligner = RigidKeypointAligner(self.dim)
-        self.affine_aligner = AffineKeypointAligner(self.dim)
-        self.tps_aligner = TPS(self.dim, use_checkpoint=self.use_checkpoint)
 
         # Weight keypoints
         assert weight_keypoints in [None, "variance", "power"]
@@ -69,6 +72,8 @@ class KeyMorph(nn.Module):
         if self.weight_keypoints == "variance":
             self.scales = nn.Parameter(torch.ones(num_keypoints))
             self.biases = nn.Parameter(torch.zeros(num_keypoints))
+
+        self.align_keypoints_in_real_world_coords = align_keypoints_in_real_world_coords
 
     def weight_by_variance(self, feat1, feat2):
         feat1, feat2 = F.relu(feat1), F.relu(feat2)
@@ -152,9 +157,7 @@ class KeyMorph(nn.Module):
 
         :return res: Dictionary of results
         """
-        start_time = time.time()
         return_aligned_points = kwargs["return_aligned_points"]
-
         if not isinstance(transform_type, (list, tuple)):
             transform_type = [transform_type]
         if self.training:
@@ -165,10 +168,21 @@ class KeyMorph(nn.Module):
             self.is_supported_transform_type(s) for s in transform_type
         ), "Invalid transform_type"
 
-        assert (
-            img_f.shape == img_m.shape
-        ), "Fixed and moving images must have same shape"
+        if self.align_keypoints_in_real_world_coords:
+            # TODO: fix this
+            assert all(
+                [t in ["rigid", "affine"] for t in transform_type]
+            ), "TPS alignment not supported in real world coordinates yet."
+            aff_f = kwargs["aff_f"]
+            aff_m = kwargs["aff_m"]
+        else:
+            aff_f = None
+            aff_m = None
+
         assert img_f.shape[1] == 1, "Image dimension must be 1"
+        assert img_m.shape[1] == 1, "Image dimension must be 1"
+
+        start_time = time.time()
 
         with torch.amp.autocast(
             device_type="cuda", enabled=self.use_amp, dtype=torch.float16
@@ -188,6 +202,13 @@ class KeyMorph(nn.Module):
                 weights = None
 
         keypoint_extract_time = time.time() - start_time
+
+        if self.align_keypoints_in_real_world_coords:
+            # Convert points from normalized to real world coordinates
+            shape_m = torch.tensor(img_m.shape[2:]).to(img_m)
+            shape_f = torch.tensor(img_f.shape[2:]).to(img_f)
+            points_m = convert_points_norm2voxel(points_m, shape_m)
+            points_f = convert_points_norm2voxel(points_f, shape_f)
 
         # Dictionary of results
         result_dict = {}
@@ -220,20 +241,54 @@ class KeyMorph(nn.Module):
 
             # Align via keypoints
             if align_type == "rigid":
-                keypoint_aligner = self.rigid_aligner
+                keypoint_aligner = RigidKeypointAligner(
+                    points_m=points_m,
+                    points_f=points_f,
+                    w=weights,
+                    aff_f=aff_f,
+                    aff_m=aff_m,
+                    shape_f=img_f.shape,
+                    shape_m=img_m.shape,
+                    dim=self.dim,
+                    align_in_real_world_coords=self.align_keypoints_in_real_world_coords,
+                )
             elif align_type == "affine":
-                keypoint_aligner = self.affine_aligner
+                keypoint_aligner = AffineKeypointAligner(
+                    points_m=points_m,
+                    points_f=points_f,
+                    w=weights,
+                    aff_f=aff_f,
+                    aff_m=aff_m,
+                    shape_f=img_f.shape,
+                    shape_m=img_m.shape,
+                    dim=self.dim,
+                    align_in_real_world_coords=self.align_keypoints_in_real_world_coords,
+                )
             elif align_type == "tps":
-                keypoint_aligner = self.tps_aligner
+                keypoint_aligner = TPS(
+                    points_m=points_m,
+                    points_f=points_f,
+                    lmbda=tps_lmbda,
+                    w=weights,
+                    dim=self.dim,
+                    use_checkpoint=self.use_checkpoint,
+                )
 
-            grid = keypoint_aligner.grid_from_points(
-                points_m,
-                points_f,
+            # Get flow field
+            grid = keypoint_aligner.get_flow_field(
                 img_f.shape,
-                weights=weights,
-                lmbda=tps_lmbda,
                 compute_on_subgrids=False if self.training else True,
             )
+
+            if return_aligned_points:
+                points_a = keypoint_aligner.get_forward_transformed_points(points_m)
+
+            if self.align_keypoints_in_real_world_coords:
+                # Convert points from real world to normalized coordinates
+                points_m = convert_points_voxel2norm(points_m, shape_m)
+                points_f = convert_points_voxel2norm(points_f, shape_f)
+                if return_aligned_points:
+                    points_a = convert_points_voxel2norm(points_a, shape_f)
 
             align_time = time.time() - start_time
             res = {
@@ -247,13 +302,8 @@ class KeyMorph(nn.Module):
                 "time": keypoint_extract_time + align_time,
             }
             if align_type in ["rigid", "affine"]:
-                res["matrix"] = keypoint_aligner.get_matrix(
-                    points_m, points_f, w=weights
-                )
+                res["matrix"] = keypoint_aligner.transform_matrix
             if return_aligned_points:
-                points_a = keypoint_aligner.points_from_points(
-                    points_m, points_f, points_m, lmbda=tps_lmbda, weights=weights
-                )
                 res["points_a"] = points_a
             result_dict[align_type_str] = res
         return result_dict
