@@ -227,7 +227,8 @@ def sample_valid_coordinates_2d(x, num_points, point_space="norm"):
     eps = 0
     mask = x > eps
     indices = []
-    for _ in range(num_points):
+    for i in range(num_points):
+        print(f"{i+1}/{num_points}")
         hit = 0
         while hit == 0:
             sample = torch.zeros_like(x)
@@ -248,7 +249,8 @@ def sample_valid_coordinates_3d(x, num_points, point_space="norm"):
     eps = 1e-1
     mask = x > eps
     indices = []
-    for _ in range(num_points):
+    for i in range(num_points):
+        print(f"{i+1}/{num_points}")
         hit = 0
         while hit == 0:
             sample = torch.zeros_like(x)
