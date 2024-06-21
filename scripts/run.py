@@ -427,7 +427,7 @@ def main():
     # Checkpoint loading
     if args.resume_latest:
         args.resume = True
-        args.load_path = utils.get_latest_epoch_file(args.model_ckpt_dir)
+        args.load_path = utils.get_latest_epoch_file(args.model_ckpt_dir, args)
         if args.load_path is None:
             raise ValueError(
                 f"No checkpoint found to resume from: {args.model_ckpt_dir}"
@@ -503,7 +503,7 @@ def main():
         if args.resume:
             start_epoch = ckpt_state["epoch"] + 1
             # Load random keypoints from checkpoint
-            ref_points = state["ref_points"]
+            ref_points = ckpt_state["ref_points"]
         else:
             start_epoch = 1
             # Extract random keypoints from reference subject, which is any random training subject
@@ -516,7 +516,7 @@ def main():
                     args.num_keypoints,
                     args.dim,
                     point_space="voxel",
-                    indexing='ij',
+                    indexing="ij",
                 )
                 affine = ref_subject["img"]["affine"].float().to(ref_img.device)
                 voxel_shapes = torch.tensor(ref_img.shape[2:]).to(ref_img)
@@ -528,7 +528,7 @@ def main():
                     args.num_keypoints,
                     args.dim,
                     point_space="norm",
-                    indexing='ij',
+                    indexing="ij",
                 )
                 ref_points = ref_points * 2 - 1
             ref_points = ref_points.repeat(args.batch_size, 1, 1)
@@ -546,7 +546,7 @@ def main():
                     suptitle="Reference subject img and points",
                     projection=True,
                     point_space="norm",
-                    keypoint_indexing='ij',
+                    keypoint_indexing="ij",
                 )
 
         for epoch in range(start_epoch, args.epochs + 1):

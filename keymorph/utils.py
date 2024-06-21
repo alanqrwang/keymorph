@@ -296,12 +296,15 @@ def load_dict_from_json(json_path):
     return data
 
 
-def get_latest_epoch_file(directory_path):
+def get_latest_epoch_file(directory_path, args):
     max_epoch = -1
     latest_epoch_file = None
 
     # Compile a regular expression pattern to extract the epoch number
-    epoch_pattern = re.compile(r"epoch(\d+)_trained_model.pth.tar")
+    if args.run_mode == "pretrain":
+        epoch_pattern = re.compile(r"pretrained_epoch(\d+)_model\.pth\.tar")
+    else:
+        epoch_pattern = re.compile(r"epoch(\d+)_trained_model.pth.tar")
 
     # List all files in the given directory
     for filename in os.listdir(directory_path):
