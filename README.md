@@ -2,10 +2,10 @@
 
 KeyMorph is a deep learning-based image registration framework that relies on automatically extracting corresponding keypoints. 
 It supports unimodal/multimodal pairwise and groupwise registration using rigid, affine, or nonlinear transformations.
-
 This repository contains the code for KeyMorph, as well as example scripts for training your own KeyMorph model.
-As an example, it uses data from the [IXI dataset](https://brain-development.org/ixi-dataset/) to train and evaluate the model.
+<!-- As an example, it uses data from the [IXI dataset](https://brain-development.org/ixi-dataset/) to train and evaluate the model. -->
 
+### BrainMorph
 [BrainMorph](https://github.com/alanqrwang/brainmorph) is a foundation model based on the KeyMorph framework, trained on over 100,000 brain MR images at full resolution (256x256x256).
 The model is robust to normal and diseased brains, a variety of MRI modalities, and skullstripped and non-skullstripped images.
 Check out the dedicated repository for the latest updates and models!
@@ -19,18 +19,18 @@ Check out the dedicated repository for the latest updates and models!
 - [Feb 2022] [Conference paper](https://openreview.net/forum?id=OrNzjERFybh) published in MIDL 2021.
 
 ## Installation
-
-We recommend using pip to install keymorph:
-```bash
-pip install keymorph
-```
-
 To run scripts and/or contribute to keymorph, you should install from source:
 ```bash
 git clone https://github.com/alanqrwang/keymorph.git
 cd keymorph
 pip install -e .
 ```
+
+You can also install keymorph using using pip:
+```bash
+pip install keymorph
+```
+
 
 ### Requirements
 The keymorph package depends on the following requirements:
@@ -47,11 +47,6 @@ The keymorph package depends on the following requirements:
 - torchio>=0.19.6
 
 Running `pip install keymorph` or `pip install -e .` will automatically check for and install all of these requirements.
-
-## Downloading Trained Weights
-You can find all full-resolution, BrainMorph trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
-Half-resolution trained weights are under [Releases](https://github.com/alanqrwang/keymorph/releases).
-Download your preferred model(s) and put them in the folder specified by `--weights_dir` in the commands below.
 
 
 ## TLDR in code
@@ -182,6 +177,11 @@ This code has support for aligning keypoints in real-world space. To do this, si
 Note, this flag should not be used if:
 1. you are registering between different subjects
 2. you don't have the affine matrices (or you suspect they are inaccurate) for each volume
+
+## Downloading Trained Weights
+You can find all full-resolution, BrainMorph trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
+Half-resolution trained weights are under [Releases](https://github.com/alanqrwang/keymorph/releases).
+Download your preferred model(s) and put them in the folder specified by `--weights_dir` in the commands below.
 
 ## Registering brain volumes 
 ### BrainMorph
