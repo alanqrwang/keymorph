@@ -3,14 +3,16 @@ import torch
 import numpy as np
 import torchio as tio
 
-from keymorph import utils
-from keymorph.utils import (
-    align_img,
-    save_dict_as_json,
-)
+from keymorph.utils import align_img, one_hot_eval
 from keymorph.viz_tools import imshow_registration_2d, imshow_registration_3d
 from keymorph.augmentation import affine_augment
 import keymorph.loss_ops as loss_ops
+
+from scripts.script_utils import (
+    load_dict_from_json,
+    save_dict_as_json,
+    parse_test_aug,
+)
 
 
 def run_eval(
@@ -48,7 +50,7 @@ def run_eval(
         if args.early_stop_eval_subjects and i == args.early_stop_eval_subjects:
             break
         for aug in list_of_eval_augs:
-            param = utils.parse_test_aug(aug)
+            param = parse_test_aug(aug)
             mod1 = fixed["modality"][0]
             mod2 = moving["modality"][0]
             print(
@@ -77,8 +79,7 @@ def run_eval(
                     f"Found metrics for all alignments, skipping running registration..."
                 )
                 all_metrics = {
-                    k: utils.load_dict_from_json(v)
-                    for k, v in all_metrics_paths.items()
+                    k: load_dict_from_json(v) for k, v in all_metrics_paths.items()
                 }
 
             else:
@@ -96,8 +97,8 @@ def run_eval(
                         moving["seg"][tio.DATA],
                     )
                     # One-hot encode segmentations
-                    seg_f = utils.one_hot_eval(seg_f)
-                    seg_m = utils.one_hot_eval(seg_m)
+                    seg_f = one_hot_eval(seg_f)
+                    seg_m = one_hot_eval(seg_m)
 
                 # Move to device
                 img_f = img_f.float().to(args.device)
@@ -242,6 +243,34 @@ def run_eval(
                                 projection=True,
                                 save_path=None,
                             )
+                            # imshow_registration_3d(
+                            #     img_m[0, 0].cpu().detach().numpy(),
+                            #     img_f[0, 0].cpu().detach().numpy(),
+                            #     img_a[0, 0].cpu().detach().numpy(),
+                            #     (
+                            #         points_m[0].cpu().detach().numpy()
+                            #         if points_m is not None
+                            #         else None
+                            #     ),
+                            #     (
+                            #         points_f[0].cpu().detach().numpy()
+                            #         if points_f is not None
+                            #         else None
+                            #     ),
+                            #     (
+                            #         points_a[0].cpu().detach().numpy()
+                            #         if points_a is not None
+                            #         else None
+                            #     ),
+                            #     weights=(
+                            #         points_weights[0].cpu().detach().numpy()
+                            #         if points_weights is not None
+                            #         else None
+                            #     ),
+                            #     resize=(256, 256, 256),
+                            #     projection=True,
+                            #     save_path=None,
+                            # )
                             if args.seg_available:
                                 imshow_registration_3d(
                                     seg_m.argmax(1)[0].cpu().detach().numpy(),
@@ -435,6 +464,7 @@ def run_eval(
             for m in list_of_eval_metrics:
                 for align_type_str in list_of_eval_aligns:
                     metrics = all_metrics[align_type_str]
+                    print(test_metrics)
                     test_metrics[f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"].append(
                         metrics[m]
                     )

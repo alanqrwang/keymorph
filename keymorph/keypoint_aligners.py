@@ -6,7 +6,7 @@ from torch.utils import checkpoint
 from keymorph import utils
 
 
-class MatrixKeypointAligner(nn.Module):
+class AffineKeypointAligner(utils.AffineAligner):
     """Keypoint aligner for transformations that can be represented as a matrix.
 
     All keypoints must be passed in with matrix/image/voxel ordering (aka 'ij' indexing).
@@ -39,7 +39,6 @@ class MatrixKeypointAligner(nn.Module):
             shape_f: (n_batch, n_ch, L, W, D) Shape of the fixed image
             shape_m: (n_batch, n_ch, L, W, D) Shape of the moving image
         """
-        super().__init__()
         self.dim = dim
         self.align_in_real_world_coords = align_in_real_world_coords
         self.points_f = points_f
@@ -59,100 +58,60 @@ class MatrixKeypointAligner(nn.Module):
             # Convert voxel points to real-world points
             self.points_m = utils.convert_points_voxel2real(self.points_m, aff_m)
             self.points_f = utils.convert_points_voxel2real(self.points_f, aff_f)
+            affine_grid_space = "voxel"
+        else:
+            affine_grid_space = "norm"
 
         # Note we flip the order of the points here
-        self.inverse_transform_matrix = self._square(
+        inverse_transform_matrix = self._square(
             self.fit(self.points_f, self.points_m, w=w)
         ).to(points_m)
-        self.transform_matrix = torch.inverse(self.inverse_transform_matrix).to(
-            points_m
+        super().__init__(
+            inverse_matrix=inverse_transform_matrix,
+            dim=dim,
+            grid_space=affine_grid_space,
+            m_shape=self.shape_m,
         )
 
-    def _square(self, matrix):
-        square = torch.eye(self.dim + 1)[None]
-        square[:, : self.dim, : self.dim + 1] = matrix
-        return square
-
     def fit(self, x, y, w=None):
-        """Get matrix given point sets x (moving) and y (fixed).
-        For transformation y = A x + b, returns [A, b] concatenated (augmented) matrix.
         """
-        pass
+        Find A which is the solution to argmin_A \sum_i ||y_i - Ax_i||_2 = argmin_A ||Ax - y||_F
+        Computes the closed-form affine equation: A = y x^T (x x^T)^(-1).
 
-    def uniform_voxel_grid(self, grid_shape):
-        if self.dim == 2:
-            x = torch.arange(grid_shape[2])
-            y = torch.arange(grid_shape[3])
-            grid = torch.meshgrid(x, y, indexing="ij")
-        else:
-            x = torch.arange(grid_shape[2])
-            y = torch.arange(grid_shape[3])
-            z = torch.arange(grid_shape[4])
-            grid = torch.meshgrid(x, y, z, indexing="ij")
-        grid = torch.stack(grid, dim=-1).float()
-        return grid
-
-    def uniform_norm_grid(self, grid_shape):
-        if self.dim == 2:
-            x = torch.linspace(-1, 1, grid_shape[2])
-            y = torch.linspace(-1, 1, grid_shape[3])
-            grid = torch.meshgrid(x, y, indexing="ij")
-        else:
-            x = torch.linspace(-1, 1, grid_shape[2])
-            y = torch.linspace(-1, 1, grid_shape[3])
-            z = torch.linspace(-1, 1, grid_shape[4])
-            grid = torch.meshgrid(x, y, z, indexing="ij")
-        grid = torch.stack(grid, dim=-1).float()
-        return grid
-
-    def affine_grid(self, grid_shape):
-        """Create a grid of voxel coordinates with specified shape to be used in F.grid_sample().
+        If w provided, solves the weighted affine equation:
+          A = y diag(w) x^T  (x diag(w) x^T)^(-1).
+          See https://www.wikiwand.com/en/Weighted_least_squares.
 
         Args:
-            grid_shape (bs, 1, H, W) or (bs, 1, H, W, D): Shape of the grid to create
+          x, y: [n_batch, n_points, dim]
+          w: [n_batch, n_points]
+        Returns:
+          A: [n_batch, dim, dim+1]
         """
-        # Create grid of voxel coordinates where leftmost dimension varies first
-        if self.align_in_real_world_coords:
-            grid = self.uniform_voxel_grid(grid_shape)
+        # Take transpose as columns should be the points
+        x = x.permute(0, 2, 1).float()
+        y = y.permute(0, 2, 1).float()
+
+        if w is not None:
+            w = torch.diag_embed(w).float()
+
+        # Convert y to homogenous coordinates
+        one = torch.ones(x.shape[0], 1, x.shape[2]).to(x)
+        x = torch.cat([x, one], 1)
+
+        if w is not None:
+            out = torch.bmm(x, w)
+            out = torch.bmm(out, torch.transpose(x, -2, -1))
         else:
-            grid = self.uniform_norm_grid(grid_shape)
-
-        # Flatten the grid to (N x dim) array of voxel coordinates
-        grid_flat = (
-            grid.reshape(-1, self.dim).unsqueeze(0).to(self.points_f)
-        )  # Add batch dimension
-
-        moving_voxel_coords = self.get_inverse_transformed_points(grid_flat)
-
-        transformed_grid = moving_voxel_coords.reshape(1, *grid_shape[2:], self.dim)
-
-        if self.align_in_real_world_coords:
-            transformed_grid = utils.convert_flow_voxel2norm(
-                transformed_grid, self.shape_m[2:]
-            )
-
-        return transformed_grid
-
-    def get_flow_field(
-        self,
-        grid_shape,
-        **kwargs,
-    ):
-        """
-        If align_in_real_world_coords is False, we create the grid directly in [-1, 1] space.
-        If align_in_real_world_coords is True, we assume the points are in voxel coordinates.
-            Mathematically: y = A_f^-1 A A_m x = B x
-            But, F.grid_sample requires the inverse: B^-1 = A_m^-1 A^-1 A_f
-            Note that self.matrix already represents the inverse of A, because
-            we register the fixed keypoints to moving keypoints in fit().
-
-        Args:
-            grid_shape (bs, 1, H, W, D): Shape of the grid to create
-        """
-        grid = self.affine_grid(grid_shape)
-        # Flip because grid_sample expects 'xy' ordering.
-        # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
-        return grid.flip(-1)
+            out = torch.bmm(x, torch.transpose(x, -2, -1))
+        inv = torch.inverse(out)
+        if w is not None:
+            out = torch.bmm(w, torch.transpose(x, -2, -1))
+            out = torch.bmm(out, inv)
+        else:
+            out = torch.bmm(torch.transpose(x, -2, -1), inv)
+        out = torch.bmm(y, out)
+        return out
 
     def get_forward_transformed_points(self, points):
         """Transforms a set of points in moving space to fixed space using the fitted matrix.
@@ -161,16 +120,10 @@ class MatrixKeypointAligner(nn.Module):
         If align_in_real_world_coords is True, points must be in voxel coordinates, computes:
             p_f = A_f^-1 A A_m p_m.
         """
-        batch_size, num_points, _ = points.shape
-        transform_matrix = self.transform_matrix[:, :-1, :]
-
         if self.align_in_real_world_coords:
             points = utils.convert_points_voxel2real(points, self.aff_m)
 
-        # Convert to homogeneous coordinates
-        ones = torch.ones(batch_size, num_points, 1).to(points.device)
-        points = torch.cat([points, ones], dim=2)
-        points = torch.bmm(transform_matrix, points.permute(0, 2, 1)).permute(0, 2, 1)
+        points = super().get_forward_transformed_points(points)
 
         if self.align_in_real_world_coords:
             points = utils.convert_points_real2voxel(points, self.aff_f)
@@ -183,25 +136,18 @@ class MatrixKeypointAligner(nn.Module):
         If align_in_real_world_coords is True, points must be in voxel coordinates, computes:
             p_m = A_m^-1 A^-1 A_f p_f.
         """
-        batch_size, num_points, _ = points.shape
-        transform_matrix = self.inverse_transform_matrix[:, :-1, :]
-
         # Convert voxel coordinates to real-world coordinates in the fixed image space
         if self.align_in_real_world_coords:
             points = utils.convert_points_voxel2real(points, self.aff_f)
 
-        # Transform real-world coordinates to the moving image space using the registration affine
-        # Convert to homogeneous coordinates
-        ones = torch.ones(batch_size, num_points, 1).to(points.device)
-        points = torch.cat([points, ones], dim=2)
-        points = torch.bmm(transform_matrix, points.permute(0, 2, 1)).permute(0, 2, 1)
+        points = super().get_inverse_transformed_points(points)
 
         if self.align_in_real_world_coords:
             points = utils.convert_points_real2voxel(points, self.aff_m)
         return points
 
 
-class RigidKeypointAligner(MatrixKeypointAligner):
+class RigidKeypointAligner(AffineKeypointAligner):
     def fit(self, p1, p2, w=None):
         """
         Find R and T which is the solution to argmin_{R, T} \sum_i ||p2_i - (R * p1_i + T)||_2
@@ -265,48 +211,6 @@ class RigidKeypointAligner(MatrixKeypointAligner):
         # Create augmented matrix
         aug_mat = torch.cat([R, T], axis=-1)
         return aug_mat
-
-
-class AffineKeypointAligner(MatrixKeypointAligner):
-    def fit(self, x, y, w=None):
-        """
-        Find A which is the solution to argmin_A \sum_i ||y_i - Ax_i||_2 = argmin_A ||Ax - y||_F
-        Computes the closed-form affine equation: A = y x^T (x x^T)^(-1).
-
-        If w provided, solves the weighted affine equation:
-          A = y diag(w) x^T  (x diag(w) x^T)^(-1).
-          See https://www.wikiwand.com/en/Weighted_least_squares.
-
-        Args:
-          x, y: [n_batch, n_points, dim]
-          w: [n_batch, n_points]
-        Returns:
-          A: [n_batch, dim, dim+1]
-        """
-        # Take transpose as columns should be the points
-        x = x.permute(0, 2, 1).float()
-        y = y.permute(0, 2, 1).float()
-
-        if w is not None:
-            w = torch.diag_embed(w).float()
-
-        # Convert y to homogenous coordinates
-        one = torch.ones(x.shape[0], 1, x.shape[2]).to(x)
-        x = torch.cat([x, one], 1)
-
-        if w is not None:
-            out = torch.bmm(x, w)
-            out = torch.bmm(out, torch.transpose(x, -2, -1))
-        else:
-            out = torch.bmm(x, torch.transpose(x, -2, -1))
-        inv = torch.inverse(out)
-        if w is not None:
-            out = torch.bmm(w, torch.transpose(x, -2, -1))
-            out = torch.bmm(out, inv)
-        else:
-            out = torch.bmm(torch.transpose(x, -2, -1), inv)
-        out = torch.bmm(y, out)
-        return out
 
 
 class TPS(nn.Module):

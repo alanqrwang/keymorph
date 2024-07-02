@@ -9,22 +9,24 @@ import wandb
 import torchio as tio
 import json
 from copy import deepcopy
-from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 
+from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from keymorph.net import ConvNet
 from keymorph.model import KeyMorph
-from keymorph import utils
-from keymorph.utils import (
-    ParseKwargs,
-    initialize_wandb,
-    save_dict_as_json,
-)
+from keymorph import utils as keymorph_utils
 from keymorph.viz_tools import imshow_img_and_points_3d
+
 from dataset import csv_dataset, ixi_dataset
 import scripts.hyperparameters as hps
 from scripts.train import run_train
 from scripts.pretrain import run_pretrain
 from scripts.pairwise_register_eval import run_eval
+from scripts import script_utils
+from scripts.script_utils import (
+    ParseKwargs,
+    initialize_wandb,
+    save_dict_as_json,
+)
 
 
 def parse_args():
@@ -389,7 +391,7 @@ def get_model(args):
         align_keypoints_in_real_world_coords=args.align_keypoints_in_real_world_coords,
     )
     registration_model.to(args.device)
-    utils.summary(registration_model)
+    script_utils.summary(registration_model)
     return registration_model
 
 
@@ -427,14 +429,14 @@ def main():
     # Checkpoint loading
     if args.resume_latest:
         args.resume = True
-        args.load_path = utils.get_latest_epoch_file(args.model_ckpt_dir, args)
+        args.load_path = script_utils.get_latest_epoch_file(args.model_ckpt_dir, args)
         if args.load_path is None:
             raise ValueError(
                 f"No checkpoint found to resume from: {args.model_ckpt_dir}"
             )
     if args.load_path is not None:
         print(f"Loading checkpoint from {args.load_path}")
-        ckpt_state, registration_model, optimizer = utils.load_checkpoint(
+        ckpt_state, registration_model, optimizer = script_utils.load_checkpoint(
             args.load_path,
             registration_model,
             optimizer,
@@ -511,7 +513,7 @@ def main():
             ref_img = ref_subject["img"][tio.DATA].float()
             print("sampling random keypoints...")
             if args.align_keypoints_in_real_world_coords:
-                ref_points = utils.sample_valid_coordinates(
+                ref_points = keymorph_utils.sample_valid_coordinates(
                     ref_img,
                     args.num_keypoints,
                     args.dim,
@@ -520,10 +522,12 @@ def main():
                 )
                 affine = ref_subject["img"]["affine"].float().to(ref_img.device)
                 voxel_shapes = torch.tensor(ref_img.shape[2:]).to(ref_img)
-                ref_points = utils.convert_points_voxel2real(ref_points, affine)
+                ref_points = keymorph_utils.convert_points_voxel2real(
+                    ref_points, affine
+                )
 
             else:
-                ref_points = utils.sample_valid_coordinates(
+                ref_points = keymorph_utils.sample_valid_coordinates(
                     ref_img,
                     args.num_keypoints,
                     args.dim,
@@ -535,7 +539,7 @@ def main():
             ref_subject["points"] = ref_points
             if args.visualize:
                 if args.align_keypoints_in_real_world_coords:
-                    ref_points_viz = utils.convert_points_real2norm(
+                    ref_points_viz = keymorph_utils.convert_points_real2norm(
                         ref_points, affine, voxel_shapes
                     )
                 else:

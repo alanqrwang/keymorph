@@ -1,17 +1,14 @@
-import re
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-import math
 import numpy as np
-from collections import defaultdict
-import os
-import argparse
-import json
 
-try:
-    import wandb
-except ImportError as e:
-    pass
+
+def str_or_float(x):
+    try:
+        return float(x)
+    except ValueError:
+        return x
 
 
 def align_img(grid, x, mode="bilinear"):
@@ -22,17 +19,6 @@ def align_img(grid, x, mode="bilinear"):
         padding_mode="border",
         align_corners=False,
     )
-
-
-# def align_img_elastix(transform_parameters, x):
-#     """x: (dim1, dim2, dim3) or (dim1, dim2)
-#     Returns: (dim1, dim2, dim3) or (dim1, dim2)"""
-#     x = x.cpu().detach().numpy().astype(np.float32)
-#     x = itk.image_view_from_array(x)
-#     transform_parameters.SetParameter("FinalBSplineInterpolationOrder", "0")
-#     result_image = itk.transformix_filter(x, transform_parameters)
-#     res = torch.tensor(itk.array_view_from_image(result_image))
-#     return res
 
 
 def displacement2pytorchflow(displacement_field):
@@ -108,101 +94,6 @@ def rescale_intensity(array, out_range=(0, 1), percentiles=(0, 100)):
     return array
 
 
-def parse_test_mod(mod):
-    if isinstance(mod, str):
-        mod1, mod2 = mod.split("_")
-    else:
-        mod1, mod2 = mod
-    return mod1, mod2
-
-
-def parse_test_aug(aug):
-    if "rot" in aug:
-        if aug == "rot0":
-            rot_aug = 0
-        elif aug == "rot45":
-            rot_aug = math.pi / 4
-        elif aug == "rot90":
-            rot_aug = math.pi / 2
-        elif aug == "rot135":
-            rot_aug = 3 * math.pi / 4
-        elif aug == "rot180":
-            rot_aug = math.pi
-        aug_param = (0, 0, rot_aug, 0)
-    else:
-        raise NotImplementedError()
-
-    return aug_param
-
-
-def str_or_float(x):
-    try:
-        return float(x)
-    except ValueError:
-        return x
-
-
-def aggregate_dicts(dicts):
-    result = defaultdict(list)
-    for d in dicts:
-        for k, v in d.items():
-            result[k].append(v)
-    return {k: sum(v) / len(v) for k, v in result.items()}
-
-
-def initialize_wandb(config):
-    if config.wandb_api_key_path is not None:
-        with open(config.wandb_api_key_path, "r") as f:
-            os.environ["WANDB_API_KEY"] = f.read().strip()
-
-    wandb.init(**config.wandb_kwargs)
-    wandb.config.update(config)
-
-
-def load_checkpoint(
-    checkpoint_path, model, optimizer=None, scheduler=None, device="cpu"
-):
-    state = torch.load(checkpoint_path, map_location=torch.device(device))
-    state_dict = state["state_dict"]
-
-    # Sometimes the model is saved with "backbone" prefix
-    new_state_dict = {
-        key.replace(".backbone", ""): value for key, value in state_dict.items()
-    }
-    missing_keys, _ = model.backbone.load_state_dict(new_state_dict, strict=True)
-    print("Missing keys when loading checkpoint: ", missing_keys)
-
-    res = (state, model)
-
-    if optimizer:
-        optimizer.load_state_dict(state["optimizer"])
-        res += (optimizer,)
-    if scheduler:
-        scheduler.load_state_dict(state["scheduler"])
-        res += (scheduler,)
-
-    return res
-
-
-# Taken from https://sumit-ghosh.com/articles/parsing-dictionary-key-value-pairs-kwargs-argparse-python/
-class ParseKwargs(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        setattr(namespace, self.dest, dict())
-        for value in values:
-            key, value_str = value.split("=")
-            if value_str.replace("-", "").isnumeric():
-                processed_val = int(value_str)
-            elif value_str.replace("-", "").replace(".", "").isnumeric():
-                processed_val = float(value_str)
-            elif value_str in ["True", "true"]:
-                processed_val = True
-            elif value_str in ["False", "false"]:
-                processed_val = False
-            else:
-                processed_val = value_str
-            getattr(namespace, self.dest)[key] = processed_val
-
-
 def sample_valid_coordinates(x, num_points, dim, point_space="norm", indexing="xy"):
     """
     x: input img, (1,1,dim1,dim2) or (1,1,dim1,dim2,dim3)
@@ -268,60 +159,6 @@ def sample_valid_coordinates_3d(x, num_points, point_space="norm"):
                     indices.append([dim3, dim2, dim1])
 
     return torch.tensor(indices).view(1, num_points, 3)
-
-
-def summary(network):
-    """Print model summary."""
-    print("")
-    print("Model Summary")
-    print("---------------------------------------------------------------")
-    for name, _ in network.named_parameters():
-        print(name)
-    print(
-        "Total parameters:",
-        sum(p.numel() for p in network.parameters() if p.requires_grad),
-    )
-    print("---------------------------------------------------------------")
-    print("")
-
-
-def save_dict_as_json(dict, save_path):
-    with open(save_path, "w") as outfile:
-        json.dump(dict, outfile, sort_keys=True, indent=4)
-
-
-def load_dict_from_json(json_path):
-    with open(json_path, "r") as file:
-        data = json.load(file)
-    return data
-
-
-def get_latest_epoch_file(directory_path, args):
-    max_epoch = -1
-    latest_epoch_file = None
-
-    # Compile a regular expression pattern to extract the epoch number
-    if args.run_mode == "pretrain":
-        epoch_pattern = re.compile(r"pretrained_epoch(\d+)_model\.pth\.tar")
-    else:
-        epoch_pattern = re.compile(r"epoch(\d+)_trained_model.pth.tar")
-
-    # List all files in the given directory
-    for filename in os.listdir(directory_path):
-        match = epoch_pattern.match(filename)
-        if match:
-            # Extract the epoch number and convert it to an integer
-            epoch_num = int(match.group(1))
-            # Update the max_epoch and latest_epoch_file if this file has a larger epoch number
-            if epoch_num > max_epoch:
-                max_epoch = epoch_num
-                latest_epoch_file = filename
-
-    # Return the path of the file with the largest epoch number
-    if latest_epoch_file is not None:
-        return os.path.join(directory_path, latest_epoch_file)
-    else:
-        return None
 
 
 def one_hot_eval(asegs):
@@ -531,6 +368,163 @@ def convert_flow_voxel2norm(flow, dim_sizes):
         flow[..., i] = 2 * (flow[..., i] + 0.5) / dim_size - 1
 
     return flow
+
+
+class AffineAligner(nn.Module):
+    """Keypoint aligner for transformations that can be represented as a matrix.
+
+    All keypoints must be passed in with matrix/image/voxel ordering (aka 'ij' indexing).
+    When indexing into a 3D volume, volume[points[0], points[1], points[2]]
+    In a flattened grid, the first dimension varies the fastest.
+    """
+
+    def __init__(
+        self,
+        matrix=None,
+        inverse_matrix=None,
+        dim=3,
+        grid_space="norm",
+        m_shape=None,
+    ):
+        """
+        Args:
+            One of matrix or inverse_matrix must be provided
+            dim: Dimensionality of the points (2 or 3)
+        """
+        super().__init__()
+        self.dim = dim
+        assert grid_space in ["norm", "voxel"]
+        self.grid_space = grid_space
+        if grid_space == "voxel":
+            assert m_shape is not None, "Need m_shape for voxel space"
+            self.m_shape = m_shape
+        if matrix is not None and inverse_matrix is None:
+            self.transform_matrix = matrix
+            self.inverse_transform_matrix = torch.inverse(matrix)
+        elif matrix is None and inverse_matrix is not None:
+            self.inverse_transform_matrix = inverse_matrix
+            self.transform_matrix = torch.inverse(inverse_matrix)
+        else:
+            raise ValueError("Only one of matrix or inverse_matrix should be provided")
+
+    def _square(self, matrix):
+        square = torch.eye(self.dim + 1)[None]
+        square[:, : self.dim, : self.dim + 1] = matrix
+        return square
+
+    def uniform_voxel_grid(self, grid_shape):
+        if self.dim == 2:
+            x = torch.arange(grid_shape[2])
+            y = torch.arange(grid_shape[3])
+            grid = torch.meshgrid(x, y, indexing="ij")
+        else:
+            x = torch.arange(grid_shape[2])
+            y = torch.arange(grid_shape[3])
+            z = torch.arange(grid_shape[4])
+            grid = torch.meshgrid(x, y, z, indexing="ij")
+        grid = torch.stack(grid, dim=-1).float()
+        return grid
+
+    def uniform_norm_grid(self, grid_shape):
+        if self.dim == 2:
+            x = torch.linspace(-1, 1, grid_shape[2])
+            y = torch.linspace(-1, 1, grid_shape[3])
+            grid = torch.meshgrid(x, y, indexing="ij")
+        else:
+            x = torch.linspace(-1, 1, grid_shape[2])
+            y = torch.linspace(-1, 1, grid_shape[3])
+            z = torch.linspace(-1, 1, grid_shape[4])
+            grid = torch.meshgrid(x, y, z, indexing="ij")
+        grid = torch.stack(grid, dim=-1).float()
+        return grid
+
+    def affine_grid(self, grid_shape):
+        """Create a grid of affine transformed coordinates with specified shape to be used in F.grid_sample().
+
+        Args:
+            grid_shape (bs, 1, H, W) or (bs, 1, H, W, D): Shape of the grid to create
+            m_shape: (bs, 1, H, W) or (bs, 1, H, W, D): Resolution of moving image being interpolating
+
+        Returns:
+            transformed_grid (bs, 1, H, W, D, dim): Affine grid in [-1, 1] space
+        """
+        # Create grid of voxel coordinates where leftmost dimension varies first
+        if self.grid_space == "voxel":
+            grid = self.uniform_voxel_grid(grid_shape)
+        else:
+            grid = self.uniform_norm_grid(grid_shape)
+
+        # Flatten the grid to (N x dim) array of voxel coordinates
+        grid_flat = (
+            grid.reshape(-1, self.dim).unsqueeze(0).to(self.transform_matrix)
+        )  # Add batch dimension
+
+        moving_voxel_coords = self.get_inverse_transformed_points(grid_flat)
+
+        transformed_grid = moving_voxel_coords.reshape(1, *grid_shape[2:], self.dim)
+
+        if self.grid_space == "voxel":
+            transformed_grid = convert_flow_voxel2norm(
+                transformed_grid, self.m_shape[2:]
+            )
+
+        return transformed_grid
+
+    def get_flow_field(
+        self,
+        grid_shape,
+        **kwargs,
+    ):
+        """
+        If align_in_real_world_coords is False, we create the grid directly in [-1, 1] space.
+        If align_in_real_world_coords is True, we assume the points are in voxel coordinates.
+            Mathematically: y = A_f^-1 A A_m x = B x
+            But, F.grid_sample requires the inverse: B^-1 = A_m^-1 A^-1 A_f
+            Note that self.matrix already represents the inverse of A, because
+            we register the fixed keypoints to moving keypoints in fit().
+
+        Args:
+            grid_shape (bs, 1, H, W, D): Shape of the grid to create
+        """
+        grid = self.affine_grid(grid_shape)
+        # Flip because grid_sample expects 'xy' ordering.
+        # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
+        return grid.flip(-1)
+
+    def get_forward_transformed_points(self, points):
+        """Transforms a set of points in moving space to fixed space using the fitted matrix.
+        If align_in_real_world_coords is False, computes:
+            p_f = A p_m.
+        If align_in_real_world_coords is True, points must be in voxel coordinates, computes:
+            p_f = A_f^-1 A A_m p_m.
+        """
+        batch_size, num_points, _ = points.shape
+        transform_matrix = self.transform_matrix[:, :-1, :]
+
+        # Convert to homogeneous coordinates
+        ones = torch.ones(batch_size, num_points, 1).to(points.device)
+        points = torch.cat([points, ones], dim=2)
+        points = torch.bmm(transform_matrix, points.permute(0, 2, 1)).permute(0, 2, 1)
+
+        return points
+
+    def get_inverse_transformed_points(self, points):
+        """Transforms a set of points in fixed space to moving space using the fitted matrix.
+        If align_in_real_world_coords is False, computes:
+            p_m = A p_f.
+        If align_in_real_world_coords is True, points must be in voxel coordinates, computes:
+            p_m = A_m^-1 A^-1 A_f p_f.
+        """
+        batch_size, num_points, _ = points.shape
+        transform_matrix = self.inverse_transform_matrix[:, :-1, :]
+
+        # Transform real-world coordinates to the moving image space using the registration affine
+        # Convert to homogeneous coordinates
+        ones = torch.ones(batch_size, num_points, 1).to(points.device)
+        points = torch.cat([points, ones], dim=2)
+        points = torch.bmm(transform_matrix, points.permute(0, 2, 1)).permute(0, 2, 1)
+
+        return points
 
 
 # import torch

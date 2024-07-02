@@ -5,12 +5,14 @@ import torchio as tio
 import time
 import torch.nn.functional as F
 
-from keymorph import utils
+from keymorph.utils import convert_points_norm2real, convert_points_real2norm
 from keymorph.augmentation import random_affine_augment
 from keymorph.viz_tools import (
     imshow_registration_2d,
     imshow_registration_3d,
 )
+
+from brainmorph.scripts.script_utils import aggregate_dicts
 
 
 def run_pretrain(loader, ref_subject, keymorph_model, optimizer, args):
@@ -66,7 +68,7 @@ def run_pretrain(loader, ref_subject, keymorph_model, optimizer, args):
                 points_a = keymorph_model.get_keypoints(augmented_img)
                 points_a = points_a.view(-1, args.num_keypoints, args.dim)
                 if args.align_keypoints_in_real_world_coords:
-                    points_a = utils.convert_points_norm2real(points_a, aff_f, shape_f)
+                    points_a = convert_points_norm2real(points_a, aff_f, shape_f)
                 loss = F.mse_loss(tgt_points, points_a)
 
         # Perform backward pass
@@ -98,13 +100,13 @@ def run_pretrain(loader, ref_subject, keymorph_model, optimizer, args):
                 .float()
                 .to(args.device)
             )
-            ref_points_viz = utils.convert_points_real2norm(
+            ref_points_viz = convert_points_real2norm(
                 ref_points, aff_f, tgt_voxel_shapes
             )
-            tgt_points_viz = utils.convert_points_real2norm(
+            tgt_points_viz = convert_points_real2norm(
                 tgt_points, tgt_affine, tgt_voxel_shapes
             )
-            pred_points_viz = utils.convert_points_real2norm(
+            pred_points_viz = convert_points_real2norm(
                 points_a, tgt_affine, tgt_voxel_shapes
             )
             if args.dim == 2:
@@ -134,4 +136,4 @@ def run_pretrain(loader, ref_subject, keymorph_model, optimizer, args):
                     ),
                 )
 
-    return utils.aggregate_dicts(res)
+    return aggregate_dicts(res)
