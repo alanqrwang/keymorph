@@ -253,79 +253,89 @@ def imshow_img_and_points_3d(
                 colors_12 = cmap(np.linspace(0, 1, len(points)))
                 colors_02 = cmap(np.linspace(0, 1, len(points)))
                 colors_01 = cmap(np.linspace(0, 1, len(points)))
+                plot_12, plot_02, plot_01 = True, True, True
 
             else:
                 start, stop = ind_12 - slab_thickness / 2, ind_12 + slab_thickness / 2
                 indices = (depth_12 > start).nonzero() and (depth_12 < stop).nonzero()
                 if len(indices[0]) == 0:
-                    raise ValueError(
-                        "No points in the slab, try increasing slab_thickness or set projection=True."
-                    )
-                points_12 = points_12[indices]
-                depth_12 = depth_12[indices]
-                weights_12 = weights[indices]
+                    plot_12 = False
+                else:
+                    plot_12 = True
+                    points_12 = points_12[indices]
+                    depth_12 = depth_12[indices]
+                    weights_12 = weights[indices]
 
                 start, stop = ind_02 - slab_thickness / 2, ind_02 + slab_thickness / 2
                 indices = (depth_02 > start).nonzero() and (depth_02 < stop).nonzero()
                 if len(indices[0]) == 0:
-                    raise ValueError(
-                        "No points in the slab, try increasing slab_thickness or set projection=True."
-                    )
-                points_02 = points_02[indices]
-                depth_02 = depth_02[indices]
-                weights_02 = weights[indices]
+                    plot_02 = False
+                else:
+                    plot_02 = True
+                    points_02 = points_02[indices]
+                    depth_02 = depth_02[indices]
+                    weights_02 = weights[indices]
 
                 start, stop = ind_01 - slab_thickness / 2, ind_01 + slab_thickness / 2
                 indices = (depth_01 > start).nonzero() and (depth_01 < stop).nonzero()
                 if len(indices[0]) == 0:
-                    raise ValueError(
-                        "No points in the slab, try increasing slab_thickness or set projection=True."
-                    )
-                points_01 = points_01[indices]
-                depth_01 = depth_01[indices]
-                weights_01 = weights[indices]
+                    plot_01 = False
+                else:
+                    plot_01 = True
+                    points_01 = points_01[indices]
+                    depth_01 = depth_01[indices]
+                    weights_01 = weights[indices]
 
                 # Set alpha to be proportional to weights
-                colors_12 = cmap(_normalize(depth_12))
-                colors_12[:, -1] = _normalize(weights_12)
-                colors_02 = cmap(_normalize(depth_02))
-                colors_02[:, -1] = _normalize(weights_02)
-                colors_01 = cmap(_normalize(depth_01))
-                colors_01[:, -1] = _normalize(weights_01)
+                if plot_12:
+                    colors_12 = cmap(_normalize(depth_12))
+                    colors_12[:, -1] = _normalize(weights_12)
+                if plot_02:
+                    colors_02 = cmap(_normalize(depth_02))
+                    colors_02[:, -1] = _normalize(weights_02)
+                if plot_01:
+                    colors_01 = cmap(_normalize(depth_01))
+                    colors_01[:, -1] = _normalize(weights_01)
 
             if rotate_90_deg != 0:
-                points_12 = rot90_points(
-                    points_12, rotate_90_deg, img_dims=img_12.shape
-                )
-                points_02 = rot90_points(
-                    points_02, rotate_90_deg, img_dims=img_02.shape
-                )
-                points_01 = rot90_points(
-                    points_01, rotate_90_deg, img_dims=img_01.shape
-                )
+                if plot_12:
+                    points_12 = rot90_points(
+                        points_12, rotate_90_deg, img_dims=img_12.shape
+                    )
+                if plot_02:
+                    points_02 = rot90_points(
+                        points_02, rotate_90_deg, img_dims=img_02.shape
+                    )
+                if plot_01:
+                    points_01 = rot90_points(
+                        points_01, rotate_90_deg, img_dims=img_01.shape
+                    )
 
             # Note: plt.scatter plots points in (x, y) order, which flips voxel ordering
-            axes[0].scatter(
-                points_12[:, 1],
-                points_12[:, 0],
-                marker=marker,
-                s=100,
-                color=colors_12,
-            )
-            axes[1].scatter(
-                points_02[:, 1],
-                points_02[:, 0],
-                marker=marker,
-                s=100,
-                color=colors_02,
-            )
-            axes[2].scatter(
-                points_01[:, 1],
-                points_01[:, 0],
-                marker=marker,
-                s=100,
-                color=colors_01,
-            )
+            if plot_12:
+                axes[0].scatter(
+                    points_12[:, 1],
+                    points_12[:, 0],
+                    marker=marker,
+                    s=100,
+                    color=colors_12,
+                )
+            if plot_02:
+                axes[1].scatter(
+                    points_02[:, 1],
+                    points_02[:, 0],
+                    marker=marker,
+                    s=100,
+                    color=colors_02,
+                )
+            if plot_01:
+                axes[2].scatter(
+                    points_01[:, 1],
+                    points_01[:, 0],
+                    marker=marker,
+                    s=100,
+                    color=colors_01,
+                )
     if suptitle:
         fig.suptitle(suptitle)
 
