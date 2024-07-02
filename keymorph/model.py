@@ -113,8 +113,6 @@ class KeyMorph(nn.Module):
 
     def get_keypoints(self, img, return_feat=False):
         """Get keypoints from an image"""
-        # Rescale inputs to [0, 1]
-        img = rescale_intensity(img)
         feat = self.backbone(img)
         points = self.keypoint_layer(feat)
         if return_feat:

@@ -7,12 +7,13 @@ from argparse import ArgumentParser
 import torchio as tio
 from pathlib import Path
 
+from keymorph.utils import rescale_intensity
 from keymorph.model import KeyMorph
-from keymorph import utils
 from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from keymorph.net import ConvNet
 from scripts.pairwise_register_eval import run_eval
 from scripts.groupwise_register_eval import run_group_eval
+from scripts.script_utils import summary, load_checkpoint
 
 
 def parse_args():
@@ -275,7 +276,7 @@ def get_model(args):
             weight_keypoints=args.weighted_kp_align,
         )
         registration_model.to(args.device)
-        utils.summary(registration_model)
+        summary(registration_model)
     elif args.registration_model == "itkelastix":
         from keymorph.baselines.itkelastix import ITKElastix
 
@@ -330,6 +331,7 @@ if __name__ == "__main__":
             [
                 tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
                 tio.Resize(128),
+                tio.Lambda(rescale_intensity, include=("img",)),
             ]
         )
     else:
@@ -340,6 +342,7 @@ if __name__ == "__main__":
                 tio.Resample("img"),
                 tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img",)),
                 tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg",)),
+                tio.Lambda(rescale_intensity, include=("img",)),
             ],
             include=("img", "seg"),
         )
@@ -366,7 +369,7 @@ if __name__ == "__main__":
         )
     if args.load_path is not None:
         print(f"Loading checkpoint from {args.load_path}")
-        ckpt_state, registration_model = utils.load_checkpoint(
+        ckpt_state, registration_model = load_checkpoint(
             args.load_path,
             registration_model,
             device=args.device,

@@ -1,11 +1,12 @@
 import torchio as tio
+from keymorph.utils import rescale_intensity
 
 TRANSFORM = tio.Compose(
     [
-        # tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
+        tio.ToCanonical(),
         tio.Mask(masking_method="mask"),
         tio.Resize(128),
-        # tio.Lambda(one_hot, include=("seg",)),
+        tio.Lambda(rescale_intensity),
     ]
 )
 
