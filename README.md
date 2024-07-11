@@ -172,7 +172,7 @@ In aforementioned cases, keypoints are extracted and aligned in a normalized `[-
 In cases where you are registering multiple views of the same subject in a series, you can align keypoints in *real-world space*.
 This reference space is commonly recorded for medical images and is encoded by an affine matrix associated with each volume, which maps from *voxel coordinates/indices* to real world space (which usually has units in millimeters).
 
-This code has support for aligning keypoints in real-world space. To do this, simply add the flag `--align_keypoints_in_real_world_space`. Currently, only rigid and affine transformations are supported for real-world space alignment, but TPS is coming soon!
+This code has support for aligning keypoints in real-world space. To do this, simply add the flag `--align_keypoints_in_real_world_space`.
 
 Note, this flag should not be used if:
 1. you are registering between different subjects

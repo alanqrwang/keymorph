@@ -167,10 +167,6 @@ class KeyMorph(nn.Module):
         ), "Invalid transform_type"
 
         if self.align_keypoints_in_real_world_coords:
-            # TODO: fix this
-            assert all(
-                [t in ["rigid", "affine"] for t in transform_type]
-            ), "TPS alignment not supported in real world coordinates yet."
             aff_f = kwargs["aff_f"]
             aff_m = kwargs["aff_m"]
         else:
