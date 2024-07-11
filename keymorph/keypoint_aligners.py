@@ -3,10 +3,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils import checkpoint
 
-from keymorph import utils
+from keymorph.utils import (
+    uniform_norm_grid,
+    uniform_voxel_grid,
+    convert_points_voxel2real,
+    convert_points_real2voxel,
+    convert_flow_voxel2norm,
+)
+from keymorph.transformations import AffineTransform
 
 
-class AffineKeypointAligner(utils.AffineAligner):
+class AffineKeypointAligner(AffineTransform):
     """Keypoint aligner for transformations that can be represented as a matrix.
 
     All keypoints must be passed in with matrix/image/voxel ordering (aka 'ij' indexing).
@@ -56,8 +63,8 @@ class AffineKeypointAligner(utils.AffineAligner):
             self.aff_m = aff_m
 
             # Convert voxel points to real-world points
-            self.points_m = utils.convert_points_voxel2real(self.points_m, aff_m)
-            self.points_f = utils.convert_points_voxel2real(self.points_f, aff_f)
+            self.points_m = convert_points_voxel2real(self.points_m, aff_m)
+            self.points_f = convert_points_voxel2real(self.points_f, aff_f)
             affine_grid_space = "voxel"
         else:
             affine_grid_space = "norm"
@@ -121,12 +128,12 @@ class AffineKeypointAligner(utils.AffineAligner):
             p_f = A_f^-1 A A_m p_m.
         """
         if self.align_in_real_world_coords:
-            points = utils.convert_points_voxel2real(points, self.aff_m)
+            points = convert_points_voxel2real(points, self.aff_m)
 
         points = super().get_forward_transformed_points(points)
 
         if self.align_in_real_world_coords:
-            points = utils.convert_points_real2voxel(points, self.aff_f)
+            points = convert_points_real2voxel(points, self.aff_f)
         return points
 
     def get_inverse_transformed_points(self, points):
@@ -138,12 +145,12 @@ class AffineKeypointAligner(utils.AffineAligner):
         """
         # Convert voxel coordinates to real-world coordinates in the fixed image space
         if self.align_in_real_world_coords:
-            points = utils.convert_points_voxel2real(points, self.aff_f)
+            points = convert_points_voxel2real(points, self.aff_f)
 
         points = super().get_inverse_transformed_points(points)
 
         if self.align_in_real_world_coords:
-            points = utils.convert_points_real2voxel(points, self.aff_m)
+            points = convert_points_real2voxel(points, self.aff_m)
         return points
 
 
@@ -225,12 +232,36 @@ class TPS(nn.Module):
         dim=3,
         num_subgrids=4,
         use_checkpoint=False,
+        align_in_real_world_coords=False,
+        aff_m=None,
+        aff_f=None,
+        shape_m=None,
+        shape_f=None,
     ):
         super().__init__()
         self.dim = dim
         self.num_subgrids = num_subgrids
         self.use_checkpoint = use_checkpoint
         self.lmbda = lmbda
+        self.weights = w
+        self.align_in_real_world_coords = align_in_real_world_coords
+        self.points_f = points_f
+        self.points_m = points_m
+        self.shape_f = shape_f
+        self.shape_m = shape_m
+        if align_in_real_world_coords:
+            assert aff_f is not None, "Need to provide aff_f for real-world coords"
+            assert aff_m is not None, "Need to provide aff_m for real-world coords"
+            assert shape_f is not None, "Need to provide shape_f for real-world coords"
+            assert shape_m is not None, "Need to provide shape_m for real-world coords"
+            assert points_f.shape[0] == 1, "Batch size must be 1 for real-world coords"
+            assert points_m.shape[0] == 1, "Batch size must be 1 for real-world coords"
+            self.aff_f = aff_f
+            self.aff_m = aff_m
+
+            # Convert voxel points to real-world points
+            self.points_m = convert_points_voxel2real(self.points_m, aff_m)
+            self.points_f = convert_points_voxel2real(self.points_f, aff_f)
 
         # Note we flip the order of the points here
         if use_checkpoint:
@@ -239,9 +270,6 @@ class TPS(nn.Module):
             )
         else:
             self.inverse_theta = self.fit(points_f, points_m, lmbda, weights=w)
-        self.points_m = points_m
-        self.points_f = points_f
-        self.weights = w
 
     def fit_dim(self, c, lmbda, w=None):
         """Assumes last dimension of c contains target points.
@@ -332,7 +360,49 @@ class TPS(nn.Module):
         else:
             return torch.stack((theta_dx, theta_dy), -1)
 
-    def tps(self, theta, ctrl, grid):
+    def get_flow_field(
+        self,
+        grid_shape,
+        compute_on_subgrids=False,
+    ):
+        if self.align_in_real_world_coords:
+            grid = uniform_voxel_grid(grid_shape).to(self.points_f)
+        else:
+            grid = uniform_norm_grid(grid_shape).to(self.points_f)
+
+        # Flatten the grid to (N x dim) array of voxel coordinates
+        grid_flat = grid.reshape(1, -1, self.dim).to(self.points_f)
+
+        if compute_on_subgrids:
+            transformed_grid = torch.zeros_like(grid_flat)
+            num_points = grid_flat.shape[1]
+            chunk_size = num_points // self.num_subgrids
+            # Loop through the tensor and process each chunk
+            for i in range(self.num_subgrids):
+                start_idx = i * chunk_size
+                end_idx = (
+                    start_idx + chunk_size if i < self.num_subgrids - 1 else num_points
+                )
+                subgrid_flat = grid_flat[:, start_idx:end_idx, :]
+                transformed_grid[:, start_idx:end_idx, :] = (
+                    self.get_inverse_transformed_points(subgrid_flat)
+                )
+
+        else:
+            transformed_grid = self.get_inverse_transformed_points(grid_flat)
+
+        transformed_grid = transformed_grid.reshape(1, *grid_shape[2:], self.dim)
+
+        if self.align_in_real_world_coords:
+            transformed_grid = convert_flow_voxel2norm(
+                transformed_grid, self.shape_m[2:]
+            )
+
+        # Flip because grid_sample expects 'xy' ordering.
+        # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
+        return transformed_grid.flip(-1)
+
+    def transform_points(self, theta, ctrl, points):
         """Evaluate the thin-plate-spline (TPS) surface at xy locations arranged in a grid.
         The TPS surface is a minimum bend interpolation surface defined by a set of control points.
         The function value for a x,y location is given by
@@ -356,166 +426,6 @@ class TPS(nn.Module):
         z: NxHxWxd tensor
           Function values at each grid location in dx and dy.
         """
-
-        if len(grid.shape) == 4:
-            N, H, W, _ = grid.size()
-            x = grid[..., 1:].unsqueeze(-2) - ctrl.unsqueeze(1).unsqueeze(1)
-        else:
-            N, D, H, W, _ = grid.size()
-            x = grid[..., 1:].unsqueeze(-2) - ctrl.unsqueeze(1).unsqueeze(1).unsqueeze(
-                1
-            )
-
-        T = ctrl.shape[1]
-
-        x = torch.sqrt((x**2).sum(-1))
-        x = TPS.u(x)
-
-        w, a = theta[:, : -(self.dim + 1), :], theta[:, -(self.dim + 1) :, :]
-
-        # x is NxHxWxT
-        # b contains dot product of each kernel weight and U(r)
-        b = torch.bmm(x.view(N, -1, T), w)
-        if len(grid.shape) == 4:
-            b = b.view(N, H, W, self.dim)
-        else:
-            b = b.view(N, D, H, W, self.dim)
-
-        # b is NxHxWxd
-        # z contains dot product of each affine term and polynomial terms.
-        z = torch.bmm(grid.reshape(N, -1, self.dim + 1), a)
-        if len(grid.shape) == 4:
-            z = z.view(N, H, W, self.dim) + b
-        else:
-            z = z.view(N, D, H, W, self.dim) + b
-        return z
-
-    def tps_grid(self, theta, ctrl, size, compute_on_subgrids=False):
-        """Compute a thin-plate-spline grid from parameters for sampling.
-
-        Params
-        ------
-        theta: Nx(T+3)xd tensor
-          Batch size N, T+3 model parameters for T control points in dx and dy.
-        ctrl: NxTxd tensor, or Txdim tensor
-          T control points in normalized image coordinates [0..1]
-        size: tuple
-          Output grid size as NxCxHxW. C unused. This defines the output image
-          size when sampling.
-        compute_on_subgrids: If true, compute the TPS grid on several subgrids
-            for memory efficiency. This is useful when the grid is large, but only
-            works for inference time. At training, gradients need to be persisted
-            for the entire grid, so computing on subgrids makes no difference.
-
-        Returns
-        -------
-        grid : NxHxWxd tensor
-          Grid suitable for sampling in pytorch containing source image
-          locations for each output pixel.
-        """
-        device = theta.device
-        if len(size) == 4:
-            N, _, H, W = size
-            grid_shape = (N, H, W, self.dim + 1)
-        else:
-            N, _, D, H, W = size
-            grid_shape = (N, D, H, W, self.dim + 1)
-        grid = self.uniform_grid_homogeneous(grid_shape).to(device)
-
-        if compute_on_subgrids:
-            output_shape = list(grid.shape)
-            output_shape[-1] -= 1
-            z = torch.zeros(output_shape).to(device)
-            size_x, size_y, size_z = grid.shape[1:-1]
-            assert size_x % self.num_subgrids == 0
-            assert size_y % self.num_subgrids == 0
-            assert size_z % self.num_subgrids == 0
-            subsize_x, subsize_y, subsize_z = (
-                size_x // self.num_subgrids,
-                size_y // self.num_subgrids,
-                size_z // self.num_subgrids,
-            )
-            for i in range(self.num_subgrids):
-                for j in range(self.num_subgrids):
-                    for k in range(self.num_subgrids):
-                        subgrid = grid[
-                            :,
-                            i * subsize_x : (i + 1) * subsize_x,
-                            j * subsize_y : (j + 1) * subsize_y,
-                            k * subsize_z : (k + 1) * subsize_z,
-                            :,
-                        ]
-                        if self.use_checkpoint:
-                            z[
-                                :,
-                                i * subsize_x : (i + 1) * subsize_x,
-                                j * subsize_y : (j + 1) * subsize_y,
-                                k * subsize_z : (k + 1) * subsize_z,
-                                :,
-                            ] = checkpoint.checkpoint(self.tps, theta, ctrl, subgrid)
-                        else:
-                            z[
-                                :,
-                                i * subsize_x : (i + 1) * subsize_x,
-                                j * subsize_y : (j + 1) * subsize_y,
-                                k * subsize_z : (k + 1) * subsize_z,
-                                :,
-                            ] = self.tps(theta, ctrl, subgrid)
-        else:
-            z = self.tps(theta, ctrl, grid)
-        return z
-
-    def uniform_grid_homogeneous(self, shape):
-        """Uniform grid coordinates in voxel ordering.
-
-        Params
-        ------
-        shape : tuple
-            NxHxWx3 defining the batch size, height and width dimension of the grid.
-            3 is for the number of dimensions (2) plus 1 for the homogeneous coordinate.
-        Returns
-        -------
-        grid: HxWx3 tensor
-            Grid coordinates over [-1,1] normalized image range.
-            Homogenous coordinate in first coordinate position.
-            After that, the second coordinate varies first, then
-            the third coordinate varies, then (optionally) the
-            fourth coordinate varies.
-        """
-
-        if self.dim == 2:
-            _, H, W, _ = shape
-            grid = torch.zeros(shape)
-            grid[..., 0] = 1.0
-            grid[..., 2] = torch.linspace(-1, 1, W)
-            grid[..., 1] = torch.linspace(-1, 1, H).unsqueeze(-1)
-        else:
-            _, D, H, W, _ = shape
-            grid = torch.zeros(shape)
-            grid[..., 0] = 1.0
-            grid[..., 3] = torch.linspace(-1, 1, W)
-            grid[..., 2] = torch.linspace(-1, 1, H).unsqueeze(-1)
-            grid[..., 1] = torch.linspace(-1, 1, D).unsqueeze(-1).unsqueeze(-1)
-        return grid
-
-    def get_flow_field(
-        self,
-        grid_shape,
-        compute_on_subgrids=False,
-    ):
-        # Use inverse_theta to get the flow field, where control points are the fixed points.
-        grid = self.tps_grid(
-            self.inverse_theta,
-            self.points_f,
-            grid_shape,
-            compute_on_subgrids=compute_on_subgrids,
-        )
-
-        # Flip because grid_sample expects 'xy' ordering.
-        # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
-        return grid.flip(-1)
-
-    def transform_points(self, theta, ctrl, points):
         weights, affine = theta[:, : -(self.dim + 1), :], theta[:, -(self.dim + 1) :, :]
         N, T, _ = ctrl.shape
         U = TPS.u(TPS.d(ctrl, points))
@@ -528,13 +438,37 @@ class TPS(nn.Module):
         z = torch.bmm(P.view(N, -1, self.dim + 1), affine)
         return z + b
 
+    def get_inverse_transformed_points(self, points):
+        # Fit the inverse version of TPS for transforming points
+        self.inverse_theta = self.fit(
+            self.points_f, self.points_m, self.lmbda, weights=self.weights
+        )
+
+        if self.align_in_real_world_coords:
+            points = convert_points_voxel2real(points, self.aff_f)
+
+        # Control points in forward case are moving points
+        points = self.transform_points(self.inverse_theta, self.points_f, points)
+
+        if self.align_in_real_world_coords:
+            points = convert_points_real2voxel(points, self.aff_m)
+        return points
+
     def get_forward_transformed_points(self, points):
         # Fit the forward version of TPS for transforming points
         self.theta = self.fit(
             self.points_m, self.points_f, self.lmbda, weights=self.weights
         )
+
+        if self.align_in_real_world_coords:
+            points = convert_points_voxel2real(points, self.aff_m)
+
         # Control points in forward case are moving points
-        return self.transform_points(self.theta, self.points_m, points)
+        points = self.transform_points(self.theta, self.points_m, points)
+
+        if self.align_in_real_world_coords:
+            points = convert_points_real2voxel(points, self.aff_f)
+        return points
 
 
 # class ApproximateTPS(TPS):

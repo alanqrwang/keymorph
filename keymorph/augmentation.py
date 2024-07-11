@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
-from keymorph.utils import AffineAligner, align_img
+
+from keymorph.utils import align_img
+from keymorph.transformations import AffineTransform
 
 
 class AffineDeformation2d:
@@ -157,12 +159,12 @@ class AffineDeformation3d:
 
     def deform_img(self, img, params, interp_mode="bilinear"):
         Ma = self.build_affine_matrix(len(img), params)
-        phi_inv = AffineAligner(matrix=Ma).get_flow_field(img.size())
+        phi_inv = AffineTransform(matrix=Ma).get_flow_field(img.size())
         return align_img(phi_inv, img, mode=interp_mode)
 
     def deform_points(self, points, params):
         Ma = self.build_affine_matrix(len(points), params)
-        return AffineAligner(matrix=Ma).get_forward_transformed_points(points)
+        return AffineTransform(matrix=Ma).get_forward_transformed_points(points)
 
     def __call__(self, img, **kwargs):
         params = kwargs["params"]

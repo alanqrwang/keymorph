@@ -268,6 +268,10 @@ class KeyMorph(nn.Module):
                     points_f=points_f,
                     lmbda=tps_lmbda,
                     w=weights,
+                    aff_f=aff_f,
+                    aff_m=aff_m,
+                    shape_f=img_f.shape,
+                    shape_m=img_m.shape,
                     dim=self.dim,
                     use_checkpoint=self.use_checkpoint,
                 )
