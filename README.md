@@ -174,9 +174,9 @@ This reference space is commonly recorded for medical images and is encoded by a
 
 This code has support for aligning keypoints in real-world space. To do this, simply add the flag `--align_keypoints_in_real_world_space`.
 
-Note, this flag should not be used if:
+<!-- Note, this flag should not be used if:
 1. you are registering between different subjects
-2. you don't have the affine matrices (or you suspect they are inaccurate) for each volume
+2. you don't have the affine matrices (or you suspect they are inaccurate) for each volume -->
 
 ## Downloading Trained Weights
 You can find all full-resolution, BrainMorph trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
