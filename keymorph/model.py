@@ -167,11 +167,12 @@ class KeyMorph(nn.Module):
         ), "Invalid transform_type"
 
         if self.align_keypoints_in_real_world_coords:
-            aff_f = kwargs["aff_f"]
-            aff_m = kwargs["aff_m"]
+            aff_f, aff_m = kwargs["aff_f"], kwargs["aff_m"]
+            shape_m = torch.tensor(img_m.shape[2:]).to(img_m)
+            shape_f = torch.tensor(img_f.shape[2:]).to(img_f)
         else:
-            aff_f = None
-            aff_m = None
+            aff_f, aff_m = None, None
+            shape_f, shape_m = None, None
 
         assert img_f.shape[1] == 1, "Image dimension must be 1"
         assert img_m.shape[1] == 1, "Image dimension must be 1"
@@ -196,13 +197,6 @@ class KeyMorph(nn.Module):
                 weights = None
 
         keypoint_extract_time = time.time() - start_time
-
-        if self.align_keypoints_in_real_world_coords:
-            # Convert points from normalized to real world coordinates
-            shape_m = torch.tensor(img_m.shape[2:]).to(img_m)
-            shape_f = torch.tensor(img_f.shape[2:]).to(img_f)
-            points_m = convert_points_norm2voxel(points_m, shape_m)
-            points_f = convert_points_norm2voxel(points_f, shape_f)
 
         # Dictionary of results
         result_dict = {}
@@ -241,8 +235,8 @@ class KeyMorph(nn.Module):
                     w=weights,
                     aff_f=aff_f,
                     aff_m=aff_m,
-                    shape_f=img_f.shape,
-                    shape_m=img_m.shape,
+                    shape_f=shape_f,
+                    shape_m=shape_m,
                     dim=self.dim,
                     align_in_real_world_coords=self.align_keypoints_in_real_world_coords,
                 )
@@ -253,8 +247,8 @@ class KeyMorph(nn.Module):
                     w=weights,
                     aff_f=aff_f,
                     aff_m=aff_m,
-                    shape_f=img_f.shape,
-                    shape_m=img_m.shape,
+                    shape_f=shape_f,
+                    shape_m=shape_m,
                     dim=self.dim,
                     align_in_real_world_coords=self.align_keypoints_in_real_world_coords,
                 )
@@ -266,10 +260,11 @@ class KeyMorph(nn.Module):
                     w=weights,
                     aff_f=aff_f,
                     aff_m=aff_m,
-                    shape_f=img_f.shape,
-                    shape_m=img_m.shape,
+                    shape_f=shape_f,
+                    shape_m=shape_m,
                     dim=self.dim,
                     use_checkpoint=self.use_checkpoint,
+                    align_in_real_world_coords=self.align_keypoints_in_real_world_coords,
                 )
 
             # Get flow field
@@ -280,13 +275,6 @@ class KeyMorph(nn.Module):
 
             if return_aligned_points:
                 points_a = keypoint_aligner.get_forward_transformed_points(points_m)
-
-            if self.align_keypoints_in_real_world_coords:
-                # Convert points from real world to normalized coordinates
-                points_m = convert_points_voxel2norm(points_m, shape_m)
-                points_f = convert_points_voxel2norm(points_f, shape_f)
-                if return_aligned_points:
-                    points_a = convert_points_voxel2norm(points_a, shape_f)
 
             align_time = time.time() - start_time
             res = {

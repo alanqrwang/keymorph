@@ -5,10 +5,8 @@ from torch.utils import checkpoint
 
 from keymorph.utils import (
     uniform_norm_grid,
-    uniform_voxel_grid,
-    convert_points_voxel2real,
-    convert_points_real2voxel,
-    convert_flow_voxel2norm,
+    convert_points_norm2real,
+    convert_points_real2norm,
 )
 from keymorph.transformations import AffineTransform
 
@@ -40,11 +38,11 @@ class AffineKeypointAligner(AffineTransform):
             w: Weights for the points (batch, num_points)
             dim: Dimensionality of the points (2 or 3)
             align_in_real_world_coords: if True, the points are aligned in real-world coordinates via its corresponding affine matrix.
-                If set, the affine matrices must be passed in and points must be passed in as voxel coordinates.
+                If set, the affine matrices and image shapes must be passed in.
             aff_m: Affine matrix for moving image
             aff_f: Affine matrix for fixed image
-            shape_f: (n_batch, n_ch, L, W, D) Shape of the fixed image
-            shape_m: (n_batch, n_ch, L, W, D) Shape of the moving image
+            shape_f: (L, W, D) Shape of the fixed image
+            shape_m: (L, W, D) Shape of the moving image
         """
         self.dim = dim
         self.align_in_real_world_coords = align_in_real_world_coords
@@ -63,11 +61,8 @@ class AffineKeypointAligner(AffineTransform):
             self.aff_m = aff_m
 
             # Convert voxel points to real-world points
-            self.points_m = convert_points_voxel2real(self.points_m, aff_m)
-            self.points_f = convert_points_voxel2real(self.points_f, aff_f)
-            affine_grid_space = "voxel"
-        else:
-            affine_grid_space = "norm"
+            self.points_m = convert_points_norm2real(self.points_m, aff_m, shape_m)
+            self.points_f = convert_points_norm2real(self.points_f, aff_f, shape_f)
 
         # Note we flip the order of the points here
         inverse_transform_matrix = self._square(
@@ -76,8 +71,6 @@ class AffineKeypointAligner(AffineTransform):
         super().__init__(
             inverse_matrix=inverse_transform_matrix,
             dim=dim,
-            grid_space=affine_grid_space,
-            m_shape=self.shape_m,
         )
 
     def fit(self, x, y, w=None):
@@ -128,12 +121,12 @@ class AffineKeypointAligner(AffineTransform):
             p_f = A_f^-1 A A_m p_m.
         """
         if self.align_in_real_world_coords:
-            points = convert_points_voxel2real(points, self.aff_m)
+            points = convert_points_norm2real(points, self.aff_m, self.shape_m)
 
         points = super().get_forward_transformed_points(points)
 
         if self.align_in_real_world_coords:
-            points = convert_points_real2voxel(points, self.aff_f)
+            points = convert_points_real2norm(points, self.aff_f, self.shape_f)
         return points
 
     def get_inverse_transformed_points(self, points):
@@ -145,12 +138,12 @@ class AffineKeypointAligner(AffineTransform):
         """
         # Convert voxel coordinates to real-world coordinates in the fixed image space
         if self.align_in_real_world_coords:
-            points = convert_points_voxel2real(points, self.aff_f)
+            points = convert_points_norm2real(points, self.aff_f, self.shape_f)
 
         points = super().get_inverse_transformed_points(points)
 
         if self.align_in_real_world_coords:
-            points = convert_points_real2voxel(points, self.aff_m)
+            points = convert_points_real2norm(points, self.aff_m, self.shape_m)
         return points
 
 
@@ -238,6 +231,15 @@ class TPS(nn.Module):
         shape_m=None,
         shape_f=None,
     ):
+        """
+        Arguments:
+            align_in_real_world_coords: if True, the points are aligned in real-world coordinates via its corresponding affine matrix.
+                If set, the affine matrices and image shapes must be passed in.
+            aff_m: Affine matrix for moving image
+            aff_f: Affine matrix for fixed image
+            shape_f: (L, W, D) Shape of the fixed image
+            shape_m: (L, W, D) Shape of the moving image
+        """
         super().__init__()
         self.dim = dim
         self.num_subgrids = num_subgrids
@@ -260,8 +262,8 @@ class TPS(nn.Module):
             self.aff_m = aff_m
 
             # Convert voxel points to real-world points
-            self.points_m = convert_points_voxel2real(self.points_m, aff_m)
-            self.points_f = convert_points_voxel2real(self.points_f, aff_f)
+            self.points_m = convert_points_norm2real(self.points_m, aff_m, shape_m)
+            self.points_f = convert_points_norm2real(self.points_f, aff_f, shape_f)
 
         # Note we flip the order of the points here
         if use_checkpoint:
@@ -365,10 +367,7 @@ class TPS(nn.Module):
         grid_shape,
         compute_on_subgrids=False,
     ):
-        if self.align_in_real_world_coords:
-            grid = uniform_voxel_grid(grid_shape).to(self.points_f)
-        else:
-            grid = uniform_norm_grid(grid_shape).to(self.points_f)
+        grid = uniform_norm_grid(grid_shape).to(self.points_f)
 
         # Flatten the grid to (N x dim) array of voxel coordinates
         grid_flat = grid.reshape(1, -1, self.dim).to(self.points_f)
@@ -392,11 +391,6 @@ class TPS(nn.Module):
             transformed_grid = self.get_inverse_transformed_points(grid_flat)
 
         transformed_grid = transformed_grid.reshape(1, *grid_shape[2:], self.dim)
-
-        if self.align_in_real_world_coords:
-            transformed_grid = convert_flow_voxel2norm(
-                transformed_grid, self.shape_m[2:]
-            )
 
         # Flip because grid_sample expects 'xy' ordering.
         # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
@@ -445,13 +439,13 @@ class TPS(nn.Module):
         )
 
         if self.align_in_real_world_coords:
-            points = convert_points_voxel2real(points, self.aff_f)
+            points = convert_points_norm2real(points, self.aff_f, self.shape_f)
 
         # Control points in forward case are moving points
         points = self.transform_points(self.inverse_theta, self.points_f, points)
 
         if self.align_in_real_world_coords:
-            points = convert_points_real2voxel(points, self.aff_m)
+            points = convert_points_real2norm(points, self.aff_m, self.shape_m)
         return points
 
     def get_forward_transformed_points(self, points):
@@ -461,13 +455,13 @@ class TPS(nn.Module):
         )
 
         if self.align_in_real_world_coords:
-            points = convert_points_voxel2real(points, self.aff_m)
+            points = convert_points_norm2real(points, self.aff_m, self.shape_m)
 
         # Control points in forward case are moving points
         points = self.transform_points(self.theta, self.points_m, points)
 
         if self.align_in_real_world_coords:
-            points = convert_points_real2voxel(points, self.aff_f)
+            points = convert_points_real2norm(points, self.aff_f, self.shape_f)
         return points
 
 

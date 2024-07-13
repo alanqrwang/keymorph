@@ -21,8 +21,6 @@ class AffineTransform(nn.Module):
         matrix=None,
         inverse_matrix=None,
         dim=3,
-        grid_space="norm",
-        m_shape=None,
     ):
         """
         Args:
@@ -31,11 +29,6 @@ class AffineTransform(nn.Module):
         """
         super().__init__()
         self.dim = dim
-        assert grid_space in ["norm", "voxel"]
-        self.grid_space = grid_space
-        if grid_space == "voxel":
-            assert m_shape is not None, "Need m_shape for voxel space"
-            self.m_shape = m_shape
         if matrix is not None and inverse_matrix is None:
             self.transform_matrix = matrix
             self.inverse_transform_matrix = torch.inverse(matrix)
@@ -60,11 +53,7 @@ class AffineTransform(nn.Module):
         Returns:
             transformed_grid (bs, 1, H, W, D, dim): Affine grid in [-1, 1] space
         """
-        # Create grid of voxel coordinates where leftmost dimension varies first
-        if self.grid_space == "voxel":
-            grid = uniform_voxel_grid(grid_shape, dim=self.dim)
-        else:
-            grid = uniform_norm_grid(grid_shape, dim=self.dim)
+        grid = uniform_norm_grid(grid_shape, dim=self.dim)
 
         # Flatten the grid to (N x dim) array of voxel coordinates
         grid_flat = (
@@ -74,11 +63,6 @@ class AffineTransform(nn.Module):
         moving_voxel_coords = self.get_inverse_transformed_points(grid_flat)
 
         transformed_grid = moving_voxel_coords.reshape(1, *grid_shape[2:], self.dim)
-
-        if self.grid_space == "voxel":
-            transformed_grid = convert_flow_voxel2norm(
-                transformed_grid, self.m_shape[2:]
-            )
 
         return transformed_grid
 
