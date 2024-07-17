@@ -7,10 +7,11 @@ from argparse import ArgumentParser
 import torchio as tio
 from pathlib import Path
 
-from keymorph.utils import rescale_intensity
 from keymorph.model import KeyMorph
 from keymorph.unet3d.model import UNet2D, UNet3D, TruncatedUNet3D
 from keymorph.net import ConvNet
+from dataset.utils import PairedDataset
+import scripts.hyperparameters as hps
 from scripts.pairwise_register_eval import run_eval
 from scripts.groupwise_register_eval import run_group_eval
 from scripts.script_utils import summary, load_checkpoint
@@ -31,7 +32,7 @@ def parse_args():
         help="Path to the folder where outputs are saved",
     )
     parser.add_argument(
-        "--load_path", type=str, default=None, help="Load checkpoint at .h5 path"
+        "--load_path", type=str, required=True, help="Load checkpoint at .h5 path"
     )
     parser.add_argument(
         "--weights_dir",
@@ -83,7 +84,7 @@ def parse_args():
     parser.add_argument(
         "--weighted_kp_align",
         type=str,
-        default="power",
+        default=None,
         choices=[None, "variance", "power"],
         help="Type of weighting to use for keypoints",
     )
@@ -100,6 +101,11 @@ def parse_args():
         nargs="*",
         default=("mse",),
         help="Metrics to report",
+    )
+    parser.add_argument(
+        "--align_keypoints_in_real_world_coords",
+        action="store_true",
+        help="Align keypoints in real world coordinates",
     )
 
     # Data
@@ -152,19 +158,24 @@ def parse_args():
     parser.add_argument(
         "--num_resolutions_for_itkelastix", type=int, default=4, help="Num resolutions"
     )
+    parser.add_argument(
+        "--skip_if_completed",
+        action="store_true",
+        help="If set, skips the registration if the output exists",
+    )
 
     args = parser.parse_args()
     return args
 
 
 def build_tio_subject(img_path, seg_path=None):
-    _dict = {"img": tio.ScalarImage(img_path)}
+    _dict = {"img": tio.ScalarImage(img_path), "modality": "na"}
     if seg_path is not None:
         _dict["seg"] = tio.LabelMap(seg_path)
     return tio.Subject(**_dict)
 
 
-def get_loaders(args):
+def get_loaders(args, transform=None):
     args.seg_available = args.moving_seg is not None and args.fixed_seg is not None
     if os.path.isfile(args.moving) and os.path.isfile(args.fixed):
         if args.seg_available:
@@ -190,26 +201,12 @@ def get_loaders(args):
                 fixed_seg_path = None
             fixed.append(build_tio_subject(fixed_path, fixed_seg_path))
 
-    # Build dataset
-    fixed_dataset = tio.SubjectsDataset(fixed, transform=transform)
-    moving_dataset = tio.SubjectsDataset(moving, transform=transform)
-    fixed_loader = DataLoader(
-        fixed_dataset,
+    paired_dataset = PairedDataset(list(zip(fixed, moving)), transform=transform)
+    return DataLoader(
+        paired_dataset,
         batch_size=args.batch_size,
         shuffle=False,
     )
-    moving_loader = DataLoader(
-        moving_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-    )
-    loaders = {"fixed": fixed_loader, "moving": moving_loader}
-    return loaders
-
-
-def get_foundation_weights_path(weights_dir, num_keypoints, num_levels):
-    template_name = "foundation-numkey{}-numlevels{}.pth.tar"
-    return os.path.join(weights_dir, template_name.format(num_keypoints, num_levels))
 
 
 def get_model(args):
@@ -274,9 +271,11 @@ def get_model(args):
             use_amp=args.use_amp,
             use_checkpoint=args.use_checkpoint,
             weight_keypoints=args.weighted_kp_align,
+            align_keypoints_in_real_world_coords=args.align_keypoints_in_real_world_coords,
         )
         registration_model.to(args.device)
         summary(registration_model)
+
     elif args.registration_model == "itkelastix":
         from keymorph.baselines.itkelastix import ITKElastix
 
@@ -326,32 +325,11 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
 
     # Data
-    if args.half_resolution:
-        transform = tio.Compose(
-            [
-                tio.Lambda(lambda x: x.permute(0, 1, 3, 2)),
-                tio.Resize(128),
-                tio.Lambda(rescale_intensity, include=("img",)),
-            ]
-        )
-    else:
-        transform = tio.Compose(
-            [
-                tio.ToCanonical(),
-                tio.Resample(1),
-                tio.Resample("img"),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("img",)),
-                tio.CropOrPad((256, 256, 256), padding_mode=0, include=("seg",)),
-                tio.Lambda(rescale_intensity, include=("img",)),
-            ],
-            include=("img", "seg"),
-        )
-
-    # Loaders
-    loaders = get_loaders(args)
+    transform = hps.TRANSFORM
+    print("Data transformations:\n", transform)
 
     # Evaluation parameters
-    list_of_eval_names = [("fixed", "moving")]
+    list_of_eval_names = [("na", "na")]
     list_of_eval_augs = ["rot0"]
 
     # Model
@@ -359,24 +337,17 @@ if __name__ == "__main__":
     registration_model.eval()
 
     # Checkpoint loading
-    if args.half_resolution and args.registration_model == "keymorph":
-        assert (
-            args.load_path is not None
-        ), "Must specify path for weights for half resolution models"
-    else:
-        args.load_path = get_foundation_weights_path(
-            args.weights_dir, args.num_keypoints, args.num_levels_for_unet
-        )
-    if args.load_path is not None:
-        print(f"Loading checkpoint from {args.load_path}")
-        ckpt_state, registration_model = load_checkpoint(
-            args.load_path,
-            registration_model,
-            device=args.device,
-        )
+    assert args.load_path is not None, "Must specify path for weights"
+    print(f"Loading checkpoint from {args.load_path}")
+    ckpt_state, registration_model = load_checkpoint(
+        args.load_path,
+        registration_model,
+        device=args.device,
+    )
 
     if args.groupwise:
-        print("running groupwise")
+        group_loader = get_loaders(args)
+        list_of_group_sizes = [8]
         run_group_eval(
             group_loader,
             registration_model,
@@ -389,6 +360,7 @@ if __name__ == "__main__":
             save_dir_prefix="group_eval",
         )
     else:
+        loaders = get_loaders(args, transform)
         run_eval(
             loaders,
             registration_model,

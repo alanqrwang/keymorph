@@ -159,7 +159,7 @@ def convert_points_norm2voxel(points, grid_sizes):
 def imshow_img_and_points_3d(
     img=None,
     all_points=None,
-    all_weights=None,
+    weights=None,
     projection=False,
     slab_thickness=10,
     axes=None,
@@ -183,7 +183,7 @@ def imshow_img_and_points_3d(
         point_space: 'norm' or 'voxel'. Points can be defined on:
             1. the normalized Pytorch grid, i.e. in [-1, 1]
             2. the voxel (image) grid, e.g. in [0, 256]
-        all_weights: (N,) or (1, N) or (2, N) array of weights
+        all_weights: (N,) array of weights
         projection: If True, plot all points keypoints in each view, regardless of depth.
             Color will be different for every point, but the same across views.
             If False, plot only points in a slab around the center of the image.
@@ -219,12 +219,10 @@ def imshow_img_and_points_3d(
             print("Converting points from [-1, 1] to image coordinates...")
             all_points = convert_points_norm2voxel(all_points, img_dims)
 
-        if all_weights is None:
-            all_weights = np.ones(all_points.shape[:2])
+        if weights is None:
+            weights = np.ones(len(all_points))
         else:
-            if len(all_weights.shape) == 1:
-                all_weights = all_weights[None]
-            all_weights = _normalize(all_weights)
+            weights = _normalize(weights)
 
     if axes is None:
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -244,7 +242,7 @@ def imshow_img_and_points_3d(
 
     if plot_points:
         cmap = matplotlib.colormaps["bwr"]
-        for points, weights, marker in zip(all_points, all_weights, markers):
+        for points, marker in zip(all_points, markers):
             points_12, depth_12 = points[:, [1, 2]], points[:, 0]
             points_02, depth_02 = points[:, [0, 2]], points[:, 1]
             points_01, depth_01 = points[:, [0, 1]], points[:, 2]

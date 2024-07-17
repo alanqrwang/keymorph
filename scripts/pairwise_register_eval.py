@@ -86,11 +86,11 @@ def run_eval(
                 img_f, img_m = (
                     fixed["img"][tio.DATA],
                     moving["img"][tio.DATA],
-                )  # Hacky fix
+                )
                 aff_f, aff_m = (
                     fixed["img"]["affine"],
                     moving["img"]["affine"],
-                )  # Hacky fix
+                )
                 if args.seg_available:
                     seg_f, seg_m = (
                         fixed["seg"][tio.DATA],
@@ -464,7 +464,6 @@ def run_eval(
             for m in list_of_eval_metrics:
                 for align_type_str in list_of_eval_aligns:
                     metrics = all_metrics[align_type_str]
-                    print(test_metrics)
                     test_metrics[f"{m}:{mod1}:{mod2}:{aug}:{align_type_str}"].append(
                         metrics[m]
                     )

@@ -178,28 +178,15 @@ This code has support for aligning keypoints in real-world space. To do this, si
 1. you are registering between different subjects
 2. you don't have the affine matrices (or you suspect they are inaccurate) for each volume -->
 
-## Downloading Trained Weights
-You can find all full-resolution, BrainMorph trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
-Half-resolution trained weights are under [Releases](https://github.com/alanqrwang/keymorph/releases).
-Download your preferred model(s) and put them in the folder specified by `--weights_dir` in the commands below.
 
-## Registering brain volumes 
-### BrainMorph
-WARNING: Please see the [BrainMorph repository](https://github.com/alanqrwang/brainmorph) for the latest updates and models! This is a legacy version of the code and is not guaranteed to be maintained.
-
-BrainMorph is trained on over 100,000 brain MR images at full resolution (256x256x256). 
-The script will automatically min-max normalize the images and resample to 1mm isotropic resolution.
-
-`--num_keypoints` and `num_levels_for_unet` will determine which model will be used to perform the registration.
-Make sure the corresponding weights are present in `--weights_dir`.
-`--num_keypoints` can be set to `128, 256, 512` and `--num_levels_for_unet` can be set to `4, 5, 6, 7`, respectively (corresponding to 'S', 'M', 'L', 'H' in the paper).
-
+## Registering volumes 
+For convenience, we provide a script `register.py` to perform registration given a path to a trained KeyMorph model. 
 To register a single pair of volumes:
-```
+```bash
 python scripts/register.py \
     --num_keypoints 256 \
     --num_levels_for_unet 4 \
-    --weights_dir ./weights/ \
+    --load_path /path/to/weights/ \
     --moving ./example_data/img_m/IXI_000001_0000.nii.gz \
     --fixed ./example_data/img_m/IXI_000002_0000.nii.gz \
     --moving_seg ./example_data/seg_m/IXI_000001_0000.nii.gz \
@@ -210,7 +197,7 @@ python scripts/register.py \
     --visualize
 ```
 
-Description of other important flags:
+Description of important flags:
 + `--moving` and `--fixed` are paths to moving and fixed images.
 + `--moving_seg` and `--fixed_seg` are optional, but are required if you want the script to report Dice scores. 
 + `--list_of_aligns` specifies the types of alignment to perform. Options are `rigid`, `affine` and `tps_<lambda>` (TPS with hyperparameter value equal to lambda). lambda=0 corresponds to exact keypoint alignment. lambda=10 is very similar to affine.
@@ -224,7 +211,7 @@ Note that the script expects corresponding image and segmentation pairs to have 
 python scripts/register.py \
     --num_keypoints 256 \
     --num_levels_for_unet 4 \
-    --weights_dir ./weights/ \
+    --load_path /path/to/weights/ \
     --moving ./example_data/img_m/ \
     --fixed ./example_data/img_m/ \
     --moving_seg ./example_data/seg_m/ \
@@ -241,35 +228,12 @@ python scripts/register.py \
     --groupwise \
     --num_keypoints 256 \
     --num_levels_for_unet 4 \
-    --weights_dir ./weights/ \
+    --load_path /path/to/weights/ \
     --moving ./example_data/ \
     --fixed ./example_data/ \
     --moving_seg ./example_data/ \
     --fixed_seg ./example_data/ \
     --list_of_aligns rigid affine tps_1 \
-    --list_of_metrics mse harddice \
-    --save_eval_to_disk \
-    --visualize
-```
-
-
-
-### IXI-trained, half-resolution models
-All other model weights are trained on half-resolution (128x128x128) on the (smaller) IXI dataset. 
-The script will automatically min-max normalize the images.
-To register two volumes with our best-performing model:
-
-```bash
-python scripts/register.py \
-    --half_resolution \
-    --num_keypoints 512 \
-    --backbone conv \
-    --moving ./example_data_half/img_m/IXI_001_128x128x128.nii.gz \
-    --fixed ./example_data_half/img_m/IXI_002_128x128x128.nii.gz \
-    --load_path ./weights/numkey512_tps0_dice.4760.h5 \
-    --moving_seg ./example_data_half/seg_m/IXI_001_128x128x128.nii.gz \
-    --fixed_seg ./example_data_half/seg_m/IXI_002_128x128x128.nii.gz \
-    --list_of_aligns affine tps_1 \
     --list_of_metrics mse harddice \
     --save_eval_to_disk \
     --visualize
@@ -331,6 +295,11 @@ python scripts/run.py \
     --load_path ./weights/best_trained_model.h5 \
     --save_eval_to_disk
 ```
+
+## Downloading Trained Weights
+You can find all full-resolution, BrainMorph trained weights [here](https://cornell.box.com/s/2mw4ey1u7waqrpylnxf49rck7u3nnr7i).
+IXI-trained, half-resolution weights are under [Releases](https://github.com/alanqrwang/keymorph/releases).
+Download your preferred model(s) and put them in the folder specified by `--weights_dir` in the commands below.
 
 ## Related Projects
 + For evaluation, we use [SynthSeg](https://github.com/BBillot/SynthSeg) to automatically segment different brain regions. Follow their repository for detailed intruction on how to use the model. 

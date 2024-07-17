@@ -16,12 +16,7 @@ from keymorph.layers import (
     CenterOfMass2d,
     CenterOfMass3d,
 )
-from keymorph.utils import (
-    str_or_float,
-    rescale_intensity,
-    convert_points_norm2voxel,
-    convert_points_voxel2norm,
-)
+from keymorph.utils import str_or_float
 
 
 class KeyMorph(nn.Module):
@@ -263,8 +258,8 @@ class KeyMorph(nn.Module):
                     shape_f=shape_f,
                     shape_m=shape_m,
                     dim=self.dim,
-                    use_checkpoint=self.use_checkpoint,
                     align_in_real_world_coords=self.align_keypoints_in_real_world_coords,
+                    use_checkpoint=self.use_checkpoint,
                 )
 
             # Get flow field

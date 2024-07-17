@@ -1,11 +1,7 @@
 import torch
 import torch.nn as nn
 
-from keymorph.utils import (
-    uniform_norm_grid,
-    uniform_voxel_grid,
-    convert_flow_voxel2norm,
-)
+from keymorph.utils import uniform_norm_grid
 
 
 class AffineTransform(nn.Module):
