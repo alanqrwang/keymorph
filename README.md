@@ -181,6 +181,7 @@ This code has support for aligning keypoints in real-world space. To do this, si
 
 ## Registering volumes 
 For convenience, we provide a script `register.py` to perform registration given a path to a trained KeyMorph model. 
+Importantly, you'll need to set the `TRANSFORM` variable in `hyperparameters.py`, which corresponds to the pre-processing/augmentations that you want to apply to your own data.
 To register a single pair of volumes:
 ```bash
 python scripts/register.py \
