@@ -220,7 +220,7 @@ def imshow_img_and_points_3d(
             all_points = convert_points_norm2voxel(all_points, img_dims)
 
         if weights is None:
-            weights = np.ones(len(all_points))
+            weights = np.ones(all_points.shape[1])
         else:
             weights = _normalize(weights)
 
