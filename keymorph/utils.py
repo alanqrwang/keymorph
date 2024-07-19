@@ -161,7 +161,7 @@ def sample_valid_coordinates_3d(x, num_points, point_space="norm"):
     return torch.tensor(indices).view(1, num_points, 3)
 
 
-def one_hot_eval(asegs):
+def one_hot_eval_synthseg(asegs):
     subset_regs = [
         [0, 24],  # Background and CSF
         [13, 52],  # Pallidum

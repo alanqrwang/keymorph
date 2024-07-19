@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import torchio as tio
 
-from keymorph.utils import align_img, one_hot_eval
+from keymorph.utils import align_img, one_hot
 from keymorph.viz_tools import imshow_registration_2d, imshow_registration_3d
 from keymorph.augmentation import affine_augment
 import keymorph.loss_ops as loss_ops
@@ -97,8 +97,8 @@ def run_eval(
                         moving["seg"][tio.DATA],
                     )
                     # One-hot encode segmentations
-                    seg_f = one_hot_eval(seg_f)
-                    seg_m = one_hot_eval(seg_m)
+                    seg_f = one_hot(seg_f)
+                    seg_m = one_hot(seg_m)
 
                 # Move to device
                 img_f = img_f.float().to(args.device)
