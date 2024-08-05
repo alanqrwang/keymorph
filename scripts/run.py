@@ -18,7 +18,7 @@ from keymorph.viz_tools import imshow_img_and_points_3d
 
 from dataset import csv_dataset, ixi_dataset
 import scripts.hyperparameters as hps
-from scripts.train import run_train
+from scripts.train import run_train, run_train_sameres
 from scripts.pretrain import run_pretrain
 from scripts.pairwise_register_eval import run_eval
 from scripts import script_utils
@@ -109,6 +109,12 @@ def parse_args():
         help="Use subgrids for computing TPS",
     )
     parser.add_argument(
+        "--max_train_tps_lmbda",
+        type=float,
+        default=10.0,
+        help="Maximum value for random TPS lambda sampling during training",
+    )
+    parser.add_argument(
         "--num_subgrids",
         type=int,
         default=4,
@@ -145,6 +151,11 @@ def parse_args():
         type=int,
         default=4,
         help="Number of levels for unet",
+    )
+    parser.add_argument(
+        "--train_same_resolution",
+        action="store_true",
+        help="Reshape fixed and moving to same resolution before passing into backbone",
     )
 
     # Data
@@ -389,6 +400,7 @@ def get_model(args):
         max_train_keypoints=args.max_train_keypoints,
         weight_keypoints=args.weighted_kp_align,
         align_keypoints_in_real_world_coords=args.align_keypoints_in_real_world_coords,
+        max_rand_tps_lmbda=args.max_train_tps_lmbda,
     )
     registration_model.to(args.device)
     script_utils.summary(registration_model)
@@ -603,12 +615,20 @@ def main():
         for epoch in range(start_epoch, args.epochs + 1):
             args.curr_epoch = epoch
             print(f"\nEpoch {epoch}/{args.epochs}")
-            epoch_stats = run_train(
-                loaders["train"],
-                registration_model,
-                optimizer,
-                args,
-            )
+            if args.train_same_resolution:
+                epoch_stats = run_train_sameres(
+                    loaders["train"],
+                    registration_model,
+                    optimizer,
+                    args,
+                )
+            else:
+                epoch_stats = run_train(
+                    loaders["train"],
+                    registration_model,
+                    optimizer,
+                    args,
+                )
             train_loss.append(epoch_stats["loss"])
 
             for metric_name, metric in epoch_stats.items():
