@@ -31,6 +31,7 @@ class KeyMorph(nn.Module):
         use_checkpoint=False,
         weight_keypoints=None,
         align_keypoints_in_real_world_coords=False,
+        max_rand_tps_lmbda=10,
     ):
         """KeyMorph pipeline in a single module. Used for training.
 
@@ -57,6 +58,7 @@ class KeyMorph(nn.Module):
         self.max_train_keypoints = max_train_keypoints
         self.use_amp = use_amp
         self.use_checkpoint = use_checkpoint
+        self.max_rand_tps_lmbda = max_rand_tps_lmbda
 
         # Keypoint alignment module
         self.supported_transform_type = ["rigid", "affine", "tps"]
@@ -114,19 +116,16 @@ class KeyMorph(nn.Module):
             return points, feat
         return points
 
-    @staticmethod
-    def _convert_tps_lmbda(num_samples, tps_lmbda):
+    def _convert_tps_lmbda(self, num_samples, tps_lmbda):
         """Return a tensor of size num_samples composed of specified tps_lmbda values. Values may be constant or sampled from a distribution.
 
         :param num_samples: int, Number of samples
         :param tps_lmbda: float or str
         """
         if tps_lmbda == "uniform":
-            lmbda = torch.rand(num_samples) * 10
-        elif tps_lmbda == "lognormal":
-            lmbda = torch.tensor(np.random.lognormal(size=num_samples))
+            lmbda = torch.rand(num_samples) * self.max_rand_tps_lmbda
         elif tps_lmbda == "loguniform":
-            a, b = 1e-6, 10
+            a, b = 1e-6, self.max_rand_tps_lmbda
             lmbda = torch.tensor(loguniform.rvs(a, b, size=num_samples))
         else:
             lmbda = torch.tensor(tps_lmbda).repeat(num_samples)
