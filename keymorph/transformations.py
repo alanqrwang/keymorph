@@ -5,12 +5,7 @@ from keymorph.utils import uniform_norm_grid
 
 
 class AffineTransform(nn.Module):
-    """Affine transformations.
-
-    All keypoints must be passed in with matrix/image/voxel ordering (aka 'ij' indexing).
-    When indexing into a 3D volume, volume[points[0], points[1], points[2]]
-    In a flattened grid, the first dimension varies the fastest.
-    """
+    """Affine transformations."""
 
     def __init__(
         self,

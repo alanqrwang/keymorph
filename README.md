@@ -224,6 +224,13 @@ python scripts/register.py \
 ```
 
 ### Groupwise registration
+KeyMorph supports groupwise registration, where all images are registered to a common reference space defined by the mean keypoints of all images.
+For more details on the groupwise algorithm, see the [paper](https://arxiv.org/abs/2405.14019v2).
+To perform groupwise registration, simply add the `--groupwise` flag.
+The script will look in the directory specified by `--moving` for a subdirectory `img_m` for all images to groupwise register.
+Segmentations are optional, but if provided, the script will compute Dice scores; they must be placed as a subdirectory `seg_m`.
+Note that the script expects corresponding image and segmentation pairs to have the same filename.
+
 ```bash
 python scripts/register.py \
     --groupwise \
@@ -239,6 +246,8 @@ python scripts/register.py \
     --save_eval_to_disk \
     --visualize
 ```
+`fixed` and `fixed_seg` are ignored in groupwise registration.
+Currently, real-world coordinates is not supported in groupwise registration.
 
 ## Step-by-step guide for reproducing our results
 

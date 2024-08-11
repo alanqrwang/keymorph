@@ -294,6 +294,8 @@ class KeyMorph(nn.Module):
 
     def groupwise_register(self, inputs, transform_type="affine", **kwargs):
         """Groupwise registration.
+        TODO: Add support for weighted groupwise registration
+        TODO: Add support for groupwise registration in real-world coordinates.
 
         Steps:
             1. Extract keypoints from each image
@@ -303,7 +305,7 @@ class KeyMorph(nn.Module):
             3. Compute grids for each image from original extracted keypoints to mean keypoints
 
         inputs can be:
-           - directories of images, looks for files img_*.npy
+           - directories of images, looks for files `img_*.npz`
            - list of image paths
            - Torch Tensor stack of images (N, 1, D, H, W)"""
 
@@ -318,20 +320,19 @@ class KeyMorph(nn.Module):
                 [
                     os.path.join(inputs, f)
                     for f in os.listdir(inputs)
-                    if f.endswith(".npy")
+                    if f.endswith(".npz")
                 ]
             )
+            if len(inputs) == 0:
+                raise ValueError(f"No .npz files found in {inputs}")
         else:
             save_dir = None
 
-        def _groupwise_register_step(
-            group_points, keypoint_aligner, lmbda, weights=None
-        ):
+        def _groupwise_register_step(group_points, lmbda, weights=None):
             """One step of groupwise registration.
 
             Args:
                 group_points: tensor of shape (num_subjects, num_points, dim)
-                keypoint_aligner: Keypoint aligner object
                 lmbda: Lambda value for TPS
                 grid_shape: Grid on which to resample
 
@@ -346,12 +347,48 @@ class KeyMorph(nn.Module):
             new_points = torch.zeros_like(group_points, device=group_points.device)
             for i in range(len(group_points)):
                 points_m = group_points[i : i + 1]
-                points_a = keypoint_aligner.points_from_points(
+                # Align via keypoints
+                if align_type == "rigid":
+                    keypoint_aligner = RigidKeypointAligner(
+                        points_m=points_m,
+                        points_f=mean_points,
+                        w=weights,
+                        aff_f=None,
+                        aff_m=None,
+                        shape_f=None,
+                        shape_m=None,
+                        dim=self.dim,
+                        align_in_real_world_coords=False,
+                    )
+                elif align_type == "affine":
+                    keypoint_aligner = AffineKeypointAligner(
+                        points_m=points_m,
+                        points_f=mean_points,
+                        w=weights,
+                        aff_f=None,
+                        aff_m=None,
+                        shape_f=None,
+                        shape_m=None,
+                        dim=self.dim,
+                        align_in_real_world_coords=False,
+                    )
+                elif align_type == "tps":
+                    keypoint_aligner = TPS(
+                        points_m=points_m,
+                        points_f=mean_points,
+                        lmbda=lmbda,
+                        w=weights,
+                        aff_f=None,
+                        aff_m=None,
+                        shape_f=None,
+                        shape_m=None,
+                        dim=self.dim,
+                        align_in_real_world_coords=False,
+                        use_checkpoint=self.use_checkpoint,
+                    )
+
+                points_a = keypoint_aligner.get_forward_transformed_points(
                     points_m,
-                    mean_points,
-                    points_m,
-                    lmbda=lmbda,
-                    weights=weights,
                 )
                 new_points[i : i + 1] = points_a
             return new_points, mean_points
@@ -362,7 +399,7 @@ class KeyMorph(nn.Module):
             print("Extracting keypoints...")
         for i in range(len(inputs)):
             if isinstance(inputs[i], str):
-                img_m = torch.tensor(np.load(inputs[i])).float()
+                img_m = torch.tensor(np.load(inputs[i])["img"]).float()
             else:
                 img_m = inputs[i : i + 1]
             img_m = img_m.to(device)
@@ -395,19 +432,10 @@ class KeyMorph(nn.Module):
                 align_type = align_type_str
                 tps_lmbda = None
 
-            # Align via keypoints
-            if align_type == "rigid":
-                keypoint_aligner = self.rigid_aligner
-            elif align_type == "affine":
-                keypoint_aligner = self.affine_aligner
-            elif align_type == "tps":
-                keypoint_aligner = self.tps_aligner
-
             curr_points = group_points.clone()
             for j in range(num_iters):
                 next_points, mean_points = _groupwise_register_step(
                     curr_points,
-                    keypoint_aligner,
                     tps_lmbda,
                     weights=weights,
                 )
@@ -427,12 +455,48 @@ class KeyMorph(nn.Module):
                 # Compute grid and save to disk, one at a time
                 for i in range(len(group_points)):
                     points_m = group_points[i : i + 1]
-                    grid = keypoint_aligner.grid_from_points(
-                        points_m,
-                        mean_points,
+                    # Align via keypoints
+                    if align_type == "rigid":
+                        keypoint_aligner = RigidKeypointAligner(
+                            points_m=points_m,
+                            points_f=mean_points,
+                            w=weights,
+                            aff_f=None,
+                            aff_m=None,
+                            shape_f=None,
+                            shape_m=None,
+                            dim=self.dim,
+                            align_in_real_world_coords=False,
+                        )
+                    elif align_type == "affine":
+                        keypoint_aligner = AffineKeypointAligner(
+                            points_m=points_m,
+                            points_f=mean_points,
+                            w=weights,
+                            aff_f=None,
+                            aff_m=None,
+                            shape_f=None,
+                            shape_m=None,
+                            dim=self.dim,
+                            align_in_real_world_coords=False,
+                        )
+                    elif align_type == "tps":
+                        keypoint_aligner = TPS(
+                            points_m=points_m,
+                            points_f=mean_points,
+                            lmbda=tps_lmbda,
+                            w=weights,
+                            aff_f=None,
+                            aff_m=None,
+                            shape_f=None,
+                            shape_m=None,
+                            dim=self.dim,
+                            align_in_real_world_coords=False,
+                            use_checkpoint=self.use_checkpoint,
+                        )
+
+                    grid = keypoint_aligner.get_flow_field(
                         img_m.shape,
-                        lmbda=tps_lmbda,
-                        weights=weights,
                         compute_on_subgrids=True,
                     )
                     grid_save_path = f"{save_dir}/{align_type_str}_grid_{i:03}.npy"
