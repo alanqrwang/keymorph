@@ -459,16 +459,32 @@ class TestAffineAligner(unittest.TestCase):
     def test_affine_2(self):
         """Test 3d rotation around z-axis for 2d points plus scaling."""
 
-        input1 = torch.tensor([[1, 0, 0], [0, -1, 0], [-1, 0, 0], [0, 1, 0]]).float()
-        input1 = input1.view(1, 4, 3)
-        input2 = torch.tensor([[0, -1, 0], [-1, 0, 0], [0, 1, 0], [1, 0, 0]]).float()
-        input2 = input2.view(1, 4, 3)
+        # Create a simple 3D tetrahedron (4 points minimum for 3D affine)
+        # Plus one more point to ensure unique solution
+        input1 = torch.tensor([[1, 0, 0],      # Point on x-axis
+                            [0, 1, 0],       # Point on y-axis
+                            [0, 0, 1],       # Point on z-axis
+                            [0, 0, 0],       # Origin
+                            [1, 1, 1]]).float()  # Corner point
+        input1 = input1.view(1, 5, 3)
 
-        r = -np.pi / 2
+        # Apply a 60-degree (π/3) rotation around z-axis
+        # This is obvious: rotates x→between x&y, y→between y&-x
+        r = np.pi / 3  # 60 degrees
+        cos_r = np.cos(r)  # = 0.5
+        sin_r = np.sin(r)  # = √3/2 ≈ 0.866
+
+        input2 = torch.tensor([[cos_r, sin_r, 0],     # (1,0,0) rotated
+                            [-sin_r, cos_r, 0],      # (0,1,0) rotated
+                            [0, 0, 1],               # (0,0,1) unchanged by z-rotation
+                            [0, 0, 0],               # Origin unchanged
+                            [cos_r - sin_r, sin_r + cos_r, 1]]).float()  # (1,1,1) rotated
+        input2 = input2.view(1, 5, 3)
+
         true = torch.tensor(
             [
-                [np.cos(r), -np.sin(r), 0, 0],
-                [np.sin(r), np.cos(r), 0, 0],
+                [cos_r, -sin_r, 0, 0],
+                [sin_r, cos_r, 0, 0],
                 [0, 0, 1, 0],
                 [0, 0, 0, 1],
             ]

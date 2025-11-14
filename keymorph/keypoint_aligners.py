@@ -104,7 +104,8 @@ class AffineKeypointAligner(AffineTransform):
             out = torch.bmm(out, torch.transpose(x, -2, -1))
         else:
             out = torch.bmm(x, torch.transpose(x, -2, -1))
-        inv = torch.inverse(out)
+        # inv = torch.linalg.pinv(out)
+        inv = torch.linalg.pinv(out)
         if w is not None:
             out = torch.bmm(w, torch.transpose(x, -2, -1))
             out = torch.bmm(out, inv)
@@ -396,6 +397,7 @@ class TPS(nn.Module):
         # See make_base_grid_5d() in https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/AffineGridGenerator.cpp
         return transformed_grid.flip(-1)
 
+    @torch.compile()
     def transform_points(self, theta, ctrl, points):
         """Evaluate the thin-plate-spline (TPS) surface at xy locations arranged in a grid.
         The TPS surface is a minimum bend interpolation surface defined by a set of control points.
@@ -428,8 +430,10 @@ class TPS(nn.Module):
         P[:, :, 1:] = points[:, :, : self.dim]
 
         # U is NxHxWxT
-        b = torch.bmm(U.transpose(1, 2), weights)
-        z = torch.bmm(P.view(N, -1, self.dim + 1), affine)
+        # b = torch.bmm(U.transpose(1, 2), weights)
+        # z = torch.bmm(P.view(N, -1, self.dim + 1), affine)
+        b = torch.einsum('btp,btd->bpd', U, weights)
+        z = torch.einsum('bpd,bda->bpa', P, affine)
         return z + b
 
     def get_inverse_transformed_points(self, points):
@@ -694,8 +698,8 @@ class TPS(nn.Module):
 #     perm_mat = perm_mat[None, [0, 2, 1, 3], :]  # 012, 021, 102, 120, 201, 210
 
 #     # Calculate the overall transformation matrix from moving to fixed image space
-#     overall_affine = torch.bmm(rescale_voxel2norm, torch.inverse(moving_affine))
-#     overall_affine = torch.bmm(overall_affine, torch.inverse(registration_affine))
+#     overall_affine = torch.bmm(rescale_voxel2norm, torch.linalg.pinv(moving_affine))
+#     overall_affine = torch.bmm(overall_affine, torch.linalg.pinv(registration_affine))
 #     overall_affine = torch.bmm(overall_affine, fixed_affine)
 #     overall_affine = torch.bmm(overall_affine, rescale_norm2voxel)
 
