@@ -268,7 +268,7 @@ class TPS(nn.Module):
         # Note we flip the order of the points here
         if use_checkpoint:
             self.inverse_theta = checkpoint.checkpoint(
-                self.fit, points_f, points_m, lmbda, w
+                self.fit, points_f, points_m, lmbda, w, use_reentrant=False
             )
         else:
             self.inverse_theta = self.fit(points_f, points_m, lmbda, weights=w)

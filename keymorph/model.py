@@ -183,7 +183,7 @@ class KeyMorph(nn.Module):
             if self.weight_keypoints == "power":
                 if self.use_checkpoint:
                     weights = checkpoint.checkpoint(
-                        self.weight_by_power, feat_f, feat_m
+                        self.weight_by_power, feat_f, feat_m, use_reentrant=False
                     )
                 else:
                     weights = self.weight_by_power(feat_f, feat_m)

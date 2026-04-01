@@ -251,7 +251,7 @@ def convert_points_norm2voxel(points, grid_sizes):
     Returns:
         Array of points in voxel space.
     """
-    grid_sizes = torch.tensor(grid_sizes).to(points.device)
+    grid_sizes = torch.as_tensor(grid_sizes).to(points.device)
     assert grid_sizes.shape[-1] == points.shape[-1], "Dimensions don't match"
     translated_points = points + 1
     scaled_points = (translated_points * grid_sizes) / 2
@@ -270,7 +270,7 @@ def convert_points_voxel2norm(points, grid_sizes):
     Returns:
         Array of points in the normalized space [-1, 1].
     """
-    grid_sizes = torch.tensor(grid_sizes).to(points.device)
+    grid_sizes = torch.as_tensor(grid_sizes).to(points.device)
     assert grid_sizes.shape[-1] == points.shape[-1], "Dimensions don't match"
     rescaled_points_shifted = points + 0.5
     normalized_points = (2 * rescaled_points_shifted / grid_sizes) - 1
