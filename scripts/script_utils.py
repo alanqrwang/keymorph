@@ -49,7 +49,7 @@ def aggregate_dicts(dicts):
 
 def initialize_wandb(config):
     if config.wandb_api_key_path is not None:
-        with open(config.wandb_api_key_path, "r") as f:
+        with open(config.wandb_api_key_path, "r", encoding="utf-8") as f:
             os.environ["WANDB_API_KEY"] = f.read().strip()
 
     wandb.init(**config.wandb_kwargs)
@@ -116,12 +116,12 @@ def summary(network):
 
 
 def save_dict_as_json(dict, save_path):
-    with open(save_path, "w") as outfile:
+    with open(save_path, "w", encoding="utf-8") as outfile:
         json.dump(dict, outfile, sort_keys=True, indent=4)
 
 
 def load_dict_from_json(json_path):
-    with open(json_path, "r") as file:
+    with open(json_path, "r", encoding="utf-8") as file:
         data = json.load(file)
     return data
 
